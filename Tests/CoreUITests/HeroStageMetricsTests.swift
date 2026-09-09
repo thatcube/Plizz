@@ -243,4 +243,40 @@ final class HeroStageMetricsTests: XCTestCase {
         XCTAssertEqual(meltStart(width: 0, height: 520), 0.62)
         XCTAssertEqual(meltStart(width: 375, height: 0), 0.62)
     }
+
+    func testCompactDetailProtectsTextAcrossExistingStageSizes() {
+        for width in [CGFloat(320), 375, 393, 440] {
+            for height in [CGFloat(610), 770] {
+                for isLight in [false, true] {
+                    let start = HeroStageMetrics.compactDetailMeltStart(
+                        width: width, height: height, isLight: isLight
+                    )
+                    XCTAssertGreaterThan(start, 0)
+                    XCTAssertLessThanOrEqual(start, isLight ? 0.4 : 0.5)
+                    XCTAssertLessThan(
+                        start,
+                        meltStart(width: width, height: height, dark: !isLight),
+                        "The shorter detail stage must not wait for Home's late dissolve."
+                    )
+                    XCTAssertGreaterThanOrEqual((1 - start) * height, HeroStageMetrics.minimumMeltSpan)
+                }
+                let geometry = HeroStageMetrics.geometry(width: width, height: height)
+                XCTAssertEqual(geometry.pictureHeight + geometry.reflectionHeight, height, accuracy: 0.01)
+                XCTAssertLessThanOrEqual(geometry.reflectionHeight / height, HeroStageMetrics.maximumReflectionShare + 0.001)
+            }
+        }
+    }
+
+    func testCompactDetailDissolveHasFiniteEarlyLayoutFallbacks() {
+        for (width, height) in [(CGFloat.zero, CGFloat(610)), (393, 0)] {
+            for isLight in [false, true] {
+                let start = HeroStageMetrics.compactDetailMeltStart(
+                    width: width, height: height, isLight: isLight
+                )
+                XCTAssertTrue(start.isFinite)
+                XCTAssertGreaterThanOrEqual(start, 0)
+                XCTAssertLessThanOrEqual(start, 0.5)
+            }
+        }
+    }
 }

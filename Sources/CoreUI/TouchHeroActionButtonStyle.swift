@@ -9,11 +9,14 @@ public struct TouchHeroActionButtonStyle: ButtonStyle {
 
     private let kind: Kind
     private let circular: Bool
+    /// Optional emphasis for a primary action; nil keeps its natural size and wrapping fallback.
+    private let minimumWidth: CGFloat?
     @Environment(\.themePalette) private var palette
 
-    public init(kind: Kind, circular: Bool = false) {
+    public init(kind: Kind, circular: Bool = false, minimumWidth: CGFloat? = nil) {
         self.kind = kind
         self.circular = circular
+        self.minimumWidth = minimumWidth
     }
 
     public func makeBody(configuration: Configuration) -> some View {
@@ -47,7 +50,7 @@ public struct TouchHeroActionButtonStyle: ButtonStyle {
                 .foregroundStyle(kind == .primary ? palette.backgroundBase : palette.primaryText)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
-                .frame(minHeight: 48)
+                .frame(minWidth: minimumWidth, minHeight: 48)
                 .background {
                     Capsule()
                         .fill(backgroundColor)

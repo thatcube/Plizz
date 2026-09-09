@@ -25,9 +25,10 @@ final class TouchHeroActionRowTests: XCTestCase {
     }
 
     private func play(
-        episode: String,
+        episode: String?,
         progress: Double? = nil,
-        wraps: Bool = false
+        wraps: Bool = false,
+        minimumWidth: CGFloat? = nil
     ) -> some View {
         Button {} label: {
             PlayResumeButtonLabel(
@@ -41,12 +42,15 @@ final class TouchHeroActionRowTests: XCTestCase {
                 wrapsText: wraps
             )
         }
-        .buttonStyle(TouchHeroActionButtonStyle(kind: .primary))
+        .buttonStyle(TouchHeroActionButtonStyle(kind: .primary, minimumWidth: minimumWidth))
     }
 
-    private func row(episode: String, extras: Int, progress: Double? = nil) -> some View {
+    private func row(
+        episode: String?, extras: Int,
+        progress: Double? = nil, minimumWidth: CGFloat? = nil
+    ) -> some View {
         HeroActionRow {
-            play(episode: episode, progress: progress)
+            play(episode: episode, progress: progress, minimumWidth: minimumWidth)
             ForEach(0..<extras, id: \.self) { _ in
                 Button {} label: { Image(systemName: "ellipsis") }
                     .buttonStyle(TouchHeroActionButtonStyle(kind: .secondary, circular: true))
@@ -55,15 +59,50 @@ final class TouchHeroActionRowTests: XCTestCase {
         .controlSize(.large)
     }
 
-    private func adaptiveRow(episode: String, progress: Double?) -> some View {
+    private func adaptiveRow(
+        episode: String?, progress: Double?, minimumWidth: CGFloat? = nil
+    ) -> some View {
         ViewThatFits(in: .horizontal) {
             ForEach((1...4).reversed(), id: \.self) { count in
-                self.row(episode: episode, extras: count, progress: progress)
+                self.row(episode: episode, extras: count, progress: progress, minimumWidth: minimumWidth)
             }
             HeroActionRow(stacksVertically: true) {
                 play(episode: episode, progress: progress, wraps: true)
             }
         }
+    }
+
+    func testProminentPlayWidensThePillWithoutChangingItsHeight() {
+        let original = size(of: play(episode: nil))
+        let prominent = size(of: play(episode: nil, minimumWidth: 180))
+        XCTAssertEqual(prominent.width, 180, accuracy: 0.5)
+        XCTAssertGreaterThan(prominent.width, original.width)
+        XCTAssertEqual(prominent.height, original.height, accuracy: 0.5)
+        let longOriginal = size(of: play(episode: "S20, E100", progress: 0.4))
+        let longProminent = size(of: play(episode: "S20, E100", progress: 0.4, minimumWidth: 180))
+        XCTAssertEqual(longProminent.width, max(180, longOriginal.width), accuracy: 0.5)
+    }
+
+    func testProminentPlayFoldsExtrasInsteadOfCompressingItsPill() {
+        for (width, extras) in [(CGFloat(276), 1), (331, 2), (386, 3)] {
+            let expected = size(of: row(episode: nil, extras: extras, minimumWidth: 180))
+            let actual = size(of: adaptiveRow(episode: nil, progress: nil, minimumWidth: 180), width: width)
+            XCTAssertEqual(actual.width, expected.width, accuracy: 0.5)
+            XCTAssertEqual(actual.height, expected.height, accuracy: 0.5)
+            XCTAssertLessThanOrEqual(actual.width, width)
+        }
+    }
+
+    func testProminentPlayKeepsTheAccessibleWrappingFallback() {
+        let actual = size(of: adaptiveRow(
+            episode: "S20, E100", progress: 0.4, minimumWidth: 180
+        ), width: 145)
+        let expected = size(of: HeroActionRow(stacksVertically: true) {
+            self.play(episode: "S20, E100", progress: 0.4, wraps: true)
+        }, width: 145)
+        XCTAssertEqual(actual.width, expected.width, accuracy: 0.5)
+        XCTAssertEqual(actual.height, expected.height, accuracy: 0.5)
+        XCTAssertLessThanOrEqual(actual.width, 145)
     }
 
     func testInlinePlayLabelNeverReportsATruncatedWidth() {
@@ -147,7 +186,7 @@ final class TouchHeroActionRowTests: XCTestCase {
     func testRendersStyledRowsAcrossPhoneWidthsAndTextSizes() throws {
         for width in [CGFloat(276), 331, 386] {
             for textSize in [DynamicTypeSize.large, .xxxLarge, .accessibility3] {
-                let content = adaptiveRow(episode: "S20, E100", progress: nil)
+                let content = adaptiveRow(episode: "S20, E100", progress: nil, minimumWidth: 180)
                     .environment(\.dynamicTypeSize, textSize)
                     .environment(\.themePalette, .dark)
                     .environment(\.colorScheme, .dark)

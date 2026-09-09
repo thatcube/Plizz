@@ -151,6 +151,23 @@ public enum HeroStageMetrics {
     /// class this type exists to end.
     public static let minimumMeltSpan: CGFloat = 130
 
+    /// A shorter detail hero puts prose higher than Home does. Use the same
+    /// dissolve, but begin by the midpoint so its metadata sits in the quiet
+    /// lower region without growing the stage or further cropping the picture.
+    public static func compactDetailMeltStart(
+        width: CGFloat,
+        height: CGFloat,
+        isLight: Bool
+    ) -> CGFloat {
+        let start = meltStart(
+            width: width,
+            height: height,
+            mirrorScale: isLight ? 0.86 : 1,
+            floor: isLight ? 0.38 : 0.62
+        )
+        return max(0, min(start, 0.5) - (isLight ? 0.1 : 0))
+    }
+
     /// Where the hero's bottom dissolve begins, as a fraction of its height.
     ///
     /// Holds the picture whole down to its mirror line (scaled by `mirrorScale`,

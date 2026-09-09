@@ -19,17 +19,14 @@ enum PlozziOSHeroMetrics {
     /// into the space the picture doesn't reach, rather than by cropping the
     /// picture until it does.
     ///
-    /// Only the portrait Home hero: it is the one that stands a fixed fraction
-    /// of the window tall (see ``HeroStageMetrics``) regardless of how the
-    /// artwork is shaped, so it is the one whose crop would otherwise be
-    /// dictated by the length of the phone. The detail hero is the top of a
-    /// scrolling page rather than a full screen, and a regular-width layout puts
-    /// its metadata in a side column where height is not the constraint.
+    /// Portrait Home and detail share the same picture/continuation geometry,
+    /// but only Home grows with the window. Detail retains its shorter stage
+    /// so the episode browser stays close to the actions.
     static func extendsArtwork(
         style: HeroArtworkStyle,
         surfaceRole: HeroTrailerSurfaceRole
     ) -> Bool {
-        style == .compactPortrait && surfaceRole == .home
+        style == .compactPortrait
     }
 
     static func height(
@@ -45,7 +42,7 @@ enum PlozziOSHeroMetrics {
         // has to reach far enough down that the metadata sits in the lower part
         // of the screen, while still leaving the next row peeking. See
         // `HeroStageMetrics`.
-        if extendsArtwork(style: style, surfaceRole: surfaceRole) {
+        if style == .compactPortrait && surfaceRole == .home {
             return HeroStageMetrics.portraitHomeHeight(
                 windowHeight: containerHeight,
                 fallback: 610,
@@ -911,6 +908,7 @@ private struct PlozziOSHeroBackdrop: View {
             if appliesFadeMask {
                 PlozziOSHeroFadeMask(
                     extendsArtwork: extendsArtwork,
+                    protectsCompactDetailText: surfaceRole == .detail && style == .compactPortrait,
                     // Detail is intentionally shorter than Home, so its light-mode
                     // dissolve needs more runway to keep the white handoff subtle.
                     upwardExtension:
@@ -1029,6 +1027,7 @@ struct PlozziOSHeroFadeMask: View {
     /// background, which is what a fixed 0.62 produced on a hero this tall — and
     /// one that carries all the way behind the buttons and then melts.
     var extendsArtwork: Bool = false
+    var protectsCompactDetailText = false
     /// Additional fraction of the hero covered by the bottom-anchored artwork
     /// dissolve. Positive values move only its upper edge farther into the image.
     var upwardExtension: CGFloat = 0
@@ -1061,6 +1060,13 @@ struct PlozziOSHeroFadeMask: View {
     }
 
     private func start(in size: CGSize) -> CGFloat {
+        if protectsCompactDetailText {
+            return HeroStageMetrics.compactDetailMeltStart(
+                width: size.width,
+                height: size.height,
+                isLight: colorScheme == .light
+            )
+        }
         let baseStart = extendsArtwork
             ? HeroStageMetrics.meltStart(
                 width: size.width,
@@ -2227,7 +2233,10 @@ private struct PlozziOSDetailHeroForeground: View {
                     wrapsText: wrapsText
                 )
             }
-            .buttonStyle(PlozziOSHeroActionButtonStyle(kind: .primary))
+            .buttonStyle(PlozziOSHeroActionButtonStyle(
+                kind: .primary,
+                minimumWidth: style == .compactPortrait && !wrapsText ? 180 : nil
+            ))
             .disabled(playableItem == nil)
         }
     }
