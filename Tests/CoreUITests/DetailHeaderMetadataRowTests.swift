@@ -33,7 +33,12 @@ final class DetailHeaderMetadataRowTests: XCTestCase {
             MediaBadge("SDR", style: .sdr)
         ]
         let row = DetailHeaderMetadataRow(ratings: [score], badges: formats)
-        let reference = size(of: RatingBadge(rating: score), width: 320)
+        let reference = size(of: HStack(spacing: 12) {
+            RatingBadge(rating: score)
+            HStack(spacing: 10) {
+                ForEach(formats) { MetadataMediaBadgeChip(badge: $0) }
+            }
+        }.fixedSize(), width: 2_000)
         let actual = size(of: row, width: 320)
         XCTAssertEqual(actual.height, reference.height, accuracy: 1)
         XCTAssertLessThanOrEqual(actual.width, 320)
@@ -43,6 +48,9 @@ final class DetailHeaderMetadataRowTests: XCTestCase {
         for width in [CGFloat(180), 280, 393] {
             for textSize in [DynamicTypeSize.large, .xxxLarge, .accessibility3] {
                 let reference = size(of: RatingBadge(rating: ratings[0]), width: 2_000, textSize: textSize)
+                let badgeHeight = badges.map {
+                    size(of: MetadataMediaBadgeChip(badge: $0), width: 2_000, textSize: textSize).height
+                }.max() ?? 0
                 for scores in [[], Array(ratings.prefix(1)), ratings] {
                     for formats in [[], Array(badges.prefix(1)), badges] {
                         let result = size(
@@ -50,7 +58,7 @@ final class DetailHeaderMetadataRowTests: XCTestCase {
                             width: width, textSize: textSize
                         )
                         XCTAssertLessThanOrEqual(result.width, width + 0.5)
-                        XCTAssertLessThanOrEqual(result.height, max(44, reference.height) + 1)
+                        XCTAssertLessThanOrEqual(result.height, max(44, reference.height, badgeHeight) + 1)
                         if scores.isEmpty && formats.isEmpty {
                             XCTAssertEqual(result.height, 0, accuracy: 0.5)
                         }
@@ -60,7 +68,7 @@ final class DetailHeaderMetadataRowTests: XCTestCase {
         }
     }
 
-    func testFormatTextYieldsToTheDetailsButtonBeforeWrapping() {
+    func testFormatBadgesYieldToTheDetailsButtonBeforeWrapping() {
         let actual = size(of: DetailHeaderMetadataRow(ratings: ratings, badges: badges), width: 250)
         let expected = size(of: HStack(spacing: 12) {
             ForEach(ratings) { RatingBadge(rating: $0) }
@@ -68,6 +76,16 @@ final class DetailHeaderMetadataRowTests: XCTestCase {
         }.fixedSize(), width: 2_000)
         XCTAssertEqual(actual.height, expected.height, accuracy: 0.5)
         XCTAssertLessThanOrEqual(actual.width, 250)
+    }
+
+    func testFormatOnlyRowRetainsTheExistingBadgePresentation() {
+        let expected = size(of: HStack(spacing: 10) {
+            ForEach(badges) { MetadataMediaBadgeChip(badge: $0) }
+        }.fixedSize(), width: 2_000)
+        let actual = size(of: DetailHeaderMetadataRow(ratings: [], badges: badges), width: 393)
+        XCTAssertEqual(actual.height, expected.height, accuracy: 0.5)
+        let plainText = size(of: Text("4K · DV · HDR10 · Atmos").font(.subheadline), width: 393)
+        XCTAssertGreaterThan(actual.height, plainText.height, "Render the badge components, not text substitutions.")
     }
 }
 #endif

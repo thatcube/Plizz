@@ -20,8 +20,11 @@ public struct DetailHeaderMetadataRow: View {
                     ForEach(ratings) { RatingBadge(rating: $0) }
                     if !badges.isEmpty {
                         Button { showsDetails = true } label: {
-                            Text(badges.map(\.compactFormatText).joined(separator: " · "))
-                                .font(.subheadline.weight(.medium))
+                            HStack(spacing: 10) {
+                                ForEach(badges) { badge in
+                                    MetadataMediaBadgeChip(badge: badge)
+                                }
+                            }
                         }
                         .accessibilityLabel("Picture & sound")
                         .accessibilityValue(badges.map(\.accessibilityText).joined(separator: ", "))
@@ -74,7 +77,7 @@ public struct DetailHeaderMetadataRow: View {
                         if !badges.isEmpty {
                             Section("Picture & sound") {
                                 ForEach(badges) { badge in
-                                    Text(verbatim: badge.accessibilityText)
+                                    MediaBadgeChip(badge: badge)
                                 }
                             }
                         }

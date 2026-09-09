@@ -95,14 +95,4 @@ final class DetailPageSettingsTests: XCTestCase {
         XCTAssertTrue(store.load().enabledRatingSources.isEmpty)
     }
 
-    func testCompactFormatsPreserveResolutionHDRFallbackAndAudioDetail() {
-        let badges = [
-            MediaBadge("4K", style: .prominent),
-            MediaBadge("Dolby Vision", style: .dolby),
-            MediaBadge("HDR10", style: .hdr),
-            MediaBadge("Dolby Digital+", style: .dolby, detail: "5.1")
-        ]
-        XCTAssertEqual(badges.map(\.compactFormatText), ["4K", "DV", "HDR10", "DD+ 5.1"])
-        XCTAssertEqual(badges.last?.accessibilityText, "Dolby Digital+ 5.1")
-    }
 }
