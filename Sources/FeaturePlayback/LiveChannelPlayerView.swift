@@ -65,7 +65,7 @@ public struct LiveChannelPlayerView: View {
     @State private var controlsVisible = true
     @State private var tracksArePresented = false
     @State private var autoHideRevision = 0
-    @State private var hudInactivity = LiveChannelHUDInactivity()
+    @State private var hudInactivity = PlaybackControlsInactivity()
     @State private var focusRevision = 0
     @State private var playbackStartPolicy = LiveChannelPlaybackStartPolicy<LiveChannelSource>()
     @FocusState private var focusedControl: LiveChannelControl?
@@ -958,7 +958,7 @@ private struct LiveChannelOverlay: View {
             .ignoresSafeArea()
         )
         #if os(tvOS)
-        .background(LiveChannelFocusActivityObserver(onActivity: onControlActivity))
+        .background(TVFocusActivityObserver(onActivity: onControlActivity))
         #endif
     }
 }

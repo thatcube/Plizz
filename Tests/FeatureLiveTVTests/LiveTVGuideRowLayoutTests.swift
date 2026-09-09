@@ -231,16 +231,19 @@ final class LiveTVGuideRowLayoutTests: XCTestCase {
         XCTAssertLessThan(try XCTUnwrap(samples.first), 25)
     }
 
-    func testNowMarkerDrawsOneContinuousLineAcrossHeaderAndRows() throws {
+    func testNowMarkerIsACompactPointerWithoutALineThroughTheRows() throws {
         let samples = try alphaSamples(
-            PrototypeNowLine(start: start, now: start.addingTimeInterval(1_800), timelineOffset: 50),
+            PrototypeNowMarker(start: start, now: start.addingTimeInterval(1_800), timelineOffset: 50)
+                .frame(maxHeight: .infinity, alignment: .top),
             size: CGSize(width: 600, height: 400),
-            points: [(99, 0), (99, 43), (99, 44), (99, 59), (99, 60), (99, 199), (99, 398)]
+            points: [(99, 4), (99, 43), (99, 60), (99, 199), (99, 398)]
         )
-        XCTAssertTrue(samples.allSatisfy { $0 > 190 })
+        XCTAssertGreaterThan(try XCTUnwrap(samples.first), 190)
+        XCTAssertTrue(samples.dropFirst().allSatisfy { $0 == 0 })
+        XCTAssertLessThan(PrototypeNowMarker.size.height, PrototypeLayout.gap)
     }
 
-    func testBrowserNowMarkerBridgesTheActualRulerAndRowContainer() throws {
+    func testBrowserNowMarkerSitsBelowTheRulerWithOrWithoutListings() throws {
         let channel = LiveTVPrototypeChannel(
             id: "station", number: 1, name: "Test station", category: "News",
             symbol: "tv", accent: 0, source: .iptv, tagline: ""
@@ -267,11 +270,34 @@ final class LiveTVGuideRowLayoutTests: XCTestCase {
             let top = Int(PrototypeLayout.guideInset)
             let samples = try alphaSamples(
                 browser, size: CGSize(width: 1_000, height: 400),
-                points: [(x, top + 2), (x, top + 40), (x, top + 44),
-                         (x, top + 44 + Int(PrototypeLayout.gap) / 2),
-                         (x, top + 44 + Int(PrototypeLayout.gap) + 4)]
+                points: [(x, top + 2), (x, top + 40),
+                         (x, top + 44 + Int(PrototypeLayout.gap - PrototypeNowMarker.size.height) + 4)]
             )
-            XCTAssertTrue(samples.allSatisfy { $0 > 190 }, "\(samples), listings: \(programs.count)")
+            XCTAssertTrue(samples.prefix(2).allSatisfy { $0 < 80 }, "\(samples)")
+            XCTAssertGreaterThan(try XCTUnwrap(samples.last), 190, "\(samples), listings: \(programs.count)")
+        }
+    }
+
+    func testNowMarkerFollowsClockAndHorizontalOffsetWithoutClampingOffscreenTime() throws {
+        for (nowOffset, scrollOffset, visibleX) in [
+            (1_800.0, 0.0, 150.0),
+            (3_600.0, 0.0, 300.0),
+            (3_600.0, 150.0, 150.0),
+            (-1.0, 0.0, -1.0),
+            (7_201.0, 0.0, -1.0),
+            (1_800.0, 200.0, -1.0)
+        ] {
+            let samples = try alphaSamples(
+                PrototypeNowMarker(
+                    start: start, now: start.addingTimeInterval(nowOffset), timelineOffset: scrollOffset
+                ),
+                size: CGSize(width: 600, height: PrototypeNowMarker.size.height),
+                points: [(0, 4), (150, 4), (300, 4), (599, 4)]
+            )
+            XCTAssertEqual(
+                samples.map { $0 > 190 }, [0.0, 150.0, 300.0, 599.0].map { $0 == visibleX },
+                "time: \(nowOffset), scroll: \(scrollOffset), alpha: \(samples)"
+            )
         }
     }
 
@@ -310,7 +336,7 @@ final class LiveTVGuideRowLayoutTests: XCTestCase {
         }
     }
 
-    func testNoGuideAndMissingListingFillEndsAtTheNowLine() async throws {
+    func testNoGuideAndMissingListingFillEndsAtTheCurrentTime() async throws {
         let width: CGFloat = 1_000
         let timelineWidth = PrototypeLayout.timelineWidth(for: width)
         let lineX = width - timelineWidth + timelineWidth / 4
@@ -362,12 +388,13 @@ final class LiveTVGuideRowLayoutTests: XCTestCase {
         )
         XCTAssertEqual(fill.map { $0 > 0 }, [false, false, true])
         let marker = try alphaSamples(
-            PrototypeNowLine(start: start, now: start.addingTimeInterval(1_800), timelineOffset: 50)
-                .environment(\.layoutDirection, .rightToLeft),
+            PrototypeNowMarker(start: start, now: start.addingTimeInterval(1_800), timelineOffset: 50)
+                .environment(\.layoutDirection, .rightToLeft)
+                .frame(maxHeight: .infinity, alignment: .top),
             size: CGSize(width: 600, height: 400),
-            points: [(99, 50), (499, 50), (499, 60)]
+            points: [(99, 4), (499, 4), (499, 60)]
         )
-        XCTAssertEqual(marker.map { $0 > 0 }, [false, true, true])
+        XCTAssertEqual(marker.map { $0 > 0 }, [false, true, false])
     }
 
     func testAlphaSamplerReadsTopToBottomScreenCoordinates() throws {

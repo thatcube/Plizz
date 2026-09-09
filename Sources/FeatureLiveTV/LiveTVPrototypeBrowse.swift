@@ -61,7 +61,8 @@ struct PrototypeBrowser: View {
                     if geometry.size.width >= 650 {
                         PrototypeTimeRuler(
                             start: guideStart, now: model.now, width: geometry.size.width,
-                            timelineOffset: timelineOffset, section: currentSection
+                            timelineOffset: timelineOffset, section: currentSection,
+                            showsNowMarker: !isLoading
                         )
                         .disabled(railActive || isRestoringFocus)
                     } else {
@@ -190,16 +191,6 @@ struct PrototypeBrowser: View {
                             await restoreFocus(using: proxy, width: geometry.size.width)
                         }
                     }
-                }
-            }
-            .overlay(alignment: .topLeading) {
-                if geometry.size.width >= 650, !model.guideChannels.isEmpty, !isLoading {
-                    HStack(spacing: PrototypeLayout.columnGap) {
-                        Color.clear.frame(width: PrototypeLayout.stationWidth(for: geometry.size.width))
-                        PrototypeNowLine(start: guideStart, now: model.now, timelineOffset: timelineOffset)
-                    }
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
                 }
             }
             .onChange(of: geometry.size.width, initial: true) { old, new in
@@ -526,6 +517,7 @@ private struct PrototypeTimeRuler: View {
     let width: CGFloat
     let timelineOffset: CGFloat
     let section: LiveTVGuideSection
+    let showsNowMarker: Bool
     @Environment(\.themePalette) private var palette
     @ScaledMetric(relativeTo: .caption) private var height: CGFloat = 44
 
@@ -552,6 +544,12 @@ private struct PrototypeTimeRuler: View {
                 leadingStrength: horizontalFade.leading,
                 trailingStrength: horizontalFade.trailing
             )
+            .overlay(alignment: .bottom) {
+                if showsNowMarker {
+                    PrototypeNowMarker(start: start, now: now, timelineOffset: timelineOffset)
+                        .offset(y: PrototypeLayout.gap)
+                }
+            }
         }
         .font(.caption.monospacedDigit())
         .foregroundStyle(palette.primaryText)
@@ -566,20 +564,27 @@ private struct PrototypeTimeRuler: View {
     }
 }
 
-struct PrototypeNowLine: View {
+struct PrototypeNowMarker: View {
+    static let size = CGSize(width: 20, height: 12)
     let start: Date
     let now: Date
     let timelineOffset: CGFloat
+    @Environment(\.themePalette) private var palette
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
         GeometryReader { geometry in
             let x = geometry.size.width * now.timeIntervalSince(start) / 7_200 - timelineOffset
             if x >= 0, x <= geometry.size.width {
-                Rectangle().fill(ThemePalette.brandBlue.opacity(0.8))
-                    .frame(width: 2, height: geometry.size.height)
-                    .position(x: x, y: geometry.size.height / 2)
+                Image(systemName: "arrowtriangle.down.fill")
+                    .resizable()
+                    .foregroundStyle(palette.primaryText)
+                    .frame(width: Self.size.width, height: Self.size.height)
+                    .shadow(color: .black.opacity(contrast == .increased ? 0.95 : 0.65), radius: 1, y: 1)
+                    .position(x: x, y: Self.size.height / 2)
             }
         }
+        .frame(height: Self.size.height)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }

@@ -6,22 +6,88 @@ import UIKit
 @testable import FeatureLiveTVCore
 
 private enum MultiviewFixtureCatalog {
+    static let delaysPreparation = ProcessInfo.processInfo.arguments.contains("--pending-multiview-fixture")
     static let channels = (1...4).map {
         LiveTVPrototypeChannel(
             id: "sports-\($0)", number: $0, name: "Sports \($0)", category: "Sports",
-            symbol: "tv", accent: $0, source: .iptv, tagline: "",
-            streamURL: URL(string: "https://example.invalid/sports-\($0).m3u8")!
+            symbol: "tv", accent: $0, source: delaysPreparation && $0 == 2 ? .jellyfin : .iptv, tagline: "",
+            streamURL: URL(string: "https://example.invalid/sports-\($0).m3u8")!,
+            configuredSourceID: delaysPreparation && $0 == 2 ? "fixture" : nil
         )
     }
+}
+
+private actor MultiviewFixturePendingProvider: ServerLiveTVProviding {
+    private var released = false
+    private var waiters: [UUID: CheckedContinuation<Void, any Error>] = [:]
+
+    func liveTVAvailability() async throws -> ServerLiveTVAvailability {
+        .init(status: .available, channelCount: 1)
+    }
+
+    func liveTVChannels() async throws -> [ServerLiveTVChannel] { [] }
+
+    func liveTVGuide(channelIDs: [String], from: Date, to: Date) async throws -> [ServerLiveTVProgramme] { [] }
+
+    func openLiveTVChannel(id: String) async throws -> any LiveTVStreamLease {
+        let request = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                if released {
+                    continuation.resume()
+                } else {
+                    waiters[request] = continuation
+                }
+            }
+        } onCancel: {
+            Task { await self.cancel(request) }
+        }
+        try Task.checkCancellation()
+        return MultiviewFixtureLease(playbackSource: .publicURL(
+            try SecretFreeURLSource(url: URL(string: "https://example.invalid/\(id).m3u8")!)
+        ))
+    }
+
+    func release() {
+        released = true
+        let pending = Array(waiters.values)
+        waiters.removeAll()
+        pending.forEach { $0.resume() }
+    }
+
+    private func cancel(_ id: UUID) {
+        waiters.removeValue(forKey: id)?.resume(throwing: CancellationError())
+    }
+}
+
+private struct MultiviewFixtureLease: LiveTVStreamLease {
+    let playbackSource: PlaybackSource
+    func report(_ update: LiveTVPlaybackUpdate) async {}
+    func close() async {}
 }
 
 @MainActor
 private final class MultiviewFixtureState {
     let primary = LiveTVPlaybackPreparation()
     let output = LiveChannelOutputGroup()
+    let pendingProvider = MultiviewFixturePendingProvider()
     lazy var coordinator = LiveTVMultiviewCoordinator(
-        primary: primary, makePreparation: { LiveTVPlaybackPreparation() },
-        reference: { _ in nil }, authorizes: { _, _ in true }, recordWatched: { _ in }
+        primary: primary,
+        makePreparation: { [pendingProvider] in
+            LiveTVPlaybackPreparation(serverProviderResolver: { _ in
+                LiveTVAuthorizedServerProvider(
+                    accountID: "fixture", authorizationID: "fixture", kind: .jellyfin,
+                    provider: pendingProvider
+                )
+            })
+        },
+        reference: { id in
+            guard MultiviewFixtureCatalog.delaysPreparation, id == "sports-2" else { return nil }
+            return LiveTVServerChannelReference(
+                sourceID: "fixture", accountID: "fixture", authorizationID: "fixture", channelID: id
+            )
+        },
+        authorizes: { _, _ in true }, recordWatched: { _ in }
     )
     var engines: [MultiviewFixtureEngine] = []
 
@@ -47,7 +113,8 @@ struct MultiviewFixture: View {
     var body: some View {
         GeometryReader { geometry in
             let coordinator = state.coordinator
-            ZStack {
+            let bounds = PrototypePreviewLayout(size: geometry.size, safeAreaInsets: geometry.safeAreaInsets).bounds
+            ZStack(alignment: .topLeading) {
                 Color.black.ignoresSafeArea()
                 ForEach(coordinator.panes) { pane in
                     if let prepared = pane.preparation.current {
@@ -55,8 +122,8 @@ struct MultiviewFixture: View {
                             for: pane.id, panes: coordinator.panes.map(\.id),
                             primary: coordinator.primaryPaneID, layout: coordinator.layout,
                             corner: coordinator.corner, insetSize: coordinator.insetSize,
-                            expanded: coordinator.expandedPaneID, size: geometry.size
-                        ) : CGRect(origin: .zero, size: geometry.size)
+                            expanded: coordinator.expandedPaneID, size: bounds.size
+                        ).offsetBy(dx: bounds.minX, dy: bounds.minY) : CGRect(origin: .zero, size: geometry.size)
                         LiveChannelPlayerView(
                             channelID: prepared.channel.id, title: prepared.channel.name,
                             input: prepared.input, logoURL: nil,
@@ -77,6 +144,7 @@ struct MultiviewFixture: View {
                         )
                         .frame(width: frame.width, height: frame.height)
                         .position(x: frame.midX, y: frame.midY)
+                        .zIndex(coordinator.isEnabled && pane.id != coordinator.primaryPaneID ? 1 : 0)
                         .allowsHitTesting(!coordinator.isEnabled)
                         .accessibilityHidden(coordinator.isEnabled)
                         .opacity(coordinator.expandedPaneID == nil || coordinator.expandedPaneID == pane.id ? 1 : 0)
@@ -89,6 +157,9 @@ struct MultiviewFixture: View {
                         exit: { _ = coordinator.exit() },
                         returnToGuide: { _ = coordinator.exit() }
                     )
+                    .frame(width: bounds.width, height: bounds.height)
+                    .position(x: bounds.midX, y: bounds.midY)
+                    .zIndex(2)
                 }
                 TimelineView(.periodic(from: .now, by: 0.2)) { _ in
                     VStack {
@@ -100,12 +171,19 @@ struct MultiviewFixture: View {
                     .padding(.bottom, 8)
                 }
                 .allowsHitTesting(false)
+                .zIndex(3)
             }
         }
         .task {
             _ = await state.primary.prepare(
                 state.channels[0], isAuthorized: { true }, accept: { true }
             )
+        }
+        .onPlayPauseCommand {
+            // Release only the fake provider's network gate; native pane focus remains untouched.
+            if MultiviewFixtureCatalog.delaysPreparation {
+                Task { await state.pendingProvider.release() }
+            }
         }
         .background { MultiviewFocusDiagnostics() }
     }

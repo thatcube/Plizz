@@ -199,10 +199,12 @@ is no prior in-memory history to migrate on the first updated launch.
   header no longer starts an opaque panel. The tray begins at five percent
   opacity rather than disappearing completely, then grows more opaque lower
   down, with a solid fallback for Reduce Transparency or increased contrast.
-  One noninteractive Now line spans the ruler, its spacing and the channel
-  viewport. A subtle fill marks elapsed time inside programme cells, no-guide
-  rows and gaps between listings, staying aligned with that line when the
-  timeline scrolls. Wide guides retain the time ruler and Now line even when
+  A compact, noninteractive Now pointer sits just below the fixed time ruler,
+  with a small shadow for contrast rather than a line through the channel rows.
+  A subtle fill marks elapsed time inside programme cells, no-guide rows and
+  gaps between listings, staying aligned with the pointer when the timeline
+  scrolls. The pointer disappears when the current time is outside the visible
+  window. Wide guides retain the time ruler and pointer even when
   no channel has listings. On no-guide rows this indicates elapsed clock time,
   not a known programme duration; channel names remain stationary. Compact
   channel-only layouts without a time ruler do not imply programme progress.
@@ -248,7 +250,7 @@ is no prior in-memory history to migrate on the first updated launch.
   Earlier/Later shifts the
   window from one day back through seven days ahead, subject to source coverage.
   The time anchor does not jump at the half hour while browsing; **Now** recenters
-  it on the current wall clock. A shared Now line extends through the guide.
+  it on the current wall clock. The header pointer tracks that same clock.
   Focused programme details above the grid show the full title and broadcast times,
   including for very narrow cells.
 - Wide-guide stations, programme cells and horizontal scrollers share one scaled
@@ -547,6 +549,22 @@ The Debug integration includes manual guide mapping, durable channel identity,
 generated library channels, indexed program search, channel checks and two-pane
 Multiview. Multiview retains each player's decoder and prepared stream through
 side-by-side/corner layout changes, audio selection and returning to one player.
+Videos receive the full physical-screen canvas by default, including the safe-area
+edges. Side-by-side divides the canvas horizontally in landscape and vertically
+in portrait; each renderer fits its source without cropping. Corner mode keeps
+the main picture full-screen. Controls overlay the pictures temporarily instead
+of reserving permanent editing space.
+
+On Apple TV, native pane focus selects that channel's audio once its source is
+prepared. Moving into the controls keeps the last selected audio. Select opens
+the focused picture full-screen; Back restores both retained players without
+retuning. On touch devices, tapping a picture selects its audio and expands it;
+Show both restores the layout. Tapping again reveals hidden controls.
+Watching hides controls after four seconds of inactivity. Editing, native menus,
+channel selection, preparation failures and VoiceOver keep them available.
+Back closes channel selection first, restores both pictures if expanded, then
+dismisses active editing controls; otherwise it returns to the guide.
+
 Its hardware decoder capacity, mixed HDR/SDR behavior and long-running resource
 use still need real-device acceptance; controlled fixtures are not proof of
 those guarantees.
@@ -608,6 +626,9 @@ player's `InfoActionButtonStyle`: white labels at rest and black labels on a
 white capsule when focused, with both colours changing together. The same style
 covers transport, Favorite, loading, retry and close actions. Its type stays
 constant as focus changes, avoiding replacement of the focused control.
+Shared CoreUI focus-activity observation and monotonic inactivity tracking
+keep native remote input non-consuming and use the same four-second grace
+across live-player and Multiview overlays.
 An available transport or recovery action receives focus; normal TV playback
 has no top-right Close control. The connecting indicator does not intercept input. On-device regression checks
 must include video rendering and Back/Close while a channel is still connecting;

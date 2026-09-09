@@ -309,8 +309,9 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
                                 for: pane.id, panes: multiview.panes.map(\.id),
                                 primary: multiview.primaryPaneID, layout: multiview.layout,
                                 corner: multiview.corner, insetSize: multiview.insetSize,
-                                expanded: multiview.expandedPaneID, size: geometry.size
+                                expanded: multiview.expandedPaneID, size: layout.bounds.size
                             )
+                            .offsetBy(dx: layout.bounds.minX, dy: layout.bounds.minY)
                             : (expanded ? layout.bounds : layout.videoFrame)
                         player(playbackInput(for: pane, prepared: prepared))
                     .environment(\.themePalette, ThemePalette.dark)
@@ -372,6 +373,8 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
                         returnToGuide: { leaveMultiview(); returnToGuide() },
                         pickerVisibilityChanged: { multiviewPickerIsPresented = $0 }
                     )
+                    .frame(width: layout.bounds.width, height: layout.bounds.height)
+                    .position(x: layout.bounds.midX, y: layout.bounds.midY)
                     .zIndex(2)
                 }
             }

@@ -1,16 +1,16 @@
 import XCTest
-@testable import FeaturePlayback
+@testable import CoreUI
 
-final class LiveChannelHUDInactivityTests: XCTestCase {
+final class PlaybackControlsInactivityTests: XCTestCase {
     func testNoInputRetainsTheExistingFourSecondGrace() {
-        let inactivity = LiveChannelHUDInactivity()
+        let inactivity = PlaybackControlsInactivity()
         XCTAssertEqual(inactivity.remainingDelay(startedAt: 10, now: 10), 4)
         XCTAssertEqual(inactivity.remainingDelay(startedAt: 10, now: 13), 1)
         XCTAssertEqual(inactivity.remainingDelay(startedAt: 10, now: 14), 0)
     }
 
     func testNativeMovementExtendsAlreadyRunningFullscreenCountdown() {
-        var inactivity = LiveChannelHUDInactivity()
+        var inactivity = PlaybackControlsInactivity()
         inactivity.recordInteraction(at: 5.23)
         inactivity.recordInteraction(at: 5.65)
         XCTAssertEqual(
@@ -22,17 +22,23 @@ final class LiveChannelHUDInactivityTests: XCTestCase {
     }
 
     func testMovementAtRowBoundaryAlsoRenewsGraceWithoutFocusChanging() {
-        var inactivity = LiveChannelHUDInactivity()
+        var inactivity = PlaybackControlsInactivity()
         inactivity.recordInteraction(at: 13)
         inactivity.recordInteraction(at: 16)
         XCTAssertEqual(inactivity.remainingDelay(startedAt: 10, now: 17), 3)
     }
 
     func testLateOlderActivityCannotShortenCurrentDeadline() {
-        var inactivity = LiveChannelHUDInactivity()
+        var inactivity = PlaybackControlsInactivity()
         inactivity.recordInteraction(at: 20)
         inactivity.recordInteraction(at: 19)
         XCTAssertEqual(inactivity.remainingDelay(startedAt: 10, now: 21), 3)
+    }
+
+    func testCallerCanUseALongerReadingGraceWithoutChangingTheSharedDefault() {
+        let inactivity = PlaybackControlsInactivity()
+        XCTAssertEqual(inactivity.remainingDelay(startedAt: 10, now: 14), 0)
+        XCTAssertEqual(inactivity.remainingDelay(startedAt: 10, now: 14, grace: 9), 5)
     }
 }
 
@@ -40,10 +46,10 @@ final class LiveChannelHUDInactivityTests: XCTestCase {
 import UIKit
 
 @MainActor
-final class LiveChannelFocusActivityObserverTests: XCTestCase {
+final class TVFocusActivityObserverTests: XCTestCase {
     func testNativeFocusAndDirectionalPressesRefreshOnlyThisHUDWithoutConsumingInput() {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
-        let observer = LiveChannelFocusActivityObserver.ObserverView(
+        let observer = TVFocusActivityObserver.ObserverView(
             frame: CGRect(x: 100, y: 100, width: 300, height: 100)
         )
         let control = FocusItem(frame: CGRect(x: 140, y: 120, width: 60, height: 44))
@@ -71,7 +77,7 @@ final class LiveChannelFocusActivityObserverTests: XCTestCase {
     func testOtherWindowsAndDetachedHUDCannotReportActivity() {
         let firstWindow = UIWindow(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
         let secondWindow = UIWindow(frame: firstWindow.frame)
-        let observer = LiveChannelFocusActivityObserver.ObserverView(frame: firstWindow.bounds)
+        let observer = TVFocusActivityObserver.ObserverView(frame: firstWindow.bounds)
         let otherControl = FocusItem(frame: CGRect(x: 10, y: 10, width: 80, height: 44))
         firstWindow.addSubview(observer)
         secondWindow.addSubview(otherControl)
@@ -85,11 +91,35 @@ final class LiveChannelFocusActivityObserverTests: XCTestCase {
         XCTAssertFalse(firstWindow.gestureRecognizers?.contains { $0.delegate === observer } ?? false)
     }
 
+    func testPlaybackPressObservationIsOptInAndNeverConsumesSelectOrPlayPause() throws {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
+        let observer = TVFocusActivityObserver.ObserverView(frame: window.bounds)
+        let control = FocusItem(frame: CGRect(x: 40, y: 40, width: 100, height: 100))
+        window.addSubview(observer)
+        window.addSubview(control)
+        defer { observer.stop() }
+        var events = 0
+        observer.onActivity = { events += 1 }
+        observer.observesPlaybackPresses = true
+        let recognizer = try XCTUnwrap(window.gestureRecognizers?.first { $0.delegate === observer })
+        let select = NSNumber(value: UIPress.PressType.select.rawValue)
+        XCTAssertTrue(recognizer.allowedPressTypes.contains(select))
+        XCTAssertFalse(observer.observePress(.select, focusedItem: control))
+        XCTAssertFalse(observer.observePress(.playPause, focusedItem: control))
+        XCTAssertEqual(events, 2)
+        XCTAssertFalse(observer.observePress(.menu, focusedItem: control))
+        XCTAssertEqual(events, 2)
+        observer.observesPlaybackPresses = false
+        XCTAssertFalse(recognizer.allowedPressTypes.contains(select))
+        XCTAssertFalse(observer.observePress(.select, focusedItem: control))
+        XCTAssertEqual(events, 2)
+    }
+
     func testStopRemovesOwnedPressObserverAndDoesNotChangeExistingRecognizers() {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
         let existing = UITapGestureRecognizer()
         window.addGestureRecognizer(existing)
-        let observer = LiveChannelFocusActivityObserver.ObserverView(frame: window.bounds)
+        let observer = TVFocusActivityObserver.ObserverView(frame: window.bounds)
         window.addSubview(observer)
         XCTAssertTrue(window.gestureRecognizers?.contains { $0.delegate === observer } ?? false)
         observer.stop()

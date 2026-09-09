@@ -3,30 +3,51 @@ import SwiftUI
 import UIKit
 
 /// Observes the presented HUD's native input without changing focus or consuming presses.
-struct LiveChannelFocusActivityObserver: UIViewRepresentable {
+public struct TVFocusActivityObserver: UIViewRepresentable {
     let onActivity: () -> Void
+    let observesPlaybackPresses: Bool
 
-    func makeUIView(context: Context) -> ObserverView {
+    public init(onActivity: @escaping () -> Void, observesPlaybackPresses: Bool = false) {
+        self.onActivity = onActivity
+        self.observesPlaybackPresses = observesPlaybackPresses
+    }
+
+    public func makeUIView(context: Context) -> ObserverView {
         let view = ObserverView()
         view.backgroundColor = .clear
         view.isUserInteractionEnabled = false
+        view.onActivity = onActivity
+        view.observesPlaybackPresses = observesPlaybackPresses
         return view
     }
 
-    func updateUIView(_ uiView: ObserverView, context: Context) {
+    public func updateUIView(_ uiView: ObserverView, context: Context) {
         uiView.onActivity = onActivity
+        uiView.observesPlaybackPresses = observesPlaybackPresses
     }
 
-    static func dismantleUIView(_ uiView: ObserverView, coordinator: ()) {
+    public static func dismantleUIView(_ uiView: ObserverView, coordinator: ()) {
         uiView.stop()
     }
 
-    final class ObserverView: UIView, UIGestureRecognizerDelegate {
+    public final class ObserverView: UIView, UIGestureRecognizerDelegate {
         var onActivity: (() -> Void)?
+        var observesPlaybackPresses = false {
+            didSet {
+                guard oldValue != observesPlaybackPresses else { return }
+                pressObserver?.allowedPressTypes = allowedPressTypes
+            }
+        }
         private weak var observedWindow: UIWindow?
         private var pressObserver: UITapGestureRecognizer?
 
-        override func didMoveToWindow() {
+        private var allowedPressTypes: [NSNumber] {
+            var types: [UIPress.PressType] = [.leftArrow, .rightArrow, .upArrow, .downArrow]
+            if observesPlaybackPresses { types += [.select, .playPause] }
+            return types.map { NSNumber(value: $0.rawValue) }
+        }
+
+        public override func didMoveToWindow() {
             super.didMoveToWindow()
             detachObservers()
             guard let window else { return }
@@ -38,9 +59,7 @@ struct LiveChannelFocusActivityObserver: UIViewRepresentable {
                 object: nil
             )
             let presses = UITapGestureRecognizer()
-            presses.allowedPressTypes = [
-                UIPress.PressType.leftArrow, .rightArrow, .upArrow, .downArrow
-            ].map { NSNumber(value: $0.rawValue) }
+            presses.allowedPressTypes = allowedPressTypes
             presses.allowedTouchTypes = []
             presses.cancelsTouchesInView = false
             presses.delaysTouchesBegan = false
@@ -68,7 +87,7 @@ struct LiveChannelFocusActivityObserver: UIViewRepresentable {
             reportActivity(for: context.nextFocusedItem)
         }
 
-        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive press: UIPress) -> Bool {
+        public func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive press: UIPress) -> Bool {
             guard gestureRecognizer === pressObserver else { return false }
             let item = window.flatMap { UIFocusSystem.focusSystem(for: $0)?.focusedItem }
             return observePress(press.type, focusedItem: item)
@@ -78,6 +97,8 @@ struct LiveChannelFocusActivityObserver: UIViewRepresentable {
             switch type {
             case .leftArrow, .rightArrow, .upArrow, .downArrow:
                 reportActivity(for: focusedItem)
+            case .select, .playPause:
+                if observesPlaybackPresses { reportActivity(for: focusedItem) }
             default: break
             }
             // Receiving an arrow at the end of a row is still activity. Reject
