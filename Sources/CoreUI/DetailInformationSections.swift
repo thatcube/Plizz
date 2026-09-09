@@ -45,6 +45,10 @@ public struct DetailInformationSections: View {
     /// heroes above do — the section is blurred, not removed, so a deliberate
     /// press can still lift it.
     private let spoilerSettings: SpoilerSettings
+    /// Only omit content already accessible in the header. A focused episode
+    /// can have different prose or scores from the series represented below.
+    private let overviewAlreadyShown: String?
+    private let ratingsAlreadyShown: Set<ExternalRating>
 
     @State private var showsFullOverview = false
     @State private var overviewCardHeight: CGFloat = 0
@@ -69,7 +73,9 @@ public struct DetailInformationSections: View {
         selectedSource: MediaSourceRef? = nil,
         selectedVersion: MediaVersion? = nil,
         externalAvailability: ExternalTitleAvailability? = nil,
-        spoilerSettings: SpoilerSettings = .default
+        spoilerSettings: SpoilerSettings = .default,
+        overviewAlreadyShown: String? = nil,
+        ratingsAlreadyShown: [ExternalRating] = []
     ) {
         self.item = item
         self.horizontalInset = horizontalInset
@@ -77,6 +83,8 @@ public struct DetailInformationSections: View {
         self.selectedVersion = selectedVersion
         self.externalAvailability = externalAvailability
         self.spoilerSettings = spoilerSettings
+        self.overviewAlreadyShown = overviewAlreadyShown
+        self.ratingsAlreadyShown = Set(ratingsAlreadyShown)
     }
 
     public var body: some View {
@@ -157,7 +165,7 @@ public struct DetailInformationSections: View {
                     comment: "Header of the synopsis section on a movie or series detail page. A noun meaning 'about this title', not the Settings > About page."
                 )) { aboutContent }
             }
-            if !item.ratings.isEmpty {
+            if !sortedRatings.isEmpty {
                 detailSection(title: "Ratings") { ratingsTiles }
             }
             if !informationGroups.isEmpty {
@@ -184,7 +192,7 @@ public struct DetailInformationSections: View {
                 }
             }
 
-            if hasAbout || !item.ratings.isEmpty {
+            if hasAbout || !sortedRatings.isEmpty {
                 GridRow(alignment: .top) {
                     if hasAbout {
                         headedSection(title: LocalizedStringResource(
@@ -196,7 +204,7 @@ public struct DetailInformationSections: View {
                     } else {
                         Color.clear.gridCellColumns(4)
                     }
-                    if !item.ratings.isEmpty {
+                    if !sortedRatings.isEmpty {
                         headedSection(title: "Ratings") { ratingsTiles }
                             .gridCellColumns(8)
                     } else {
@@ -305,7 +313,7 @@ public struct DetailInformationSections: View {
     /// Whether About and Ratings sit side-by-side and should be the same height
     /// (tvOS and regular-width iPad). iPhone stacks them, so no matching.
     private var matchesRatingsHeight: Bool {
-        guard hasAbout, !item.ratings.isEmpty else { return false }
+        guard hasAbout, !sortedRatings.isEmpty else { return false }
         #if os(tvOS)
         return true
         #else
@@ -330,11 +338,12 @@ public struct DetailInformationSections: View {
     }
 
     private var hasContent: Bool {
-        hasAbout || !item.ratings.isEmpty || !informationGroups.isEmpty
+        hasAbout || !sortedRatings.isEmpty || !informationGroups.isEmpty
     }
 
-    private var hasAbout: Bool {
-        nonempty(item.overview) != nil
+    var hasAbout: Bool {
+        guard let overview = nonempty(item.overview) else { return false }
+        return overview != nonempty(overviewAlreadyShown)
     }
 
     /// `S1 · E1` for an episode, `nil` for anything else.
@@ -810,8 +819,10 @@ public struct DetailInformationSections: View {
         .filter { !$0.facts.isEmpty }
     }
 
-    private var sortedRatings: [ExternalRating] {
-        item.ratings.sorted { $0.source.sortRank < $1.source.sortRank }
+    var sortedRatings: [ExternalRating] {
+        item.ratings
+            .filter { !ratingsAlreadyShown.contains($0) }
+            .sorted { $0.source.sortRank < $1.source.sortRank }
     }
 
     /// Every Information column occupies one third of the spine so the lower row

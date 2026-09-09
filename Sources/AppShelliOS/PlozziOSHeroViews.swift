@@ -12,16 +12,14 @@ import SwiftUI
 import UIKit
 
 enum PlozziOSHeroMetrics {
-    // Add this above the actions and remove it below the foreground to keep the logo fixed.
-    static let compactDetailActionDrop: CGFloat = 20
+    static let compactDetailActionSpacing: CGFloat = 20
 
     /// Whether this hero fills its stage by **mirroring** its own bottom edge
     /// into the space the picture doesn't reach, rather than by cropping the
     /// picture until it does.
     ///
-    /// Portrait Home and detail share the same picture/continuation geometry,
-    /// but only Home grows with the window. Detail retains its shorter stage
-    /// so the episode browser stays close to the actions.
+    /// Portrait Home and detail share the same picture/continuation geometry.
+    /// Detail has a shorter artwork-only stage; its information grows below it.
     static func extendsArtwork(
         style: HeroArtworkStyle,
         surfaceRole: HeroTrailerSurfaceRole
@@ -50,7 +48,7 @@ enum PlozziOSHeroMetrics {
             )
         }
         let base: CGFloat = style == .compactPortrait
-            ? 610
+            ? (surfaceRole == .detail ? 420 : 610)
             : (surfaceRole == .detail ? 760 : 680)
         return base + accessibilityExtra
     }
@@ -493,6 +491,7 @@ struct PlozziOSDetailHeroSection: View {
 private struct PlozziOSHeroStage<Foreground: View>: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.plozziOSHeroContainerHeight) private var containerHeight
+    @Environment(\.themePalette) private var palette
     @State private var artworkAppearanceID = UUID().uuidString
 
     let item: MediaItem
@@ -540,6 +539,10 @@ private struct PlozziOSHeroStage<Foreground: View>: View {
         )
     }
 
+    private var separatesContent: Bool {
+        surfaceRole == .detail && style == .compactPortrait
+    }
+
     var body: some View {
         // Overscroll stretch, mirroring the Home hero: grow the backdrop by the
         // pull distance and pull it up so its top tracks the finger while the
@@ -559,7 +562,7 @@ private struct PlozziOSHeroStage<Foreground: View>: View {
                 placement: artworkPlacement
             )
         }
-        return ZStack {
+        let background = Group {
             if showsBackdrop {
                 PlozziOSReflectedHeroStage(height: height, ancestorScale: pullScale) { _ in
                     PlozziOSHeroBackdrop(
@@ -593,34 +596,54 @@ private struct PlozziOSHeroStage<Foreground: View>: View {
             } else {
                 Color.clear
             }
-
-            foreground()
-                .frame(
-                    maxWidth: PlozziOSPageLayout.heroStageMaxWidth(
-                        for: style,
-                        surfaceRole: surfaceRole
-                    )
-                )
-                .frame(
-                    maxWidth: .infinity,
-                    maxHeight: .infinity,
-                    alignment: style == .compactPortrait
-                        ? .bottom
-                        : .bottomLeading
-                )
-                .padding(
-                    .horizontal,
-                    PlozziOSPageLayout.horizontalInset(for: style)
-                )
-                .padding(
-                    .bottom,
-                    style == .compactPortrait
-                        ? 30 - (surfaceRole == .detail ? PlozziOSHeroMetrics.compactDetailActionDrop : 0)
-                        : 42
-                )
-
         }
-        .frame(height: height)
+
+        return Group {
+            if separatesContent {
+                VStack(spacing: 0) {
+                    if showsBackdrop {
+                        ZStack(alignment: .bottom) {
+                            background
+                            PlozziOSHeroMetadata(
+                                presentation: presentation,
+                                style: style,
+                                mode: .detail,
+                                logoFallback: PlozziOSHeroMetadata.tmdbLogoFallback(for: item),
+                                content: .identity
+                            )
+                            .padding(.horizontal, PlozziOSPageLayout.horizontalInset(for: style))
+                            .padding(.bottom, 12)
+                        }
+                        .frame(height: height)
+                    }
+                    foreground()
+                        .padding(.horizontal, PlozziOSPageLayout.horizontalInset(for: style))
+                        .padding(.top, showsBackdrop ? 12 : 80)
+                        .padding(.bottom, 8)
+                        .frame(maxWidth: .infinity)
+                        .background(palette.backgroundBase)
+                }
+            } else {
+                ZStack {
+                    background
+                    foreground()
+                        .frame(
+                            maxWidth: PlozziOSPageLayout.heroStageMaxWidth(
+                                for: style,
+                                surfaceRole: surfaceRole
+                            )
+                        )
+                        .frame(
+                            maxWidth: .infinity,
+                            maxHeight: .infinity,
+                            alignment: style == .compactPortrait ? .bottom : .bottomLeading
+                        )
+                        .padding(.horizontal, PlozziOSPageLayout.horizontalInset(for: style))
+                        .padding(.bottom, style == .compactPortrait ? 30 : 42)
+                }
+                .frame(height: height)
+            }
+        }
         .task(
             id: PlozziOSHeroPlaybackID(
                 itemID: item.id,
@@ -1905,7 +1928,8 @@ private struct PlozziOSDetailHeroForeground: View {
                 subjectTitle: presentsEpisodeStill ? item.title : nil,
                 scheduleLine: scheduleLine,
                 logoFallback: PlozziOSHeroMetadata.tmdbLogoFallback(for: item),
-                usesCompactDetailLayout: style == .compactPortrait
+                usesCompactDetailLayout: style == .compactPortrait,
+                content: style == .compactPortrait && !presentsEpisodeStill ? .information : .all
             )
 
             // Progressive overflow: try every inline layout from "all buttons
@@ -1949,7 +1973,7 @@ private struct PlozziOSDetailHeroForeground: View {
                 )
             }
             .controlSize(.large)
-            .padding(.top, style == .compactPortrait ? PlozziOSHeroMetrics.compactDetailActionDrop : 0)
+            .padding(.top, style == .compactPortrait ? PlozziOSHeroMetrics.compactDetailActionSpacing : 0)
         }
         .frame(
             maxWidth: PlozziOSPageLayout.heroTextMaxWidth(for: style),
@@ -2592,6 +2616,11 @@ private struct PlozziOSHeroMetadata: View {
         case home
         case detail
     }
+    enum Content {
+        case all
+        case identity
+        case information
+    }
 
     @Environment(\.themePalette) private var palette
     let presentation: HeroPresentation
@@ -2620,8 +2649,9 @@ private struct PlozziOSHeroMetadata: View {
     /// payload refreshes may update other chrome, but must not replace a visible
     /// overview with a newly arrived tagline.
     var descriptionOverride: DescriptionOverride? = nil
-    /// A quick introduction; the existing lower information section owns full detail.
+    /// Compact detail uses a three-line expandable synopsis and a two-genre preview.
     var usesCompactDetailLayout = false
+    var content: Content = .all
 
     struct DescriptionOverride {
         let text: String?
@@ -2649,148 +2679,173 @@ private struct PlozziOSHeroMetadata: View {
     }
 
     var body: some View {
-        let contextParts = usesCompactDetailLayout
-            ? factComponents + HeroContentPolicy.compactDetailGenres(
-                focused: presentation, root: rootPresentation
-            )
+        let contextParts =
+            usesCompactDetailLayout
+            ? factComponents
+                + HeroContentPolicy.compactDetailGenres(
+                    focused: presentation, root: rootPresentation
+                )
             : effectiveGenres
         VStack(
             alignment: style == .compactPortrait ? .center : .leading,
             spacing: 9
         ) {
-            if let seriesBreadcrumb {
-                // The episode is this page's subject, so the show is context
-                // rather than identity — and naming it says both where you are
-                // and that you can leave. See `DetailHeroView` on tvOS.
-                Button {
-                    onTapBreadcrumb?()
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(seriesBreadcrumb)
-                            .lineLimit(1)
-                        Image(systemName: "chevron.forward")
-                            .font(.subheadline.weight(.semibold))
+            if content != .information {
+                if let seriesBreadcrumb {
+                    // The episode is this page's subject, so the show is context
+                    // rather than identity — and naming it says both where you are
+                    // and that you can leave. See `DetailHeroView` on tvOS.
+                    Button {
+                        onTapBreadcrumb?()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(seriesBreadcrumb)
+                                .lineLimit(1)
+                            Image(systemName: "chevron.forward")
+                                .font(.subheadline.weight(.semibold))
+                        }
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(palette.secondaryText)
                     }
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(palette.secondaryText)
-                }
-                .buttonStyle(.plain)
-                .disabled(onTapBreadcrumb == nil)
-                .accessibilityLabel(Text("Go to \(seriesBreadcrumb)"))
+                    .buttonStyle(.plain)
+                    .disabled(onTapBreadcrumb == nil)
+                    .accessibilityLabel(Text("Go to \(seriesBreadcrumb)"))
 
-                // `presentation.title` resolves an episode to its *show's* name,
-                // which is right when a series hero fronts an episode but wrong
-                // here: the breadcrumb above already names the show.
-                Text(subjectTitle ?? presentation.title)
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                    .foregroundStyle(palette.primaryText)
-                    .lineLimit(2)
-                    .accessibilityAddTraits(.isHeader)
-            } else {
-                if let scheduleLine, !usesCompactDetailLayout {
-                    scheduleBadge(scheduleLine)
-                }
-                let logoBox = PlozziOSPageLayout.heroLogoBox(for: style)
-                HeroLogoArtwork(
-                    references: presentation.logoReferences,
-                    asyncFallbackURL: logoFallback,
-                    // Without this the analysis cannot prove a logo is safe and so
-                    // keeps its halo on for EVERY title — which is why iOS drew a
-                    // shadow behind logos that plainly did not need one while tvOS,
-                    // which has always sampled, did not. Memoised per reference by
-                    // `HeroBackgroundSampler`, so a carousel pays for each slide
-                    // once.
-                    backgroundSample: heroBackgroundSample,
-                    maxWidth: logoBox.width,
-                    maxHeight: logoBox.height,
-                    alignment: style == .compactPortrait ? .center : .leading
-                ) {
-                    Text(presentation.title)
-                        .font(style == .compactPortrait ? .largeTitle : .largeTitle)
+                    // `presentation.title` resolves an episode to its *show's* name,
+                    // which is right when a series hero fronts an episode but wrong
+                    // here: the breadcrumb above already names the show.
+                    Text(subjectTitle ?? presentation.title)
+                        .font(.largeTitle)
                         .fontWeight(.bold)
                         .foregroundStyle(palette.primaryText)
                         .lineLimit(2)
-                }
-                .accessibilityLabel(Text(presentation.title))
-                .accessibilityAddTraits(.isHeader)
-            }
-
-            if effectiveRatingBadge != nil || !contextParts.isEmpty {
-                HStack(spacing: 10) {
-                    if let badge = effectiveRatingBadge {
-                        MediaBadgeChip(badge: badge)
-                    }
-                    if !contextParts.isEmpty {
-                        Text(contextParts.joined(separator: "  ·  "))
-                            .font(.subheadline.weight(.medium))
-                            .lineLimit(usesCompactDetailLayout ? 2 : 1)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .foregroundStyle(palette.primaryText.opacity(0.92))
-            }
-
-            if let descriptionText {
-                if usesCompactDetailLayout {
-                    ExpandableOverviewText(
-                        text: descriptionText,
-                        title: subjectTitle ?? presentation.title,
-                        lineLimit: 3,
-                        font: .body,
-                        alignment: .center,
-                        style: .inline
-                    )
-                    .frame(maxWidth: PlozziOSPageLayout.heroTextMaxWidth(for: style))
+                        .accessibilityAddTraits(.isHeader)
                 } else {
-                    Text(descriptionText.overviewMarkdownWithLegibleLinks(
-                        textColor: palette.primaryText,
-                        accent: palette.accent
-                    ))
-                    .font(.subheadline)
-                    .plozzForeground(.secondary)
-                    .lineLimit(3)
+                    if let scheduleLine, !usesCompactDetailLayout {
+                        scheduleBadge(scheduleLine)
+                    }
+                    let logoBox = PlozziOSPageLayout.heroLogoBox(for: style)
+                    HeroLogoArtwork(
+                        references: presentation.logoReferences,
+                        asyncFallbackURL: logoFallback,
+                        // Without this the analysis cannot prove a logo is safe and so
+                        // keeps its halo on for EVERY title — which is why iOS drew a
+                        // shadow behind logos that plainly did not need one while tvOS,
+                        // which has always sampled, did not. Memoised per reference by
+                        // `HeroBackgroundSampler`, so a carousel pays for each slide
+                        // once.
+                        backgroundSample: heroBackgroundSample,
+                        maxWidth: logoBox.width,
+                        maxHeight: logoBox.height,
+                        alignment: style == .compactPortrait ? .center : .leading
+                    ) {
+                        Text(presentation.title)
+                            .font(style == .compactPortrait ? .largeTitle : .largeTitle)
+                            .fontWeight(.bold)
+                            .foregroundStyle(palette.primaryText)
+                            .lineLimit(2)
+                    }
+                    .accessibilityLabel(Text(presentation.title))
+                    .accessibilityAddTraits(.isHeader)
+                }
+            }
+
+            if content != .identity {
+                if effectiveRatingBadge != nil || !contextParts.isEmpty {
+                    HStack(spacing: 10) {
+                        if let badge = effectiveRatingBadge {
+                            MediaBadgeChip(badge: badge)
+                        }
+                        if !contextParts.isEmpty {
+                            Text(contextParts.joined(separator: "  ·  "))
+                                .font(.subheadline.weight(.medium))
+                                .lineLimit(usesCompactDetailLayout ? 2 : 1)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .foregroundStyle(palette.primaryText.opacity(0.92))
+                }
+
+                if let descriptionText {
+                    if usesCompactDetailLayout {
+                        ExpandableOverviewText(
+                            text: descriptionText,
+                            title: subjectTitle ?? presentation.title,
+                            lineLimit: 3,
+                            font: .body,
+                            alignment: .center,
+                            style: .inline
+                        )
+                        .frame(maxWidth: PlozziOSPageLayout.heroTextMaxWidth(for: style))
+                    } else {
+                        Text(
+                            descriptionText.overviewMarkdownWithLegibleLinks(
+                                textColor: palette.primaryText,
+                                accent: palette.accent
+                            )
+                        )
+                        .font(.subheadline)
+                        .plozzForeground(.secondary)
+                        .lineLimit(3)
+                        .frame(
+                            maxWidth: PlozziOSPageLayout.heroTextMaxWidth(
+                                for: style
+                            ),
+                            alignment: style == .compactPortrait
+                                ? .center
+                                : .leading
+                        )
+                        .multilineTextAlignment(
+                            style == .compactPortrait ? .center : .leading
+                        )
+                    }
+                }
+
+                if mode == .home, !effectiveRatings.isEmpty {
+                    RatingsBadgeRow(
+                        ratings: effectiveRatings
+                    )
                     .frame(
-                        maxWidth: PlozziOSPageLayout.heroTextMaxWidth(
-                            for: style
-                        ),
+                        maxWidth: .infinity,
                         alignment: style == .compactPortrait
                             ? .center
                             : .leading
                     )
-                    .multilineTextAlignment(
-                        style == .compactPortrait ? .center : .leading
+                } else if mode == .detail, usesCompactDetailLayout {
+                    if !effectiveRatings.isEmpty {
+                        RatingsBadgeRow(ratings: effectiveRatings)
+                    }
+                    if !effectiveTechnicalBadges.isEmpty {
+                        WrappingHStackLayout(
+                            alignment: .center,
+                            spacing: 12,
+                            lineSpacing: 8,
+                            balancesLastRow: true
+                        ) {
+                            ForEach(effectiveTechnicalBadges) { badge in
+                                MetadataMediaBadgeChip(badge: badge)
+                            }
+                        }
+                    }
+                } else if mode == .detail,
+                    !factComponents.isEmpty
+                        || !effectiveRatings.isEmpty
+                        || !effectiveTechnicalBadges.isEmpty
+                {
+                    AdaptiveMediaMetadataRow(
+                        facts: factComponents,
+                        ratings: effectiveRatings,
+                        badges: effectiveTechnicalBadges,
+                        centered: style == .compactPortrait
                     )
                 }
-            }
 
-            if mode == .home, !effectiveRatings.isEmpty {
-                RatingsBadgeRow(
-                    ratings: effectiveRatings
-                )
-                .frame(
-                    maxWidth: .infinity,
-                    alignment: style == .compactPortrait
-                        ? .center
-                        : .leading
-                )
-            } else if mode == .detail, !usesCompactDetailLayout,
-                      !factComponents.isEmpty
-                        || !effectiveRatings.isEmpty
-                        || !effectiveTechnicalBadges.isEmpty {
-                AdaptiveMediaMetadataRow(
-                    facts: factComponents,
-                    ratings: effectiveRatings,
-                    badges: effectiveTechnicalBadges,
-                    centered: style == .compactPortrait
-                )
-            }
-
-            if usesCompactDetailLayout, let scheduleLine {
-                Text(scheduleLine)
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(palette.primaryText)
-                    .fixedSize(horizontal: false, vertical: true)
+                if usesCompactDetailLayout, let scheduleLine {
+                    Text(scheduleLine)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(palette.primaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
