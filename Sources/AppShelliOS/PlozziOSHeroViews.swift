@@ -1929,7 +1929,8 @@ private struct PlozziOSDetailHeroForeground: View {
                 scheduleLine: scheduleLine,
                 logoFallback: PlozziOSHeroMetadata.tmdbLogoFallback(for: item),
                 usesCompactDetailLayout: style == .compactPortrait,
-                content: style == .compactPortrait && !presentsEpisodeStill ? .information : .all
+                content: style == .compactPortrait && !presentsEpisodeStill ? .information : .all,
+                detailPageSettings: appModel.settings.detailPage.settings
             )
 
             // Progressive overflow: try every inline layout from "all buttons
@@ -2652,6 +2653,7 @@ private struct PlozziOSHeroMetadata: View {
     /// Compact detail uses a three-line expandable synopsis and a two-genre preview.
     var usesCompactDetailLayout = false
     var content: Content = .all
+    var detailPageSettings: DetailPageSettings = .default
 
     struct DescriptionOverride {
         let text: String?
@@ -2812,21 +2814,7 @@ private struct PlozziOSHeroMetadata: View {
                             : .leading
                     )
                 } else if mode == .detail, usesCompactDetailLayout {
-                    if !effectiveRatings.isEmpty {
-                        RatingsBadgeRow(ratings: effectiveRatings)
-                    }
-                    if !effectiveTechnicalBadges.isEmpty {
-                        WrappingHStackLayout(
-                            alignment: .center,
-                            spacing: 12,
-                            lineSpacing: 8,
-                            balancesLastRow: true
-                        ) {
-                            ForEach(effectiveTechnicalBadges) { badge in
-                                MetadataMediaBadgeChip(badge: badge)
-                            }
-                        }
-                    }
+                    DetailHeaderMetadataRow(ratings: effectiveRatings, badges: effectiveTechnicalBadges)
                 } else if mode == .detail,
                     !factComponents.isEmpty
                         || !effectiveRatings.isEmpty
@@ -2916,6 +2904,13 @@ private struct PlozziOSHeroMetadata: View {
         case .home:
             return rootPresentation.ratings
         case .detail:
+            if usesCompactDetailLayout {
+                return detailPageSettings.headerRatings(
+                    from: HeroContentPolicy.ratings(focused: presentation, root: rootPresentation),
+                    isAnime: rootPresentation.isAnime,
+                    hidesRatings: hidesRatings
+                )
+            }
             return HeroContentPolicy.ratings(
                 focused: presentation,
                 root: rootPresentation

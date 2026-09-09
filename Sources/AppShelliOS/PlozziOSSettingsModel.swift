@@ -19,6 +19,7 @@ final class PlozziOSSettingsModel {
     let nightShift: NightShiftSettingsModel
     let hero: HeroSettingsModel
     let heroBackground: HeroBackgroundSettingsModel
+    let detailPage: DetailPageSettingsModel
     let themeMusic: ThemeMusicSettingsModel
     let homeVisibility: HomeLibraryVisibilityModel
     let diagnostics: DiagnosticsSettingsModel
@@ -82,6 +83,9 @@ final class PlozziOSSettingsModel {
         )
         heroBackground = HeroBackgroundSettingsModel(
             store: HeroBackgroundSettingsStore(namespace: namespace)
+        )
+        detailPage = DetailPageSettingsModel(
+            store: DetailPageSettingsStore(namespace: namespace)
         )
         themeMusic = ThemeMusicSettingsModel(
             store: ThemeMusicSettingsStore(namespace: namespace)

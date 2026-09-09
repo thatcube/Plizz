@@ -100,6 +100,21 @@ public struct MediaBadge: Hashable, Sendable, Identifiable {
         return "\(label) \(detail)"
     }
 
+    /// Compact technical names; the unabridged label remains in format details.
+    public var compactFormatText: String {  // l10n:content — technical format abbreviations, not translated
+        let name: String
+        switch label {
+        case "Dolby Vision": name = "DV"
+        case "Dolby Atmos": name = "Atmos"
+        case "Dolby Digital": name = "DD"
+        case "Dolby Digital+": name = "DD+"
+        case "Dolby TrueHD": name = "TrueHD"
+        default: name = label
+        }
+        guard let detail else { return name }
+        return "\(name) \(detail)"
+    }
+
     /// For `.dolby` badges, the format word(s) after the leading "Dolby " (e.g.
     /// `Vision`, `Atmos`, `Digital+`) — the logo conveys the "Dolby". For any
     /// other style this is just the full label.

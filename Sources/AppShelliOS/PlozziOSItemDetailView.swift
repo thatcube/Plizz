@@ -435,8 +435,11 @@ private struct PlozziOSCanonicalItemDetailView: View {
             : .landscape
         let headerPresentation = HeroPresentation(item: heroTarget, artworkStyle: heroStyle, surface: .detail)
         let rootPresentation = HeroPresentation(item: detail.item, artworkStyle: heroStyle, surface: .detail)
-        let headerRatings = appModel.settings.spoilers.settings.shouldHideRatings(for: heroTarget)
-            ? [] : HeroContentPolicy.ratings(focused: headerPresentation, root: rootPresentation)
+        let headerRatings = appModel.settings.detailPage.settings.headerRatings(
+            from: HeroContentPolicy.ratings(focused: headerPresentation, root: rootPresentation),
+            isAnime: rootPresentation.isAnime,
+            hidesRatings: appModel.settings.spoilers.settings.shouldHideRatings(for: heroTarget)
+        )
         let trailerPauseThreshold = PlozziOSHeroMetrics.height(
             style: heroStyle,
             surfaceRole: .detail,

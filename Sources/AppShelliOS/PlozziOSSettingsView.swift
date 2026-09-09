@@ -639,7 +639,8 @@ private struct PlozziOSSettingsSplitView: View {
         case .detailPage:
             PlozziOSDetailPageSettingsView(
                 heroBackground: appModel.settings.heroBackground,
-                themeMusic: appModel.settings.themeMusic
+                themeMusic: appModel.settings.themeMusic,
+                detailPage: appModel.settings.detailPage
             )
         case .playback:
             PlozziOSPlaybackSettingsView(
@@ -912,7 +913,8 @@ private struct PlozziOSSettingsCompactMenu: View {
                 NavigationLink {
                     PlozziOSDetailPageSettingsView(
                         heroBackground: appModel.settings.heroBackground,
-                        themeMusic: appModel.settings.themeMusic
+                        themeMusic: appModel.settings.themeMusic,
+                        detailPage: appModel.settings.detailPage
                     )
                 } label: {
                     Label("Detail Page", systemImage: "rectangle.portrait.on.rectangle.portrait")
@@ -2014,9 +2016,20 @@ private struct PlozziOSLibraryHomeSettingsView: View {
 private struct PlozziOSDetailPageSettingsView: View {
     @Bindable var heroBackground: HeroBackgroundSettingsModel
     @Bindable var themeMusic: ThemeMusicSettingsModel
+    @Bindable var detailPage: DetailPageSettingsModel
 
     var body: some View {
         List {
+            SettingsSectionGroup("Header ratings") {
+                Toggle("Show ratings in header", isOn: $detailPage.settings.showsHeaderRatings)
+                NavigationLink {
+                    PlozziOSDetailRatingPriorityView(model: detailPage)
+                } label: {
+                    Text("Rating sources & order")
+                }
+            } footer: {
+                Text("The compact detail header shows up to two available ratings in your preferred order. Your spoiler settings still apply. Other scores remain in the full information section.")
+            }
             SettingsSectionGroup("Behind the hero") {
                 Picker(
                     "Background",
@@ -2048,6 +2061,45 @@ private struct PlozziOSDetailPageSettingsView: View {
         }
         .settingsPageSurface()
         .navigationTitle("Detail Page")
+    }
+}
+
+private struct PlozziOSDetailRatingPriorityView: View {
+    @Bindable var model: DetailPageSettingsModel
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(model.settings.orderedSources, id: \.self) { source in
+                    Toggle(isOn: Binding(
+                        get: { model.settings.enabledRatingSources.contains(source) },
+                        set: { enabled in
+                            if enabled {
+                                model.settings.enabledRatingSources.insert(source)
+                            } else {
+                                model.settings.enabledRatingSources.remove(source)
+                            }
+                        }
+                    )) {
+                        switch source {
+                        case .community: Text("Community")
+                        case .critic: Text("Critics")
+                        default: Text(verbatim: source.displayName)
+                        }
+                    }
+                }
+                .onMove { offsets, destination in
+                    var order = model.settings.orderedSources
+                    order.move(fromOffsets: offsets, toOffset: destination)
+                    model.settings.ratingSourceOrder = order
+                }
+            } footer: {
+                Text("Enable the sources you want, then tap Edit to arrange them. The first two with scores for the title are shown. AniList is used only for anime.")
+            }
+        }
+        .settingsPageSurface()
+        .navigationTitle("Rating sources & order")
+        .toolbar { EditButton() }
     }
 }
 
