@@ -455,6 +455,7 @@ struct PlozziOSDetailHeroSection: View {
             isActive: true,
             // Episode pages retain their own still instead of a show backdrop.
             showsBackdrop: !presentsEpisodeStill,
+            scheduleLine: scheduleLine,
             pullDistance: pullDistance,
             trailerController: trailerController,
             backgroundSettings: appModel.settings.heroBackground,
@@ -501,6 +502,8 @@ private struct PlozziOSHeroStage<Foreground: View>: View {
     let isActive: Bool
     var showsBackdrop = true
     var showsScrim = true
+    /// Compact detail renders the availability badge with its separate title/logo.
+    var scheduleLine: LocalizedStringResource? = nil
     /// Overscroll pull (points) from the enclosing scroll view. Stretches the
     /// backdrop just like the Home hero; 0 leaves the hero at rest.
     var pullDistance: CGFloat = 0
@@ -608,6 +611,7 @@ private struct PlozziOSHeroStage<Foreground: View>: View {
                                 presentation: presentation,
                                 style: style,
                                 mode: .detail,
+                                scheduleLine: scheduleLine,
                                 logoFallback: PlozziOSHeroMetadata.tmdbLogoFallback(for: item),
                                 content: .identity
                             )
@@ -2650,7 +2654,7 @@ private struct PlozziOSHeroMetadata: View {
     /// payload refreshes may update other chrome, but must not replace a visible
     /// overview with a newly arrived tagline.
     var descriptionOverride: DescriptionOverride? = nil
-    /// Compact detail uses a three-line expandable synopsis and a two-genre preview.
+    /// Compact detail uses a two-line expandable synopsis and a two-genre preview.
     var usesCompactDetailLayout = false
     var content: Content = .all
     var detailPageSettings: DetailPageSettings = .default
@@ -2693,6 +2697,9 @@ private struct PlozziOSHeroMetadata: View {
             spacing: 9
         ) {
             if content != .information {
+                if let scheduleLine {
+                    scheduleBadge(scheduleLine)
+                }
                 if let seriesBreadcrumb {
                     // The episode is this page's subject, so the show is context
                     // rather than identity — and naming it says both where you are
@@ -2723,9 +2730,6 @@ private struct PlozziOSHeroMetadata: View {
                         .lineLimit(2)
                         .accessibilityAddTraits(.isHeader)
                 } else {
-                    if let scheduleLine, !usesCompactDetailLayout {
-                        scheduleBadge(scheduleLine)
-                    }
                     let logoBox = PlozziOSPageLayout.heroLogoBox(for: style)
                     HeroLogoArtwork(
                         references: presentation.logoReferences,
@@ -2773,7 +2777,7 @@ private struct PlozziOSHeroMetadata: View {
                         ExpandableOverviewText(
                             text: descriptionText,
                             title: subjectTitle ?? presentation.title,
-                            lineLimit: 3,
+                            lineLimit: 2,
                             font: .body,
                             alignment: .center,
                             style: .inline
@@ -2826,13 +2830,6 @@ private struct PlozziOSHeroMetadata: View {
                         badges: effectiveTechnicalBadges,
                         centered: style == .compactPortrait
                     )
-                }
-
-                if usesCompactDetailLayout, let scheduleLine {
-                    Text(scheduleLine)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(palette.primaryText)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }

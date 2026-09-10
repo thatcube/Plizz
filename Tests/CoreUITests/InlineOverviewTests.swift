@@ -12,10 +12,12 @@ final class InlineOverviewTests: XCTestCase {
         count: 5
     ).joined(separator: " ")
 
-    private func referenceHeight(text: String, width: CGFloat, typeSize: DynamicTypeSize) -> CGFloat {
+    private func referenceHeight(
+        text: String, width: CGFloat, typeSize: DynamicTypeSize, lineLimit: Int = 3
+    ) -> CGFloat {
         let view = Text(text.overviewMarkdownWithLegibleLinks(textColor: .white, accent: .white))
             .font(.body)
-            .lineLimit(3)
+            .lineLimit(lineLimit)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity)
             .environment(\.dynamicTypeSize, typeSize)
@@ -28,10 +30,11 @@ final class InlineOverviewTests: XCTestCase {
         _ text: String,
         width: CGFloat,
         typeSize: DynamicTypeSize = .large,
-        direction: LayoutDirection = .leftToRight
+        direction: LayoutDirection = .leftToRight,
+        lineLimit: Int = 3
     ) async throws -> UIImage {
         let content = ExpandableOverviewText(
-            text: text, title: "A story", lineLimit: 3,
+            text: text, title: "A story", lineLimit: lineLimit,
             font: .body, alignment: .center, style: .inline
         )
         .environment(\.dynamicTypeSize, typeSize)
@@ -105,6 +108,20 @@ final class InlineOverviewTests: XCTestCase {
             XCTAssertGreaterThan(more.minX, 0.65, "More stays at the trailing end, not a separate row.")
             let text = try recognizedText(in: image).map(\.string).joined(separator: " ")
             XCTAssertFalse(text.contains("https"), "Markdown renders its link label, not its raw URL.")
+        }
+    }
+
+    func testTwoLineDetailPreviewKeepsMoreOnItsSecondLine() async throws {
+        for typeSize in [DynamicTypeSize.large, .accessibility3] {
+            let image = try await render(longText, width: 320, typeSize: typeSize, lineLimit: 2)
+            XCTAssertEqual(
+                image.size.height,
+                referenceHeight(text: longText, width: 320, typeSize: typeSize, lineLimit: 2),
+                accuracy: 1
+            )
+            let more = try moreBounds(in: image)
+            XCTAssertLessThan(more.maxY, 0.55, "More must stay within the second line.")
+            XCTAssertGreaterThan(more.minX, 0.4)
         }
     }
 
