@@ -124,6 +124,7 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
     private let libraryHistory: LibraryChannelHistorySettings?
     private let libraryIssue: LibraryChannelError?
     private let reloadLibrary: (() -> Void)?
+    private let prepareLibraryChannels: (@MainActor () async throws -> Void)?
     private let libraryIsAuthorized: @MainActor @Sendable () -> Bool
     private let didConfigurePlaylist: () -> Void
     private let serverProviderResolver: LiveTVServerProviderResolver
@@ -161,6 +162,7 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
         libraryHistory: LibraryChannelHistorySettings? = nil,
         libraryIssue: LibraryChannelError? = nil,
         reloadLibrary: (() -> Void)? = nil,
+        prepareLibraryChannels: (@MainActor () async throws -> Void)? = nil,
         libraryIsAuthorized: @escaping @MainActor @Sendable () -> Bool = { true },
         sourceApprovalContext: @escaping @MainActor @Sendable () -> LiveTVSourceApprovalContext? = { nil },
         @ViewBuilder player: @escaping (LiveTVPrototypePlayback) -> PlayerContent
@@ -181,6 +183,7 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
         self.libraryHistory = libraryHistory
         self.libraryIssue = libraryIssue
         self.reloadLibrary = reloadLibrary
+        self.prepareLibraryChannels = prepareLibraryChannels
         self.libraryIsAuthorized = libraryIsAuthorized
         let sourceAuthority = LiveTVPlaybackSourceAuthority(
             profileID: profileID,
@@ -951,7 +954,9 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
                 .navigationDestination(isPresented: $managesLibraryChannels) {
                     if let libraryService, let libraryHistory {
                         LiveTVSourceAccessGate(model: sources) {
-                            LibraryChannelManagementView(service: libraryService, history: libraryHistory)
+                            LibraryChannelManagementView(
+                                service: libraryService, history: libraryHistory,
+                                prepareLibraries: prepareLibraryChannels)
                         }
                         .navigationDestination(isPresented: $showsScanSources) {
                             LiveTVSourceAccessGate(model: sources) {

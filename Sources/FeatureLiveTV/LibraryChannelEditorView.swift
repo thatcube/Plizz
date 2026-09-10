@@ -8,10 +8,15 @@ import SwiftUI
 public struct LibraryChannelEditorView: View {
     @State private var model: LibraryChannelEditorModel
     @State private var action: Task<Void, Never>?
+    private let prepareLibraries: (@MainActor () async throws -> Void)?
     @Environment(\.dismiss) private var dismiss
 
-    public init(service: LibraryChannelService, editingChannelID: UUID? = nil) {
+    public init(
+        service: LibraryChannelService, editingChannelID: UUID? = nil,
+        prepareLibraries: (@MainActor () async throws -> Void)? = nil
+    ) {
         _model = State(initialValue: LibraryChannelEditorModel(service: service, editingChannelID: editingChannelID))
+        self.prepareLibraries = prepareLibraries
     }
 
     public var body: some View {
@@ -55,7 +60,7 @@ public struct LibraryChannelEditorView: View {
                 Text("Schedules are local to this device until shared with their catalog snapshot. Changes begin after already published programmes.")
             }
         }
-        .task { await model.load() }
+        .task { await model.load(prepareLibraries: prepareLibraries) }
         .onDisappear { action?.cancel(); action = nil }
     }
 }
@@ -220,10 +225,16 @@ final class LibraryChannelEditorModel {
         return value
     }
 
-    func load() async {
+    func load(prepareLibraries: (@MainActor () async throws -> Void)? = nil) async {
+        isWorking = true
+        defer { isWorking = false }
         do {
-            if !service.isLoaded { try await service.load() }
-            try await service.loadLibraries()
+            if let prepareLibraries {
+                try await prepareLibraries()
+            } else {
+                if !service.isLoaded { try await service.load() }
+                try await service.loadLibraries()
+            }
         } catch { issue = (error as? LibraryChannelError) ?? .sourceUnavailable }
     }
 
@@ -259,24 +270,30 @@ final class LibraryChannelEditorModel {
 public struct LibraryChannelManagementView: View {
     public let service: LibraryChannelService
     public let history: LibraryChannelHistorySettings
+    private let prepareLibraries: (@MainActor () async throws -> Void)?
     @State private var issue: LibraryChannelError?
 
-    public init(service: LibraryChannelService, history: LibraryChannelHistorySettings) {
+    public init(
+        service: LibraryChannelService, history: LibraryChannelHistorySettings,
+        prepareLibraries: (@MainActor () async throws -> Void)? = nil
+    ) {
         self.service = service
         self.history = history
+        self.prepareLibraries = prepareLibraries
     }
 
     public var body: some View {
         LiveTVSettingsPage(title: "Plozz channels") {
             SettingsSectionGroup {
                 NavigationLink {
-                    LibraryChannelEditorView(service: service)
+                    LibraryChannelEditorView(service: service, prepareLibraries: prepareLibraries)
                 } label: {
                     Label("Create channel", systemImage: "plus")
                 }
                 ForEach(service.visibleDefinitions) { channel in
                     NavigationLink {
-                        LibraryChannelEditorView(service: service, editingChannelID: channel.id)
+                        LibraryChannelEditorView(
+                            service: service, editingChannelID: channel.id, prepareLibraries: prepareLibraries)
                     } label: {
                         Text(channel.revisions.last?.recipe.name ?? "")
                     }

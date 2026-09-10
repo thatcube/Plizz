@@ -110,6 +110,7 @@ struct LiveTVShellDestination: View {
             libraryHistory: library.history,
             libraryIssue: library.issue,
             reloadLibrary: library.retry,
+            prepareLibraryChannels: library.prepareForEditing,
             libraryIsAuthorized: { [weak library] in library?.authorizationID != nil },
             sourceApprovalContext: { [profiles] in LiveTVSourceApprovalContext(profiles: profiles) }
         ) { playback in
@@ -232,7 +233,8 @@ private struct LiveTVShellSourcesContent: View {
         }
         .navigationDestination(isPresented: $managesChannels) {
             LiveTVSourcesLibraryView(runtime: runtime, library: library) {
-                LibraryChannelManagementView(service: library.service, history: library.history)
+                LibraryChannelManagementView(
+                    service: library.service, history: library.history, prepareLibraries: library.prepareForEditing)
             }
         }
         .navigationDestination(isPresented: $scansChannels) {

@@ -66,6 +66,26 @@ final class LibraryChannelEditorTests: XCTestCase {
         XCTAssertTrue(model.service.channels.first?.id.hasPrefix("library:") == true)
         XCTAssertEqual(model.service.definitions.count, 1)
     }
+
+    func testExplicitEditorEntryPreparesLibraryDiscovery() async throws {
+        let model = try await editor()
+        var requests = 0
+        await model.load {
+            requests += 1
+            XCTAssertTrue(model.isWorking)
+            try await model.service.loadLibraries()
+        }
+        XCTAssertEqual(requests, 1)
+        XCTAssertFalse(model.isWorking)
+        XCTAssertNil(model.issue)
+    }
+
+    func testExplicitDiscoveryErrorIsPresentedInEditorAndReleasesLoadingState() async throws {
+        let model = try await editor()
+        await model.load { throw LibraryChannelError.sourceUnavailable }
+        XCTAssertEqual(model.issue, .sourceUnavailable)
+        XCTAssertFalse(model.isWorking)
+    }
 }
 
 private final class LibraryEditorDefinitions: LibraryChannelDefinitionStoring, @unchecked Sendable {

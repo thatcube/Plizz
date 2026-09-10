@@ -278,6 +278,14 @@ is no prior in-memory history to migrate on the first updated launch.
 
 ### Connected-server Live TV and standalone setup
 
+IPTV playlists and XMLTV guides do not require a media server. The library-channel
+runtime loads local definitions without querying unrelated connected servers.
+Automatic library discovery is limited to libraries referenced by enabled Plozz
+channels; opening their editor explicitly discovers the other available libraries.
+A failure in an unused server is not reported as a broken channel in the IPTV
+guide. Failures affecting configured Plozz channels and saved schedules remain
+visible, and editor-only discovery errors stay in the editor.
+
 Jellyfin, Emby and Plex adapters discover authorized channels, load native guide
 data, and open explicitly owned live-stream sessions. Plex tunes the selected
 DVR/channel, negotiates a consumer through the playback decision API, and uses

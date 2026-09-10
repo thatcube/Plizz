@@ -97,6 +97,7 @@ struct PlozziOSLiveTVDestination: View {
             libraryHistory: runtime.history,
             libraryIssue: runtime.issue,
             reloadLibrary: runtime.retry,
+            prepareLibraryChannels: runtime.prepareForEditing,
             libraryIsAuthorized: { [weak runtime] in runtime?.authorizationID != nil },
             sourceApprovalContext: { [profiles] in LiveTVSourceApprovalContext(profiles: profiles) }
         ) { playback in
@@ -286,7 +287,8 @@ private struct PlozziOSLiveTVSourcesContent: View {
         .navigationTitle("Sources")
         .navigationDestination(isPresented: $managesChannels) {
             LiveTVSourcesLibraryView(runtime: runtime, library: library) {
-                LibraryChannelManagementView(service: library.service, history: library.history)
+                LibraryChannelManagementView(
+                    service: library.service, history: library.history, prepareLibraries: library.prepareForEditing)
             }
         }
         .navigationDestination(isPresented: $scansChannels) {
