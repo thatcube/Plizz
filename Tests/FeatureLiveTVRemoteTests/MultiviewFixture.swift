@@ -122,7 +122,9 @@ struct MultiviewFixture: View {
                             for: pane.id, panes: coordinator.panes.map(\.id),
                             primary: coordinator.primaryPaneID, layout: coordinator.layout,
                             corner: coordinator.corner, insetSize: coordinator.insetSize,
-                            expanded: coordinator.expandedPaneID, size: bounds.size
+                            expanded: coordinator.expandedPaneID, size: bounds.size,
+                            isEditing: coordinator.isEditingLayout,
+                            aspectRatio: pane.videoAspectRatio.map { CGFloat($0) }
                         ).offsetBy(dx: bounds.minX, dy: bounds.minY) : CGRect(origin: .zero, size: geometry.size)
                         LiveChannelPlayerView(
                             channelID: prepared.channel.id, title: prepared.channel.name,
@@ -136,6 +138,9 @@ struct MultiviewFixture: View {
                             usesNativeFullscreen: !coordinator.isEnabled,
                             onReturnToGuide: {},
                             reportingID: prepared.id,
+                            onVideoAspectRatioChange: {
+                                coordinator.updateVideoAspectRatio($0, paneID: pane.id, preparedID: prepared.id)
+                            },
                             onMultiview: { coordinator.begin() },
                             outputGroup: state.output, outputID: pane.id,
                             isAudible: pane.id == coordinator.audiblePaneID,
@@ -143,6 +148,8 @@ struct MultiviewFixture: View {
                             isMultiview: coordinator.isEnabled
                         )
                         .frame(width: frame.width, height: frame.height)
+                        .clipShape(RoundedRectangle(
+                            cornerRadius: coordinator.isEnabled && coordinator.isEditingLayout ? 10 : 0))
                         .position(x: frame.midX, y: frame.midY)
                         .zIndex(coordinator.isEnabled && pane.id != coordinator.primaryPaneID ? 1 : 0)
                         .allowsHitTesting(!coordinator.isEnabled)
@@ -154,6 +161,7 @@ struct MultiviewFixture: View {
                     LiveTVMultiviewOverlay(
                         coordinator: coordinator, channels: state.channels,
                         favoriteIDs: ["sports-2"],
+                        recentChannelIDs: ["sports-3", "sports-1"],
                         exit: { _ = coordinator.exit() },
                         returnToGuide: { _ = coordinator.exit() }
                     )
@@ -237,6 +245,7 @@ struct LiveTVRootFixture: View {
                     playPauseRequest: playback.playPauseRequest, onPlaybackStarted: playback.playbackStarted,
                     reportingID: playback.reportingID, onPlaybackUpdate: playback.playbackUpdate,
                     onPlaybackFailed: playback.playbackFailed,
+                    onVideoAspectRatioChange: playback.videoAspectRatioChanged,
                     preparingChannelName: playback.preparingChannelName,
                     onMultiview: playback.canOpenMultiview ? playback.openMultiview : nil,
                     outputGroup: state.output, outputID: playback.paneID, isAudible: playback.isAudible,

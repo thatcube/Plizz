@@ -59,10 +59,13 @@ final class TVFocusActivityObserverTests: XCTestCase {
         window.addSubview(outside)
         defer { observer.stop() }
         var events = 0
+        var frames: [CGRect] = []
         observer.onActivity = { events += 1 }
+        observer.onFocusedFrame = { frames.append($0) }
 
         observer.reportActivity(for: control)
         XCTAssertEqual(events, 1)
+        XCTAssertEqual(frames, [CGRect(x: 40, y: 20, width: 60, height: 44)])
         XCTAssertFalse(observer.observePress(.rightArrow, focusedItem: control))
         XCTAssertFalse(observer.observePress(.rightArrow, focusedItem: control))
         XCTAssertEqual(events, 3)
@@ -125,6 +128,44 @@ final class TVFocusActivityObserverTests: XCTestCase {
         observer.stop()
         XCTAssertFalse(window.gestureRecognizers?.contains { $0.delegate === observer } ?? false)
         XCTAssertTrue(window.gestureRecognizers?.contains { $0 === existing } ?? false)
+    }
+
+    func testVirtualSwiftUIFocusItemsUseTheirHostingViewsCoordinates() {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 600, height: 400))
+        let host = UIView(frame: CGRect(x: 120, y: 80, width: 300, height: 180))
+        let observer = TVFocusActivityObserver.ObserverView(
+            frame: CGRect(x: 100, y: 60, width: 320, height: 200))
+        window.addSubview(host)
+        window.addSubview(observer)
+        defer { observer.stop() }
+        let item = VirtualFocusItem(
+            frame: CGRect(x: 20, y: 30, width: 50, height: 40), parent: host)
+        var frames: [CGRect] = []
+        observer.onFocusedFrame = { frames.append($0) }
+        observer.reportActivity(for: item)
+        XCTAssertEqual(frames, [CGRect(x: 40, y: 50, width: 50, height: 40)])
+        let otherWindow = UIWindow(frame: window.frame)
+        otherWindow.addSubview(host)
+        observer.reportActivity(for: item)
+        XCTAssertEqual(frames.count, 1, "Virtual focus in a different window must remain excluded")
+    }
+
+    private final class VirtualFocusItem: NSObject, UIFocusItem {
+        let frame: CGRect
+        weak var parentFocusEnvironment: (any UIFocusEnvironment)?
+        var canBecomeFocused: Bool { true }
+        var focusItemContainer: (any UIFocusItemContainer)? { nil }
+        var preferredFocusEnvironments: [any UIFocusEnvironment] { [] }
+
+        init(frame: CGRect, parent: any UIFocusEnvironment) {
+            self.frame = frame
+            self.parentFocusEnvironment = parent
+        }
+
+        func setNeedsFocusUpdate() {}
+        func updateFocusIfNeeded() {}
+        func shouldUpdateFocus(in context: UIFocusUpdateContext) -> Bool { true }
+        func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {}
     }
 
     private final class FocusItem: UIView {

@@ -546,24 +546,34 @@ source. Backend playback handles remain runtime-only.
 ## Boundaries
 
 The Debug integration includes manual guide mapping, durable channel identity,
-generated library channels, indexed program search, channel checks and two-pane
+generated library channels, indexed program search, channel checks and four-channel
 Multiview. Multiview retains each player's decoder and prepared stream through
 side-by-side/corner layout changes, audio selection and returning to one player.
-Videos receive the full physical-screen canvas by default, including the safe-area
-edges. Side-by-side divides the canvas horizontally in landscape and vertically
-in portrait; each renderer fits its source without cropping. Corner mode keeps
-the main picture full-screen. Controls overlay the pictures temporarily instead
-of reserving permanent editing space.
+Setup keeps the pictures inside a bounded canvas with room for controls.
+Focus outlines hug the actual video aspect, reported by the retained player,
+rather than its letterbox area or caption. The channel chooser starts with
+Home-style Recent channels, Favorites and All channels shelves using shared
+card, caption and logo components. Search opens the full catalog and its filters.
+Already-added channels are marked and cannot be added twice.
+
+Watch switches to the full physical-screen canvas, including safe-area edges,
+with no video focus outlines. Two channels split horizontally in landscape and
+vertically in portrait; three or four use a two-row grid. Corner mode keeps the
+main picture large with a separate, nonoverlapping column of up to three insets.
+Each renderer fits its source without cropping. Edit layout returns to setup;
+ordinary viewing never reserves permanent space for controls.
 
 On Apple TV, native pane focus selects that channel's audio once its source is
 prepared. Moving into the controls keeps the last selected audio. Select opens
-the focused picture full-screen; Back restores both retained players without
+the focused picture full-screen; Back restores all retained players without
 retuning. On touch devices, tapping a picture selects its audio and expands it;
-Show both restores the layout. Tapping again reveals hidden controls.
+Show all restores the layout. Tapping again reveals hidden controls.
 Watching hides controls after four seconds of inactivity. Editing, native menus,
 channel selection, preparation failures and VoiceOver keep them available.
-Back closes channel selection first, restores both pictures if expanded, then
-dismisses active editing controls; otherwise it returns to the guide.
+Native menu focus notifications do not write back into the pinned controls'
+activity state, avoiding an update loop that can repeatedly rebuild the menu.
+Back closes channel selection first, restores all pictures if expanded, then
+leaves setup or dismisses active controls; otherwise it returns to the guide.
 
 Its hardware decoder capacity, mixed HDR/SDR behavior and long-running resource
 use still need real-device acceptance; controlled fixtures are not proof of

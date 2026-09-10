@@ -5,11 +5,21 @@ import FeatureLiveTVCore
 import SwiftUI
 
 enum LiveTVMultiviewGeometry {
-    static func viewport(in size: CGSize) -> CGRect {
-        CGRect(origin: .zero, size: size)
+    static func viewport(in size: CGSize, isEditing: Bool = false) -> CGRect {
+        let canvas = CGRect(origin: .zero, size: size)
+        guard isEditing else { return canvas }
+        #if os(tvOS)
+        let horizontal = min(CGFloat(80), size.width / 12)
+        let vertical = min(CGFloat(156), size.height / 4)
+        #else
+        let horizontal = min(CGFloat(24), size.width / 12)
+        let vertical = min(CGFloat(100), size.height / 4)
+        #endif
+        return canvas.insetBy(dx: horizontal, dy: vertical)
     }
 
-    static func focusViewport(in size: CGSize, chromeVisible: Bool) -> CGRect {
+    static func focusViewport(in size: CGSize, chromeVisible: Bool, isEditing: Bool = false) -> CGRect {
+        if isEditing { return viewport(in: size, isEditing: true) }
         guard chromeVisible else { return viewport(in: size) }
         #if os(tvOS)
         let top = min(CGFloat(156), size.height / 4)
@@ -24,17 +34,28 @@ enum LiveTVMultiviewGeometry {
     static func frame(
         for id: UUID, panes: [UUID], primary: UUID,
         layout: LiveTVMultiviewLayout, corner: LiveTVMultiviewCorner,
-        insetSize: LiveTVMultiviewInsetSize, expanded: UUID?, size: CGSize
+        insetSize: LiveTVMultiviewInsetSize, expanded: UUID?, size: CGSize,
+        isEditing: Bool = false, aspectRatio: CGFloat? = nil
     ) -> CGRect {
-        let area = viewport(in: size)
-        if expanded != nil { return area }
+        if expanded != nil { return viewport(in: size) }
+        let area = viewport(in: size, isEditing: isEditing)
         let ordered = [primary] + panes.filter { $0 != primary }
-        if ordered.count == 1 { return area }
+        if ordered.count == 1 {
+            return isEditing ? contentFrame(in: area, aspectRatio: aspectRatio) : area
+        }
         let index = ordered.firstIndex(of: id) ?? 0
         if layout == .sideBySide {
             let horizontal = area.width >= area.height
             let slot: CGRect
-            if horizontal {
+            if ordered.count > 2 {
+                let row = index / 2
+                let columns = min(2, ordered.count - row * 2)
+                let width = area.width / CGFloat(columns)
+                slot = CGRect(
+                    x: area.minX + CGFloat(index % 2) * width,
+                    y: area.minY + CGFloat(row) * area.height / 2,
+                    width: width, height: area.height / 2)
+            } else if horizontal {
                 let width = area.width / 2
                 slot = CGRect(
                     x: area.minX + CGFloat(index) * width, y: area.minY,
@@ -45,54 +66,66 @@ enum LiveTVMultiviewGeometry {
                     x: area.minX, y: area.minY + CGFloat(index) * height,
                     width: area.width, height: height)
             }
-            return slot
+            return isEditing ? contentFrame(in: slot.insetBy(dx: 8, dy: 8), aspectRatio: aspectRatio) : slot
         }
-        guard id != primary else { return area }
-        // Only the inset retains its existing 16:9 presentation. Players fit their own source aspect.
+        guard id != primary else {
+            return isEditing ? contentFrame(in: area, aspectRatio: aspectRatio) : area
+        }
         let insetBounds = insetPlacementBounds(in: area)
-        let width = insetBounds.width * CGFloat(insetSize.fraction)
+        let count = CGFloat(ordered.count - 1)
+        let spacing: CGFloat = 12
+        let availableHeight = max(1, insetBounds.height - 32 - spacing * (count - 1))
+        let width = min(insetBounds.width * CGFloat(insetSize.fraction), availableHeight / count * 16 / 9)
         let height = width * 9 / 16
         let left = corner == .topLeading || corner == .bottomLeading
         let atTop = corner == .topLeading || corner == .topTrailing
-        return CGRect(
+        let columnHeight = height * count + spacing * (count - 1)
+        let top = atTop ? insetBounds.minY + 16 : insetBounds.maxY - columnHeight - 16
+        let slot = CGRect(
             x: left ? insetBounds.minX + 16 : insetBounds.maxX - width - 16,
-            y: atTop ? insetBounds.minY + 16 : insetBounds.maxY - height - 16,
+            y: top + CGFloat(index - 1) * (height + spacing),
             width: width, height: height
         )
+        return isEditing ? contentFrame(in: slot, aspectRatio: aspectRatio) : slot
     }
 
     static func focusFrame(
         for id: UUID, panes: [UUID], primary: UUID,
         layout: LiveTVMultiviewLayout, corner: LiveTVMultiviewCorner,
         insetSize: LiveTVMultiviewInsetSize, expanded: UUID?, size: CGSize,
-        chromeVisible: Bool
+        chromeVisible: Bool, isEditing: Bool = false, aspectRatio: CGFloat? = nil
     ) -> CGRect {
         let picture = frame(
             for: id, panes: panes, primary: primary, layout: layout, corner: corner,
-            insetSize: insetSize, expanded: expanded, size: size
+            insetSize: insetSize, expanded: expanded, size: size,
+            isEditing: isEditing, aspectRatio: aspectRatio
         )
-        var region = picture
+        var region = contentFrame(in: picture, aspectRatio: aspectRatio)
         if expanded == nil, layout == .corner, id == primary,
            let secondary = panes.first(where: { $0 != primary }) {
             let inset = frame(
                 for: secondary, panes: panes, primary: primary, layout: layout, corner: corner,
-                insetSize: insetSize, expanded: nil, size: size
+                insetSize: insetSize, expanded: nil, size: size, isEditing: isEditing
             )
             // Keep the primary target beside, never surrounding, the inset.
             let leading = corner == .topLeading || corner == .bottomLeading
             let x = leading ? inset.maxX + 16 : picture.minX
             let right = leading ? picture.maxX : inset.minX - 16
-            region = CGRect(x: x, y: picture.minY, width: max(1, right - x), height: picture.height)
+            region = region.intersection(
+                CGRect(x: x, y: picture.minY, width: max(1, right - x), height: picture.height))
         }
-        return region.intersection(focusViewport(in: size, chromeVisible: chromeVisible))
+        return region.intersection(focusViewport(in: size, chromeVisible: chromeVisible, isEditing: isEditing))
+    }
+
+    static func contentFrame(in area: CGRect, aspectRatio: CGFloat?) -> CGRect {
+        let ratio = aspectRatio.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? 16 / 9
+        let width = min(area.width, area.height * ratio)
+        let height = width / ratio
+        return CGRect(x: area.midX - width / 2, y: area.midY - height / 2, width: width, height: height)
     }
 
     private static func insetPlacementBounds(in area: CGRect) -> CGRect {
-        let width = min(area.width, area.height * 16 / 9)
-        let height = width * 9 / 16
-        return CGRect(
-            x: area.midX - width / 2, y: area.midY - height / 2,
-            width: width, height: height)
+        contentFrame(in: area, aspectRatio: 16 / 9)
     }
 }
 
@@ -102,18 +135,20 @@ struct LiveTVMultiviewChromeState: Equatable {
     private(set) var inactivity = PlaybackControlsInactivity()
 
     mutating func activity(at time: TimeInterval) {
+        guard !isEditing else { return }
         inactivity.recordInteraction(at: time)
         isVisible = true
     }
 
     mutating func editing(at time: TimeInterval) {
+        guard !isEditing else { return }
         activity(at: time)
         isEditing = true
     }
 
     mutating func watching(at time: TimeInterval) {
-        activity(at: time)
         isEditing = false
+        activity(at: time)
     }
 
     mutating func hide() {
@@ -130,6 +165,7 @@ struct LiveTVMultiviewOverlay: View {
     let coordinator: LiveTVMultiviewCoordinator
     let channels: [LiveTVPrototypeChannel]
     let favoriteIDs: Set<String>
+    var recentChannelIDs: [String] = []
     let exit: () -> Void
     let returnToGuide: () -> Void
     var pickerVisibilityChanged: (Bool) -> Void = { _ in }
@@ -138,7 +174,9 @@ struct LiveTVMultiviewOverlay: View {
     @State private var focusedPaneID: UUID?
     @State private var focusRestoreRequest = 0
     @State private var restoringHiddenPaneFocus = false
+    @State private var restoringSetupFocus = false
     @Namespace private var paneFocusScope
+    @Namespace private var controlsFocusScope
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     #if os(tvOS)
@@ -164,7 +202,7 @@ struct LiveTVMultiviewOverlay: View {
                     LiveTVMultiviewPaneViewport(
                         coordinator: coordinator, size: geometry.size,
                         chromeVisible: chrome.isVisible, focusScope: paneFocusScope,
-                        focusChanged: paneFocusChanged,
+                        focusedPaneID: focusedPaneID,
                         preparedWhileFocused: selectPreparedAudio,
                         activate: expand,
                         editing: beginEditing,
@@ -173,18 +211,22 @@ struct LiveTVMultiviewOverlay: View {
                     if chrome.isVisible {
                         LiveTVMultiviewChrome(
                             coordinator: coordinator,
-                            exit: exit, collapse: collapse,
+                            exit: exit, collapse: collapse, watch: finishSetup, setup: startSetup,
+                            focusScope: controlsFocusScope,
+                            restoresSetupFocus: restoringSetupFocus,
+                            setupFocused: { restoringSetupFocus = false },
                             editing: beginEditing,
                             add: { beginEditing(); picker = .add },
                             replace: { beginEditing(); picker = .replace(coordinator.audiblePaneID) }
                         )
-                        .accessibilityIdentifier("live-multiview-chrome")
                         .transition(.identity)
                     }
                 }
                 #if os(tvOS)
                 .background {
-                    TVFocusActivityObserver(onActivity: activity, observesPlaybackPresses: true)
+                    TVFocusActivityObserver(
+                        onActivity: activity, observesPlaybackPresses: true,
+                        onFocusedFrame: { nativeFocusChanged($0, size: geometry.size) })
                 }
                 .task(id: focusRestoreRequest) {
                     guard focusRestoreRequest > 0 else { return }
@@ -194,7 +236,7 @@ struct LiveTVMultiviewOverlay: View {
                 }
                 #endif
                 .onAppear {
-                    activity()
+                    if coordinator.isEditingLayout { beginEditing() } else { activity() }
                     restoreAudiblePaneFocus()
                 }
                 .onChange(of: voiceOver) { _, enabled in
@@ -243,6 +285,8 @@ struct LiveTVMultiviewOverlay: View {
                 picker = nil
             } else if coordinator.expandedPaneID != nil {
                 collapse()
+            } else if coordinator.isEditingLayout {
+                finishSetup()
             } else if chrome.isEditing {
                 hideChrome()
             } else {
@@ -253,7 +297,7 @@ struct LiveTVMultiviewOverlay: View {
     }
 
     private var autoHideRequest: TimeInterval? {
-        let blocked = picker != nil || coordinator.issue != nil || voiceOver
+        let blocked = coordinator.isEditingLayout || picker != nil || coordinator.issue != nil || voiceOver
             || coordinator.panes.contains {
                 $0.preparation.failure != nil
                     || ($0.preparation.current == nil && $0.preparation.isPreparing)
@@ -262,21 +306,59 @@ struct LiveTVMultiviewOverlay: View {
     }
 
     private func activity() {
-        guard picker == nil, !restoringHiddenPaneFocus else { return }
+        guard picker == nil else { return }
+        if restoringHiddenPaneFocus {
+            restoringHiddenPaneFocus = false
+            return
+        }
+        guard !chrome.isEditing else { return }
         chrome.activity(at: ProcessInfo.processInfo.systemUptime)
     }
 
+    private func nativeFocusChanged(_ focusedFrame: CGRect, size: CGSize) {
+        guard picker == nil else { return }
+        let id = coordinator.panes.first { pane in
+            guard coordinator.expandedPaneID == nil || coordinator.expandedPaneID == pane.id else { return false }
+            let frame = LiveTVMultiviewGeometry.focusFrame(
+                for: pane.id, panes: coordinator.panes.map(\.id), primary: coordinator.primaryPaneID,
+                layout: coordinator.layout, corner: coordinator.corner, insetSize: coordinator.insetSize,
+                expanded: coordinator.expandedPaneID, size: size, chromeVisible: true,
+                isEditing: coordinator.isEditingLayout,
+                aspectRatio: pane.videoAspectRatio.map { CGFloat($0) })
+            return abs(frame.minX - focusedFrame.minX) < 2 && abs(frame.minY - focusedFrame.minY) < 2
+                && abs(frame.width - focusedFrame.width) < 2 && abs(frame.height - focusedFrame.height) < 2
+        }?.id
+        if id == nil { restoringSetupFocus = false }
+        guard id != focusedPaneID else { return }
+        if let previous = focusedPaneID { paneFocusChanged(previous, false) }
+        if let id { paneFocusChanged(id, true) }
+    }
+
     private func beginEditing() {
+        guard !chrome.isEditing else { return }
         chrome.editing(at: ProcessInfo.processInfo.systemUptime)
+    }
+
+    private func startSetup() {
+        #if os(tvOS)
+        restoringSetupFocus = true
+        #endif
+        coordinator.beginEditingLayout()
+        beginEditing()
+    }
+
+    private func finishSetup() {
+        restoringSetupFocus = false
+        coordinator.finishEditingLayout()
+        hideChrome()
     }
 
     private func paneFocusChanged(_ id: UUID, _ focused: Bool) {
         if focused {
             focusedPaneID = id
             if restoringHiddenPaneFocus {
-                restoringHiddenPaneFocus = false
                 chrome.hide()
-            } else {
+            } else if !coordinator.isEditingLayout {
                 chrome.watching(at: ProcessInfo.processInfo.systemUptime)
             }
             selectPreparedAudio(id)
@@ -288,7 +370,8 @@ struct LiveTVMultiviewOverlay: View {
     }
 
     private func selectPreparedAudio(_ id: UUID) {
-        guard coordinator.expandedPaneID == nil || coordinator.expandedPaneID == id,
+        guard !restoringSetupFocus,
+              coordinator.expandedPaneID == nil || coordinator.expandedPaneID == id,
               let pane = coordinator.panes.first(where: { $0.id == id }),
               pane.preparation.current != nil else { return }
         coordinator.selectAudio(id)
@@ -300,6 +383,7 @@ struct LiveTVMultiviewOverlay: View {
             return
         }
         selectPreparedAudio(id)
+        coordinator.finishEditingLayout()
         if coordinator.panes.count > 1 { coordinator.expand(id) }
         chrome.watching(at: ProcessInfo.processInfo.systemUptime)
     }
@@ -325,7 +409,7 @@ struct LiveTVMultiviewOverlay: View {
 
     private func channelPicker(_ destination: ChannelPickerDestination) -> some View {
         LiveTVMultiviewChannelPicker(
-            channels: channels, favoriteIDs: favoriteIDs,
+            channels: channels, favoriteIDs: favoriteIDs, recentChannelIDs: recentChannelIDs,
             selectedIDs: Set(coordinator.panes.compactMap { $0.channel?.id }),
             cancel: { picker = nil }
         ) { channel in
@@ -345,51 +429,56 @@ private struct LiveTVMultiviewPaneViewport: View {
     let size: CGSize
     let chromeVisible: Bool
     let focusScope: Namespace.ID
-    let focusChanged: (UUID, Bool) -> Void
+    let focusedPaneID: UUID?
     let preparedWhileFocused: (UUID) -> Void
     let activate: (UUID) -> Void
     let editing: () -> Void
     let replace: (UUID) -> Void
 
     var body: some View {
-        let viewport = LiveTVMultiviewGeometry.focusViewport(in: size, chromeVisible: chromeVisible)
+        // Revealing controls must not reshape the native focus section under the current picture.
+        let viewport = LiveTVMultiviewGeometry.focusViewport(
+            in: size, chromeVisible: true, isEditing: coordinator.isEditingLayout)
         ZStack(alignment: .topLeading) {
             ForEach(coordinator.panes) { pane in
                 let frame = LiveTVMultiviewGeometry.frame(
                     for: pane.id, panes: coordinator.panes.map(\.id),
                     primary: coordinator.primaryPaneID, layout: coordinator.layout,
                     corner: coordinator.corner, insetSize: coordinator.insetSize,
-                    expanded: coordinator.expandedPaneID, size: size
+                    expanded: coordinator.expandedPaneID, size: size,
+                    isEditing: coordinator.isEditingLayout,
+                    aspectRatio: pane.videoAspectRatio.map { CGFloat($0) }
                 )
                 let focusFrame = LiveTVMultiviewGeometry.focusFrame(
                     for: pane.id, panes: coordinator.panes.map(\.id),
                     primary: coordinator.primaryPaneID, layout: coordinator.layout,
                     corner: coordinator.corner, insetSize: coordinator.insetSize,
                     expanded: coordinator.expandedPaneID, size: size,
-                    chromeVisible: chromeVisible
+                    chromeVisible: true, isEditing: coordinator.isEditingLayout,
+                    aspectRatio: pane.videoAspectRatio.map { CGFloat($0) }
                 )
                 let visible = coordinator.expandedPaneID == nil || coordinator.expandedPaneID == pane.id
-                LiveTVMultiviewPaneControl(
-                    pane: pane, audible: coordinator.audiblePaneID == pane.id,
-                    focusFrame: focusFrame.offsetBy(dx: -frame.minX, dy: -frame.minY),
-                    isInteractive: visible, chromeVisible: chromeVisible, focusScope: focusScope,
-                    focusChanged: { focusChanged(pane.id, $0) },
-                    preparedWhileFocused: { preparedWhileFocused(pane.id) },
-                    activate: { activate(pane.id) }, editing: editing,
-                    listen: { coordinator.selectAudio(pane.id) },
-                    promote: { coordinator.promote(pane.id) },
-                    replace: { replace(pane.id) },
-                    retry: { coordinator.retry(pane.id) }
-                )
-                .frame(width: frame.width, height: frame.height)
-                .position(x: frame.midX - viewport.minX, y: frame.midY - viewport.minY)
-                .zIndex(pane.id == coordinator.primaryPaneID ? 0 : 1)
-                .opacity(visible ? 1 : 0)
-                .disabled(!visible)
-                .accessibilityHidden(!visible)
+                if visible {
+                    LiveTVMultiviewPaneControl(
+                        pane: pane, audible: coordinator.audiblePaneID == pane.id,
+                        focusFrame: focusFrame.offsetBy(dx: -frame.minX, dy: -frame.minY),
+                        isInteractive: visible, chromeVisible: chromeVisible,
+                        showsOutline: coordinator.isEditingLayout, focusScope: focusScope,
+                        nativeFocused: focusedPaneID == pane.id,
+                        preparedWhileFocused: { preparedWhileFocused(pane.id) },
+                        activate: { activate(pane.id) }, editing: editing,
+                        listen: { coordinator.selectAudio(pane.id) },
+                        promote: { coordinator.promote(pane.id) },
+                        replace: { replace(pane.id) },
+                        retry: { coordinator.retry(pane.id) }
+                    )
+                    .frame(width: frame.width, height: frame.height)
+                    .position(x: frame.midX - viewport.minX, y: frame.midY - viewport.minY)
+                    .zIndex(pane.id == coordinator.primaryPaneID ? 0 : 1)
+                }
             }
         }
-        // Bridge Done's horizontal gap without absorbing the header or toolbar into this focus section.
+        // Bridge the header's horizontal gap without absorbing its controls into this focus section.
         .frame(width: viewport.width, height: viewport.height, alignment: .topLeading)
         #if os(tvOS)
         .focusSection()
@@ -403,13 +492,19 @@ private struct LiveTVMultiviewChrome: View {
     let coordinator: LiveTVMultiviewCoordinator
     let exit: () -> Void
     let collapse: () -> Void
+    let watch: () -> Void
+    let setup: () -> Void
+    let focusScope: Namespace.ID
+    let restoresSetupFocus: Bool
+    let setupFocused: () -> Void
     let editing: () -> Void
     let add: () -> Void
     let replace: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
-            LiveTVMultiviewHeader(exit: exit, editing: editing)
+            LiveTVMultiviewHeader(
+                exit: exit, editing: editing, watch: coordinator.isEditingLayout ? watch : nil)
                 #if os(tvOS)
                 .padding(.horizontal, 80)
                 .padding(.top, 60)
@@ -426,7 +521,8 @@ private struct LiveTVMultiviewChrome: View {
             Spacer(minLength: 0)
             LiveTVMultiviewToolbar(
                 coordinator: coordinator, add: add, replace: replace,
-                collapse: collapse, editing: editing
+                collapse: collapse, setup: setup, focusScope: focusScope,
+                restoresSetupFocus: restoresSetupFocus, setupFocused: setupFocused, editing: editing
             )
             #if os(tvOS)
             .padding(.horizontal, 72)
@@ -444,6 +540,8 @@ private struct LiveTVMultiviewChrome: View {
         }
         #if !os(tvOS)
         .simultaneousGesture(TapGesture().onEnded { _ in editing() })
+        #else
+        .focusScope(focusScope)
         #endif
     }
 }
@@ -451,11 +549,16 @@ private struct LiveTVMultiviewChrome: View {
 private struct LiveTVMultiviewHeader: View {
     let exit: () -> Void
     let editing: () -> Void
+    let watch: (() -> Void)?
 
     var body: some View {
         HStack {
             Text("Multiview").font(.headline)
             Spacer()
+            if let watch {
+                LiveTVMultiviewAction(title: "Watch", symbol: "play.fill", action: watch, editing: editing)
+                    .accessibilityIdentifier("live-multiview-watch")
+            }
             LiveTVMultiviewAction(title: "Done", symbol: "xmark", action: exit, editing: editing)
                 .accessibilityIdentifier("live-multiview-done")
         }
@@ -472,8 +575,9 @@ private struct LiveTVMultiviewPaneControl: View {
     let focusFrame: CGRect
     let isInteractive: Bool
     let chromeVisible: Bool
+    let showsOutline: Bool
     let focusScope: Namespace.ID
-    let focusChanged: (Bool) -> Void
+    let nativeFocused: Bool
     let preparedWhileFocused: () -> Void
     let activate: () -> Void
     let editing: () -> Void
@@ -528,8 +632,8 @@ private struct LiveTVMultiviewPaneControl: View {
             }
         }
         .overlay {
-            if chromeVisible {
-                if focused {
+            if chromeVisible && showsOutline {
+                if nativeFocused {
                     PrototypeFocusOutline(cornerRadius: 10)
                 } else {
                     RoundedRectangle(cornerRadius: 10)
@@ -539,9 +643,8 @@ private struct LiveTVMultiviewPaneControl: View {
             }
         }
         .foregroundStyle(.white)
-        .onChange(of: focused) { _, value in focusChanged(value) }
         .onChange(of: pane.preparation.current?.id) { _, current in
-            if focused, current != nil, isInteractive { preparedWhileFocused() }
+            if nativeFocused, current != nil, isInteractive { preparedWhileFocused() }
         }
     }
 
@@ -624,88 +727,111 @@ private struct LiveTVMultiviewToolbar: View {
     let add: () -> Void
     let replace: () -> Void
     let collapse: () -> Void
+    let setup: () -> Void
+    let focusScope: Namespace.ID
+    let restoresSetupFocus: Bool
+    let setupFocused: () -> Void
     let editing: () -> Void
     @FocusState private var layoutFocused: Bool
 
     var body: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 16) {
-                if coordinator.canAdd {
-                    LiveTVMultiviewAction(title: "Add channel", symbol: "plus", action: add, editing: editing)
-                        .accessibilityIdentifier("live-multiview-add")
+                if !coordinator.isEditingLayout {
+                    LiveTVMultiviewAction(
+                        title: "Edit layout", symbol: "rectangle.split.2x2",
+                        action: setup, editing: editing
+                    )
+                    .accessibilityIdentifier("live-multiview-edit")
                 }
-                Menu {
-                    ForEach(LiveTVMultiviewLayout.allCases, id: \.self) { layout in
-                        Button {
-                            coordinator.layout = layout
-                        } label: {
-                            Label(layout.title, systemImage: coordinator.layout == layout ? "checkmark" : "rectangle")
-                        }
+                if coordinator.isEditingLayout {
+                    if coordinator.canAdd {
+                        LiveTVMultiviewAction(title: "Add channel", symbol: "plus", action: add, editing: editing)
+                            .accessibilityIdentifier("live-multiview-add")
                     }
-                    if coordinator.layout == .corner {
-                        Section("Position") {
-                            ForEach(LiveTVMultiviewCorner.allCases, id: \.self) { corner in
-                                Button(corner.title) { coordinator.corner = corner }
-                            }
-                        }
-                        Section("Size") {
-                            ForEach(LiveTVMultiviewInsetSize.allCases, id: \.self) { size in
-                                Button(size.title) { coordinator.insetSize = size }
-                            }
-                        }
-                    }
-                } label: {
-                    Label("Layout", systemImage: "rectangle.split.2x1")
-                }
-                .focused($layoutFocused)
-                .onChange(of: layoutFocused) { _, focused in
-                    if focused { editing() }
-                }
-                .plozzActionButton(role: .secondary)
-                .accessibilityIdentifier("live-multiview-layout")
-                #if !os(tvOS)
-                if coordinator.panes.count > 1 {
                     Menu {
-                        ForEach(coordinator.panes) { pane in
+                        ForEach(LiveTVMultiviewLayout.allCases, id: \.self) { layout in
                             Button {
-                                coordinator.selectAudio(pane.id)
+                                setup()
+                                coordinator.layout = layout
                             } label: {
-                                Label(
-                                    pane.channel?.name ?? String(localized: "Channel"),
-                                    systemImage: coordinator.audiblePaneID == pane.id ? "checkmark" : "speaker"
-                                )
+                                Label(layout.title, systemImage: coordinator.layout == layout ? "checkmark" : "rectangle")
                             }
-                            .disabled(pane.preparation.current == nil)
-                            .accessibilityLabel(pane.channel?.name ?? String(localized: "Channel"))
-                            .accessibilityIdentifier("live-multiview-listen-\(pane.id.uuidString)")
+                        }
+                        if coordinator.layout == .corner {
+                            Section("Position") {
+                                ForEach(LiveTVMultiviewCorner.allCases, id: \.self) { corner in
+                                    Button(corner.title) { setup(); coordinator.corner = corner }
+                                }
+                            }
+                            Section("Size") {
+                                ForEach(LiveTVMultiviewInsetSize.allCases, id: \.self) { size in
+                                    Button(size.title) { setup(); coordinator.insetSize = size }
+                                }
+                            }
                         }
                     } label: {
-                        Label("Audio", systemImage: "speaker.wave.2")
+                        Label("Layout", systemImage: "rectangle.split.2x1")
                     }
+                    .focused($layoutFocused)
+                    .onChange(of: layoutFocused) { _, focused in
+                        if focused { editing(); setupFocused() }
+                    }
+                    #if os(tvOS)
+                    .prefersDefaultFocus(true, in: focusScope)
+                    .task(id: restoresSetupFocus) {
+                        guard restoresSetupFocus else { return }
+                        await Task.yield()
+                        guard !Task.isCancelled else { return }
+                        if layoutFocused { setupFocused() } else { layoutFocused = true }
+                    }
+                    #endif
                     .plozzActionButton(role: .secondary)
-                    .accessibilityIdentifier("live-multiview-audio")
-                }
-                #endif
-                LiveTVMultiviewAction(title: "Replace", symbol: "arrow.triangle.2.circlepath", action: replace, editing: editing)
-                    .accessibilityIdentifier("live-multiview-replace")
-                if coordinator.panes.count > 1, coordinator.audiblePaneID != coordinator.primaryPaneID {
-                    LiveTVMultiviewAction(title: "Make main", symbol: "rectangle.inset.filled", action: {
-                        coordinator.promote(coordinator.audiblePaneID)
-                    }, editing: editing)
-                    .accessibilityIdentifier("live-multiview-promote")
+                    .accessibilityIdentifier("live-multiview-layout")
+                    #if !os(tvOS)
+                    if coordinator.panes.count > 1 {
+                        Menu {
+                            ForEach(coordinator.panes) { pane in
+                                Button {
+                                    coordinator.selectAudio(pane.id)
+                                } label: {
+                                    Label(
+                                        pane.channel?.name ?? String(localized: "Channel"),
+                                        systemImage: coordinator.audiblePaneID == pane.id ? "checkmark" : "speaker"
+                                    )
+                                }
+                                .disabled(pane.preparation.current == nil)
+                                .accessibilityLabel(pane.channel?.name ?? String(localized: "Channel"))
+                                .accessibilityIdentifier("live-multiview-listen-\(pane.id.uuidString)")
+                            }
+                        } label: {
+                            Label("Audio", systemImage: "speaker.wave.2")
+                        }
+                        .plozzActionButton(role: .secondary)
+                        .accessibilityIdentifier("live-multiview-audio")
+                    }
+                    #endif
+                    LiveTVMultiviewAction(title: "Replace", symbol: "arrow.triangle.2.circlepath", action: replace, editing: editing)
+                        .accessibilityIdentifier("live-multiview-replace")
+                    if coordinator.panes.count > 1, coordinator.audiblePaneID != coordinator.primaryPaneID {
+                        LiveTVMultiviewAction(title: "Make main", symbol: "rectangle.inset.filled", action: {
+                            coordinator.promote(coordinator.audiblePaneID)
+                        }, editing: editing)
+                        .accessibilityIdentifier("live-multiview-promote")
+                    }
+                    if coordinator.panes.count > 1 {
+                        LiveTVMultiviewAction(title: "Remove", symbol: "minus.circle", action: {
+                            coordinator.remove(coordinator.audiblePaneID)
+                        }, editing: editing)
+                        .accessibilityIdentifier("live-multiview-remove")
+                    }
                 }
                 if coordinator.expandedPaneID != nil {
                     LiveTVMultiviewAction(
-                        title: "Show both", symbol: "rectangle.split.2x1",
+                        title: "Show all", symbol: "rectangle.split.2x2",
                         action: collapse, editing: editing
                     )
                     .accessibilityIdentifier("live-multiview-collapse")
-                }
-                if coordinator.panes.count > 1 {
-                    LiveTVMultiviewAction(title: "Remove", symbol: "minus.circle", action: {
-                        coordinator.remove(coordinator.audiblePaneID)
-                    }, editing: editing)
-                    .accessibilityIdentifier("live-multiview-remove")
                 }
             }
             .padding(8)
@@ -713,6 +839,9 @@ private struct LiveTVMultiviewToolbar: View {
         .scrollIndicators(.hidden)
         .fixedSize(horizontal: false, vertical: true)
         .foregroundStyle(.white)
+        #if os(tvOS)
+        .focusSection()
+        #endif
     }
 }
 
@@ -741,12 +870,14 @@ private struct LiveTVMultiviewAction: View {
 private struct LiveTVMultiviewChannelPicker: View {
     let channels: [LiveTVPrototypeChannel]
     let favoriteIDs: Set<String>
+    let recentChannelIDs: [String]
     let selectedIDs: Set<String>
     let cancel: () -> Void
     let select: (LiveTVPrototypeChannel) -> Void
     @State private var query = ""
     @State private var favoritesOnly = false
     @State private var category: String?
+    @State private var isSearching = false
 
     private var results: [LiveTVPrototypeChannel] {
         channels.filter { channel in
@@ -760,20 +891,36 @@ private struct LiveTVMultiviewChannelPicker: View {
 
     var body: some View {
         #if os(tvOS)
-        PrototypeNativeSearch(
-            query: $query, restoresGuideFocus: false, isPresented: true,
-            close: cancel, editing: {}
-        ) { close in
-            LiveTVMultiviewSearchResults(
-                channels: results, categories: Array(Set(channels.map(\.category))).sorted(),
-                selectedIDs: selectedIDs, query: query,
-                favoritesOnly: $favoritesOnly, category: $category,
-                cancel: close, select: select
+        if isSearching {
+            PrototypeNativeSearch(
+                query: $query, restoresGuideFocus: false, isPresented: true,
+                close: { isSearching = false; query = "" }, editing: {}
+            ) { close in
+                LiveTVMultiviewSearchResults(
+                    channels: results, categories: Array(Set(channels.map(\.category))).sorted(),
+                    selectedIDs: selectedIDs, query: query,
+                    favoritesOnly: $favoritesOnly, category: $category,
+                    cancel: close, select: select
+                )
+            }
+        } else {
+            LiveTVMultiviewChannelHome(
+                channels: channels, favoriteIDs: favoriteIDs, recentChannelIDs: recentChannelIDs,
+                selectedIDs: selectedIDs, search: { isSearching = true }, cancel: cancel, select: select
             )
         }
         #else
         NavigationStack {
-            channelList
+            Group {
+                if query.isEmpty {
+                    LiveTVMultiviewChannelHome(
+                        channels: channels, favoriteIDs: favoriteIDs, recentChannelIDs: recentChannelIDs,
+                        selectedIDs: selectedIDs, select: select
+                    )
+                } else {
+                    channelList
+                }
+            }
                 .searchable(text: $query, prompt: "Search channels")
                 .navigationTitle("Choose channel")
                 .toolbar {

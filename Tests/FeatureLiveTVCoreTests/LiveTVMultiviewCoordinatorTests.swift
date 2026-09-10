@@ -60,14 +60,56 @@ final class LiveTVMultiviewCoordinatorTests: XCTestCase {
         await coordinator.close()
     }
 
-    func testCapacityFailurePreservesBothExistingStreams() async {
+    func testFourChannelCapacityRejectsFifthWithoutTouchingExistingStreams() async {
         let coordinator = await makeCoordinator()
         coordinator.begin()
-        await coordinator.add(channel(2))?.value
+        for number in 2...4 {
+            XCTAssertTrue(coordinator.canAdd)
+            await coordinator.add(channel(number))?.value
+        }
+        XCTAssertEqual(coordinator.maximumPanes, 4)
+        XCTAssertEqual(coordinator.panes.count, 4)
+        XCTAssertFalse(coordinator.canAdd)
         let ids = coordinator.panes.map { $0.preparation.current?.id }
-        XCTAssertNil(coordinator.add(channel(3)))
+        XCTAssertNil(coordinator.add(channel(5)))
         XCTAssertNotNil(coordinator.issue)
         XCTAssertEqual(coordinator.panes.map { $0.preparation.current?.id }, ids)
+        await coordinator.close()
+    }
+
+    func testSetupWatchExpansionAndPromotionRetainAllFourPreparedStreams() async {
+        let coordinator = await makeCoordinator()
+        coordinator.begin()
+        XCTAssertTrue(coordinator.isEditingLayout)
+        for number in 2...4 { await coordinator.add(channel(number))?.value }
+        let owners = coordinator.panes.map(\.preparation)
+        let ids = coordinator.panes.map { $0.preparation.current?.id }
+        coordinator.finishEditingLayout()
+        XCTAssertFalse(coordinator.isEditingLayout)
+        for pane in coordinator.panes {
+            coordinator.selectAudio(pane.id)
+            coordinator.expand(pane.id)
+            coordinator.collapse()
+            coordinator.promote(pane.id)
+        }
+        coordinator.beginEditingLayout()
+        XCTAssertTrue(coordinator.isEditingLayout)
+        XCTAssertNil(coordinator.expandedPaneID)
+        XCTAssertEqual(coordinator.panes.map { $0.preparation.current?.id }, ids)
+        XCTAssertTrue(zip(coordinator.panes, owners).allSatisfy { $0.0.preparation === $0.1 })
+        await coordinator.close()
+    }
+
+    func testAspectRatioUpdatesBelongOnlyToTheMatchingPreparedStream() async throws {
+        let coordinator = await makeCoordinator()
+        let pane = coordinator.panes[0]
+        let preparedID = try XCTUnwrap(pane.preparation.current?.id)
+        coordinator.updateVideoAspectRatio(4 / 3, paneID: pane.id, preparedID: preparedID)
+        XCTAssertEqual(pane.videoAspectRatio, 4 / 3)
+        coordinator.updateVideoAspectRatio(2, paneID: pane.id, preparedID: UUID())
+        XCTAssertEqual(pane.videoAspectRatio, 4 / 3)
+        coordinator.updateVideoAspectRatio(.infinity, paneID: pane.id, preparedID: preparedID)
+        XCTAssertNil(pane.videoAspectRatio)
         await coordinator.close()
     }
 
@@ -154,8 +196,9 @@ final class LiveTVMultiviewCoordinatorTests: XCTestCase {
     func testDeactivationStopsEveryPaneAndPendingWork() async {
         let coordinator = await makeCoordinator()
         coordinator.begin()
-        await coordinator.add(channel(2))?.value
+        for number in 2...4 { await coordinator.add(channel(number))?.value }
         let owners = coordinator.panes.map(\.preparation)
+        XCTAssertEqual(owners.count, 4)
         coordinator.setActive(false)
         XCTAssertFalse(coordinator.isEnabled)
         XCTAssertTrue(owners.allSatisfy { $0.current == nil })

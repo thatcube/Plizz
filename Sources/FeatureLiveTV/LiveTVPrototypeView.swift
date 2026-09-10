@@ -25,6 +25,7 @@ public struct LiveTVPrototypePlayback {
     public let reportingID: UUID
     public let playbackUpdate: @MainActor (LiveTVPlaybackUpdate) -> Void
     public let playbackFailed: @MainActor () -> Void
+    public let videoAspectRatioChanged: @MainActor (Double?) -> Void
     public let preparingChannelName: String?
     public let isMultiview: Bool
     public let isAudible: Bool
@@ -309,14 +310,17 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
                                 for: pane.id, panes: multiview.panes.map(\.id),
                                 primary: multiview.primaryPaneID, layout: multiview.layout,
                                 corner: multiview.corner, insetSize: multiview.insetSize,
-                                expanded: multiview.expandedPaneID, size: layout.bounds.size
+                                expanded: multiview.expandedPaneID, size: layout.bounds.size,
+                                isEditing: multiview.isEditingLayout,
+                                aspectRatio: pane.videoAspectRatio.map { CGFloat($0) }
                             )
                             .offsetBy(dx: layout.bounds.minX, dy: layout.bounds.minY)
                             : (expanded ? layout.bounds : layout.videoFrame)
                         player(playbackInput(for: pane, prepared: prepared))
                     .environment(\.themePalette, ThemePalette.dark)
                     .frame(width: videoFrame.width, height: videoFrame.height)
-                    .clipped()
+                    .clipShape(RoundedRectangle(
+                        cornerRadius: multiview.isEnabled && multiview.isEditingLayout ? 10 : 0))
                     .overlay {
                         LinearGradient(
                             stops: [
@@ -369,6 +373,7 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
                     LiveTVMultiviewOverlay(
                         coordinator: multiview,
                         channels: model.unhiddenCatalogChannels, favoriteIDs: model.favoriteIDs,
+                        recentChannelIDs: model.recentChannelIDs,
                         exit: { leaveMultiview() },
                         returnToGuide: { leaveMultiview(); returnToGuide() },
                         pickerVisibilityChanged: { multiviewPickerIsPresented = $0 }
@@ -447,6 +452,9 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
                 } else {
                     playback.playbackFailed(prepared.id)
                 }
+            },
+            videoAspectRatioChanged: {
+                multiview.updateVideoAspectRatio($0, paneID: pane.id, preparedID: prepared.id)
             },
             preparingChannelName: pane.preparation.preparingChannelID.flatMap {
                 model.channel(id: $0)?.name

@@ -30,7 +30,7 @@ final class LiveTVMultiviewGeometryTests: XCTestCase {
                     for: id, panes: panes, primary: panes[0], layout: .sideBySide,
                     corner: .bottomTrailing, insetSize: .medium, expanded: nil, size: size,
                     chromeVisible: false
-                ), picture)
+                ), LiveTVMultiviewGeometry.contentFrame(in: picture, aspectRatio: nil))
             }
             if size.width >= size.height {
                 XCTAssertEqual(pictures[0].minX, 0, accuracy: 0.001)
@@ -180,7 +180,7 @@ final class LiveTVMultiviewGeometryTests: XCTestCase {
                         for: expanded, panes: panes, primary: panes[0], layout: layout,
                         corner: .bottomTrailing, insetSize: .large, expanded: expanded, size: size,
                         chromeVisible: false
-                    ), picture)
+                    ), LiveTVMultiviewGeometry.contentFrame(in: picture, aspectRatio: nil))
                 }
             }
         }
@@ -215,6 +215,105 @@ final class LiveTVMultiviewGeometryTests: XCTestCase {
         chrome.editing(at: 2)
         XCTAssertFalse(chrome.canAutoHide(blocked: true))
         XCTAssertFalse(chrome.canAutoHide(blocked: false))
+    }
+
+    func testNativeMenuFocusActivityDoesNotPublishAnyStateChangesWhileEditing() {
+        var chrome = LiveTVMultiviewChromeState()
+        chrome.editing(at: 1)
+        let pinned = chrome
+        for event in 2...1_000 {
+            chrome.activity(at: TimeInterval(event))
+            chrome.editing(at: TimeInterval(event))
+            XCTAssertEqual(chrome, pinned, "Native menu focus must not redraw its own anchor")
+        }
+        chrome.watching(at: 1_001)
+        XCTAssertEqual(chrome.inactivity.lastInteractionAt, 1_001)
+        XCTAssertTrue(chrome.canAutoHide(blocked: false))
+    }
+
+    func testThreeAndFourChannelGridsCoverCanvasWithoutOverlap() {
+        for count in 3...4 {
+            let panes = (0..<count).map { _ in UUID() }
+            for size in sizes {
+                let frames = panes.map {
+                    LiveTVMultiviewGeometry.frame(
+                        for: $0, panes: panes, primary: panes[0], layout: .sideBySide,
+                        corner: .bottomTrailing, insetSize: .medium, expanded: nil, size: size)
+                }
+                XCTAssertEqual(frames.reduce(CGRect.null) { $0.union($1) }, CGRect(origin: .zero, size: size))
+                for index in frames.indices {
+                    XCTAssertGreaterThan(frames[index].width, 0)
+                    for other in frames.indices where other > index {
+                        XCTAssertFalse(frames[index].intersects(frames[other]))
+                    }
+                }
+            }
+        }
+    }
+
+    func testFourCornerPicturesAndFocusTargetsStayReachableWithoutOverlapping() {
+        let panes = (0..<4).map { _ in UUID() }
+        for size in sizes {
+            for corner in LiveTVMultiviewCorner.allCases {
+                for editing in [true, false] {
+                    let frames = panes.map {
+                        LiveTVMultiviewGeometry.frame(
+                            for: $0, panes: panes, primary: panes[0], layout: .corner,
+                            corner: corner, insetSize: .large, expanded: nil, size: size, isEditing: editing)
+                    }
+                    let focus = panes.map {
+                        LiveTVMultiviewGeometry.focusFrame(
+                            for: $0, panes: panes, primary: panes[0], layout: .corner,
+                            corner: corner, insetSize: .large, expanded: nil, size: size,
+                            chromeVisible: false, isEditing: editing)
+                    }
+                    for index in focus.indices {
+                        XCTAssertFalse(focus[index].isEmpty)
+                        XCTAssertTrue(frames[index].insetBy(dx: -0.01, dy: -0.01).contains(focus[index]))
+                        for other in focus.indices where other > index {
+                            XCTAssertFalse(focus[index].intersects(focus[other]))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func testSetupFocusHugsActualVideoAspectInsteadOfTheFullScreenSlot() {
+        let panes = [UUID(), UUID()]
+        let size = CGSize(width: 1920, height: 1080)
+        for ratio in [CGFloat(4) / 3, CGFloat(16) / 9, CGFloat(21) / 9] {
+            let frame = LiveTVMultiviewGeometry.frame(
+                for: panes[0], panes: panes, primary: panes[0], layout: .sideBySide,
+                corner: .bottomTrailing, insetSize: .medium, expanded: nil, size: size,
+                isEditing: true, aspectRatio: ratio)
+            let focus = LiveTVMultiviewGeometry.focusFrame(
+                for: panes[0], panes: panes, primary: panes[0], layout: .sideBySide,
+                corner: .bottomTrailing, insetSize: .medium, expanded: nil, size: size,
+                chromeVisible: true, isEditing: true, aspectRatio: ratio)
+            XCTAssertEqual(frame.width / frame.height, ratio, accuracy: 0.001)
+            XCTAssertEqual(focus.minX, frame.minX, accuracy: 0.001)
+            XCTAssertEqual(focus.minY, frame.minY, accuracy: 0.001)
+            XCTAssertEqual(focus.width, frame.width, accuracy: 0.001)
+            XCTAssertEqual(focus.height, frame.height, accuracy: 0.001)
+            XCTAssertGreaterThan(frame.minX, 0)
+            XCTAssertGreaterThan(frame.minY, 0)
+            XCTAssertLessThan(frame.maxY, size.height)
+        }
+    }
+
+    func testChannelShelvesUseRecentOrderAndExcludeMissingOrDuplicateRecords() {
+        let channels = (1...4).map {
+            LiveTVPrototypeChannel(
+                id: "channel-\($0)", number: $0, name: "Channel \($0)", category: "Sports",
+                symbol: "tv", accent: 0, source: .iptv, tagline: "")
+        }
+        let sections = LiveTVMultiviewChannelSections(
+            channels: channels + [channels[0]], favoriteIDs: ["channel-2", "hidden"],
+            recentChannelIDs: ["channel-3", "missing", "channel-1", "channel-3"])
+        XCTAssertEqual(sections.recent.map(\.id), ["channel-3", "channel-1"])
+        XCTAssertEqual(sections.favorites.map(\.id), ["channel-2"])
+        XCTAssertEqual(sections.all.map(\.id), channels.map(\.id))
     }
 }
 #endif

@@ -6,10 +6,16 @@ import UIKit
 public struct TVFocusActivityObserver: UIViewRepresentable {
     let onActivity: () -> Void
     let observesPlaybackPresses: Bool
+    let onFocusedFrame: ((CGRect) -> Void)?
 
-    public init(onActivity: @escaping () -> Void, observesPlaybackPresses: Bool = false) {
+    public init(
+        onActivity: @escaping () -> Void,
+        observesPlaybackPresses: Bool = false,
+        onFocusedFrame: ((CGRect) -> Void)? = nil
+    ) {
         self.onActivity = onActivity
         self.observesPlaybackPresses = observesPlaybackPresses
+        self.onFocusedFrame = onFocusedFrame
     }
 
     public func makeUIView(context: Context) -> ObserverView {
@@ -17,12 +23,14 @@ public struct TVFocusActivityObserver: UIViewRepresentable {
         view.backgroundColor = .clear
         view.isUserInteractionEnabled = false
         view.onActivity = onActivity
+        view.onFocusedFrame = onFocusedFrame
         view.observesPlaybackPresses = observesPlaybackPresses
         return view
     }
 
     public func updateUIView(_ uiView: ObserverView, context: Context) {
         uiView.onActivity = onActivity
+        uiView.onFocusedFrame = onFocusedFrame
         uiView.observesPlaybackPresses = observesPlaybackPresses
     }
 
@@ -32,6 +40,7 @@ public struct TVFocusActivityObserver: UIViewRepresentable {
 
     public final class ObserverView: UIView, UIGestureRecognizerDelegate {
         var onActivity: (() -> Void)?
+        var onFocusedFrame: ((CGRect) -> Void)?
         var observesPlaybackPresses = false {
             didSet {
                 guard oldValue != observesPlaybackPresses else { return }
@@ -72,6 +81,7 @@ public struct TVFocusActivityObserver: UIViewRepresentable {
         func stop() {
             detachObservers()
             onActivity = nil
+            onFocusedFrame = nil
         }
 
         private func detachObservers() {
@@ -107,30 +117,49 @@ public struct TVFocusActivityObserver: UIViewRepresentable {
         }
 
         func reportActivity(for item: (any UIFocusItem)?) {
-            guard contains(item) else { return }
+            guard let frame = focusedFrame(for: item) else { return }
+            onFocusedFrame?(frame)
             onActivity?()
         }
 
         func contains(_ item: (any UIFocusItem)?) -> Bool {
-            guard let window, let item, item.canBecomeFocused, !bounds.isEmpty else { return false }
+            focusedFrame(for: item) != nil
+        }
+
+        private func focusedFrame(for item: (any UIFocusItem)?) -> CGRect? {
+            guard let window, let item, item.canBecomeFocused, !bounds.isEmpty else { return nil }
             let frame: CGRect
             if let view = item as? UIView {
-                guard view.window === window else { return false }
+                guard view.window === window else { return nil }
                 frame = view.convert(view.bounds, to: self)
             } else {
                 var environment = item.parentFocusEnvironment
                 var container: (any UIFocusItemContainer)?
+                var parentView: UIView?
                 while let current = environment {
-                    if let view = current as? UIView, view.window !== window { return false }
+                    if let view = current as? UIView {
+                        guard view.window === window else { return nil }
+                        parentView = view
+                        if container == nil { container = view.focusItemContainer }
+                        break
+                    }
                     if container == nil { container = current.focusItemContainer }
                     environment = current.parentFocusEnvironment
                 }
-                guard let container else { return false }
-                let coordinates: any UICoordinateSpace = self
-                frame = coordinates.convert(item.frame, from: container.coordinateSpace)
+                if let container {
+                    let coordinates: any UICoordinateSpace = self
+                    frame = coordinates.convert(item.frame, from: container.coordinateSpace)
+                } else if let parentView {
+                    // SwiftUI's virtual focus items use their hosting view's coordinates
+                    // without exposing a UIFocusItemContainer.
+                    frame = parentView.convert(item.frame, to: self)
+                } else {
+                    return nil
+                }
             }
-            guard !frame.isEmpty, !frame.isNull, !frame.isInfinite else { return false }
-            return bounds.contains(CGPoint(x: frame.midX, y: frame.midY))
+            guard !frame.isEmpty, !frame.isNull, !frame.isInfinite,
+                  bounds.contains(CGPoint(x: frame.midX, y: frame.midY)) else { return nil }
+            return frame
         }
 
         deinit {

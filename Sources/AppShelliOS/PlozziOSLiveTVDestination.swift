@@ -136,6 +136,7 @@ struct PlozziOSLiveTVDestination: View {
                 reportingID: playback.reportingID,
                 onPlaybackUpdate: playback.playbackUpdate,
                 onPlaybackFailed: playback.playbackFailed,
+                onVideoAspectRatioChange: playback.videoAspectRatioChanged,
                 preparingChannelName: playback.preparingChannelName,
                 onMultiview: playback.canOpenMultiview ? playback.openMultiview : nil,
                 outputGroup: liveOutputGroup,

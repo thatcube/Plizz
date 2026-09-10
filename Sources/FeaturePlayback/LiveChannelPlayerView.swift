@@ -38,6 +38,7 @@ public struct LiveChannelPlayerView: View {
     private let reportingID: UUID?
     private let onPlaybackUpdate: @MainActor (LiveTVPlaybackUpdate) -> Void
     private let onPlaybackFailed: @MainActor () -> Void
+    private let onVideoAspectRatioChange: @MainActor (Double?) -> Void
     private let preparingChannelName: String?
     private let onMultiview: (() -> Void)?
     private let outputGroup: LiveChannelOutputGroup?
@@ -90,6 +91,7 @@ public struct LiveChannelPlayerView: View {
         reportingID: UUID? = nil,
         onPlaybackUpdate: @escaping @MainActor (LiveTVPlaybackUpdate) -> Void = { _ in },
         onPlaybackFailed: @escaping @MainActor () -> Void = {},
+        onVideoAspectRatioChange: @escaping @MainActor (Double?) -> Void = { _ in },
         preparingChannelName: String? = nil,
         onMultiview: (() -> Void)? = nil,
         outputGroup: LiveChannelOutputGroup? = nil,
@@ -124,6 +126,7 @@ public struct LiveChannelPlayerView: View {
         self.reportingID = reportingID
         self.onPlaybackUpdate = onPlaybackUpdate
         self.onPlaybackFailed = onPlaybackFailed
+        self.onVideoAspectRatioChange = onVideoAspectRatioChange
         self.preparingChannelName = preparingChannelName
         self.onMultiview = onMultiview
         self.outputGroup = outputGroup
@@ -161,6 +164,7 @@ public struct LiveChannelPlayerView: View {
         reportingID: UUID? = nil,
         onPlaybackUpdate: @escaping @MainActor (LiveTVPlaybackUpdate) -> Void = { _ in },
         onPlaybackFailed: @escaping @MainActor () -> Void = {},
+        onVideoAspectRatioChange: @escaping @MainActor (Double?) -> Void = { _ in },
         preparingChannelName: String? = nil,
         onMultiview: (() -> Void)? = nil,
         outputGroup: LiveChannelOutputGroup? = nil,
@@ -185,6 +189,7 @@ public struct LiveChannelPlayerView: View {
             onReturnToGuide: onReturnToGuide, playPauseRequest: playPauseRequest,
             onPlaybackStarted: onPlaybackStarted, reportingID: reportingID,
             onPlaybackUpdate: onPlaybackUpdate, onPlaybackFailed: onPlaybackFailed,
+            onVideoAspectRatioChange: onVideoAspectRatioChange,
             preparingChannelName: preparingChannelName, onMultiview: onMultiview,
             outputGroup: outputGroup, outputID: outputID, isAudible: isAudible,
             countsAsWatching: countsAsWatching, isMultiview: isMultiview, trackPreferences: trackPreferences,
@@ -420,6 +425,9 @@ public struct LiveChannelPlayerView: View {
         .onChange(of: model?.phase) { _, phase in
             playbackPhaseChanged(phase)
         }
+        .onChange(of: model?.engine.videoAspectRatio, initial: true) { _, ratio in
+            onVideoAspectRatioChange(ratio)
+        }
         .onChange(of: tracksArePresented) { _, _ in autoHideRevision &+= 1 }
         .onChange(of: isExpanded) { _, expanded in
             expansionChanged(expanded)
@@ -429,7 +437,10 @@ public struct LiveChannelPlayerView: View {
             model?.togglePlayPause()
         }
         .onChange(of: source, initial: true) { _, _ in updateSource() }
-        .onChange(of: reportingID) { _, _ in updateSource() }
+        .onChange(of: reportingID) { _, _ in
+            updateSource()
+            onVideoAspectRatioChange(model?.engine.videoAspectRatio)
+        }
         .onChange(of: isAudible) { _, audible in model?.setAudible(audible) }
         .onChange(of: countsAsWatching) { _, watching in
             model?.setWatching(watching)

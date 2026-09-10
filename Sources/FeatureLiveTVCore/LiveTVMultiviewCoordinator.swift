@@ -9,7 +9,7 @@ public enum LiveTVMultiviewLayout: String, CaseIterable, Sendable {
 
     public var title: LocalizedStringResource {
         switch self {
-        case .sideBySide: "Side by side"
+        case .sideBySide: "Grid"
         case .corner: "Corner"
         }
     }
@@ -56,6 +56,7 @@ public final class LiveTVMultiviewPane: Identifiable {
     public fileprivate(set) var requestedChannel: LiveTVPrototypeChannel?
     public fileprivate(set) var hasPresentedFrame = false
     public fileprivate(set) var playPauseRequest = 0
+    public fileprivate(set) var videoAspectRatio: Double?
     fileprivate var retired = false
     @ObservationIgnored fileprivate var task: Task<Void, Never>?
     @ObservationIgnored fileprivate var reportTail: Task<Void, Never>?
@@ -77,6 +78,7 @@ public final class LiveTVMultiviewPane: Identifiable {
 public final class LiveTVMultiviewCoordinator {
     public private(set) var panes: [LiveTVMultiviewPane]
     public private(set) var isEnabled = false
+    public private(set) var isEditingLayout = false
     public private(set) var audiblePaneID: UUID
     public private(set) var primaryPaneID: UUID
     public private(set) var expandedPaneID: UUID?
@@ -85,7 +87,7 @@ public final class LiveTVMultiviewCoordinator {
     public var insetSize: LiveTVMultiviewInsetSize = .medium
     public private(set) var issue: LocalizedStringResource?
     public private(set) var isClosing = false
-    public let maximumPanes = 2
+    public let maximumPanes = 4
 
     @ObservationIgnored private let makePreparation: @MainActor () -> LiveTVPlaybackPreparation
     @ObservationIgnored private let reference: @MainActor (String) -> LiveTVServerChannelReference?
@@ -127,10 +129,25 @@ public final class LiveTVMultiviewCoordinator {
         }
         issue = nil
         isEnabled = true
+        isEditingLayout = true
         return true
     }
 
     public func dismissIssue() { issue = nil }
+
+    public func beginEditingLayout() {
+        guard isEnabled else { return }
+        expandedPaneID = nil
+        isEditingLayout = true
+    }
+
+    public func finishEditingLayout() { isEditingLayout = false }
+
+    public func updateVideoAspectRatio(_ ratio: Double?, paneID: UUID, preparedID: UUID) {
+        guard let pane = panes.first(where: { $0.id == paneID }),
+              pane.preparation.current?.id == preparedID else { return }
+        pane.videoAspectRatio = ratio.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+    }
 
     public func selectAudio(_ id: UUID) {
         guard panes.contains(where: { $0.id == id }) else { return }
@@ -144,6 +161,7 @@ public final class LiveTVMultiviewCoordinator {
 
     public func expand(_ id: UUID) {
         guard panes.contains(where: { $0.id == id }) else { return }
+        isEditingLayout = false
         expandedPaneID = id
     }
 
@@ -210,6 +228,7 @@ public final class LiveTVMultiviewCoordinator {
         primaryPaneID = survivor.id
         expandedPaneID = nil
         isEnabled = false
+        isEditingLayout = false
         issue = nil
         for pane in removed { retire(pane) }
         return survivor.preparation
