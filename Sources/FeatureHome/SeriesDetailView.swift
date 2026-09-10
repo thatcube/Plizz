@@ -588,13 +588,7 @@ struct SeriesDetailView: View {
                         leadingInset: PlozzTheme.Metrics.heroLeadingPadding,
                         seriesRecedeModel: recedeModel,
                         revealsSeriesCastWithoutBrowser: revealsCastWithoutBrowser,
-                        // Lower sections cannot steal the first DOWN while the
-                        // browser is loading. Do not use the transient reclaim
-                        // latch here: it must not disable otherwise usable rows.
-                        suppressesFocus: hasChildOnTop || !SeriesDetailBrowserPolicy.allowsLowerContent(
-                            browserEntered: browserEntry == .browser,
-                            hasEmptyBrowser: revealsCastWithoutBrowser
-                        ),
+                        suppressesFocus: hasChildOnTop,
                         onCastFocusEntered: {
                             seasonBarEngaged = false
                             // Cast/Related sit BELOW the browser, so the page
@@ -829,11 +823,7 @@ struct SeriesDetailView: View {
                     .focusSection()
                     .onChange(of: focusedSeasonID) { _, id in
                         guard id == Self.loadingSeasonID else { return }
-                        browserEntry = .loadingSeasons
-                        browserHoldsFocus = true
-                        hasUserDirectedFocus = true
-                        hasSettledOpeningFocus = true
-                        onFocusEntered()
+                        enterSeasonBrowser(onFocusEntered: onFocusEntered)
                     }
             } else if hasRequestAccessory {
                 HStack(spacing: 18) {
@@ -867,6 +857,27 @@ struct SeriesDetailView: View {
                     .focusSection()
             }
         }
+        .background {
+            #if os(tvOS)
+            NativeFocusRegionObserver(isEnabled: !ignoresSystemFocusMoves) {
+                SeriesFocusTrace.record("nativeSeasonEntry")
+                enterSeasonBrowser(onFocusEntered: onFocusEntered)
+            }
+            #endif
+        }
+    }
+
+    private func enterSeasonBrowser(onFocusEntered: () -> Void) {
+        let entering = !seasonBarEngaged && browserEntry != .loadingSeasons
+        let shouldReveal = !browserHoldsFocus || !recedeModel.isReceded
+        let loading = seasons.isEmpty && showsSeasonEntry
+        seasonBarEngaged = !loading
+        browserEntry = loading ? .loadingSeasons : .browser
+        browserHoldsFocus = true
+        hasUserDirectedFocus = true
+        hasSettledOpeningFocus = true
+        if entering { episodeRailResetToken += 1 }
+        if shouldReveal { onFocusEntered() }
     }
 
     private func seasonScroller(
@@ -931,20 +942,7 @@ struct SeriesDetailView: View {
             .onChange(of: focusedSeasonID) { _, newValue in
                 guard let id = newValue,
                       let season = seasons.first(where: { $0.id == id }) else { return }
-                let isEntering = !seasonBarEngaged
-                // We're now inside the bar — open every chip to focus so left/right
-                // navigation between seasons works.
-                seasonBarEngaged = true
-                browserEntry = .browser
-                browserHoldsFocus = true
-                // User-driven focus: fence the opening Play claim (see
-                // `hasSettledOpeningFocus`) so it can't fire behind them.
-                hasUserDirectedFocus = true
-                hasSettledOpeningFocus = true
-                if isEntering { onFocusEntered() }
-                // Focus has genuinely left the episode rail (it's now on the bar), so
-                // tell the rail to re-arm its entry gate for the next down-press.
-                episodeRailResetToken += 1
+                enterSeasonBrowser(onFocusEntered: onFocusEntered)
                 select(season)
                 // Deliberately *don't* move the hero to the season: focusing the tab bar
                 // keeps the page on the episode you were last viewing, so going up and
@@ -1011,14 +1009,7 @@ struct SeriesDetailView: View {
         ))
         .onChange(of: requestSeasonsFocused) { _, focused in
             if focused {
-                let isEntering = !seasonBarEngaged
-                seasonBarEngaged = true
-                browserEntry = .browser
-                browserHoldsFocus = true
-                hasUserDirectedFocus = true
-                hasSettledOpeningFocus = true
-                if isEntering { onFocusEntered() }
-                episodeRailResetToken += 1
+                enterSeasonBrowser(onFocusEntered: onFocusEntered)
             }
         }
     }
@@ -1190,14 +1181,6 @@ struct SeriesDetailView: View {
                 onPlay(item)
             }
         )
-        .disabled(!SeriesDetailBrowserPolicy.allowsEpisodeEntry(
-            browserEntered: browserEntry == .browser,
-            hasSeasonEntry: showsSeasonEntry,
-            opensOnEpisode: SeriesDetailEntryPolicy.permitsInitialRailEntry(
-                hasInitialEpisode: initialEpisode != nil,
-                hasSettledOpeningFocus: hasSettledOpeningFocus
-            )
-        ))
         }
     }
 
@@ -1871,16 +1854,6 @@ enum SeriesDetailBrowserPolicy {
         hasSeasons || !childrenLoaded
     }
 
-    static func allowsEpisodeEntry(
-        browserEntered: Bool, hasSeasonEntry: Bool, opensOnEpisode: Bool
-    ) -> Bool {
-        browserEntered || opensOnEpisode || !hasSeasonEntry
-    }
-
-    static func allowsLowerContent(browserEntered: Bool, hasEmptyBrowser: Bool) -> Bool {
-        browserEntered || hasEmptyBrowser
-    }
-
     static func rearmsEpisodeRailOnHeroFocus(hasSeasons: Bool) -> Bool {
         !hasSeasons
     }
@@ -1895,12 +1868,6 @@ enum SeriesDetailBrowserPolicy {
 }
 
 enum SeriesDetailEntryPolicy {
-    static func permitsInitialRailEntry(
-        hasInitialEpisode: Bool, hasSettledOpeningFocus: Bool
-    ) -> Bool {
-        hasInitialEpisode && !hasSettledOpeningFocus
-    }
-
     static func claimsHeroPlay(
         hasOpenedOnce: Bool,
         hasInitialEpisode: Bool
