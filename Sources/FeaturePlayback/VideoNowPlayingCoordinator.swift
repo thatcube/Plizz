@@ -61,7 +61,7 @@ final class VideoNowPlayingCoordinator {
         self.artworkLoader = artworkLoader
     }
 
-    func begin(item: MediaItem, title: String, subtitle: String, position: TimeInterval) {
+    func begin(item: MediaItem, title: String, subtitle: String, position: TimeInterval) { // l10n:content - provider media titles and episode identifiers
         let firstStart = self.item == nil
         let changedItem = self.item?.id != item.id || self.item?.sourceAccountID != item.sourceAccountID
         self.item = item
