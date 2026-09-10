@@ -577,6 +577,21 @@ public struct HomeAggregator: Sendable {
                   seen.insert(seriesID).inserted else { return nil }
             return seriesID
         }
+        guard !seriesIDs.isEmpty else { return [:] }
+        if let batchProvider = provider as? any SeriesIdentityProviding {
+            do {
+                let resolved = try await batchProvider.seriesProviderIDs(for: seriesIDs)
+                return resolved.filter { seen.contains($0.key) }
+            } catch is CancellationError {
+                return [:]
+            } catch let error as AppError where error == .cancelled {
+                return [:]
+            } catch {
+                PlozzLog.networking.error(
+                    "Home series identity batch failed; retrying individual details: \(String(describing: error))"
+                )
+            }
+        }
         let resolved: [(String, [String: String])] = await loadBounded(
             seriesIDs,
             maxConcurrent: 4

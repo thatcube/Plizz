@@ -257,14 +257,17 @@ public struct JellyfinClient: Sendable {
     /// in-progress episodes already come back from `/Items/Resume`, so NextUp is
     /// scoped to the next-after-completed episode. `EnableRewatching=false` avoids
     /// resurfacing fully-watched series.
-    func nextUpItems(userID: String, limit: Int, parentID: String? = nil) async throws -> [BaseItemDto] {
+    func nextUpItems(
+        userID: String, limit: Int, parentID: String? = nil, seriesID: String? = nil
+    ) async throws -> [BaseItemDto] {
         if limit == Int.max {
             return try await exhaustiveContinueWatchingItems { startIndex, pageSize in
                 return try await nextUpItemsPage(
                     userID: userID,
                     startIndex: startIndex,
                     limit: pageSize,
-                    parentID: parentID
+                    parentID: parentID,
+                    seriesID: seriesID
                 )
             }
         }
@@ -272,7 +275,8 @@ public struct JellyfinClient: Sendable {
             userID: userID,
             startIndex: nil,
             limit: limit,
-            parentID: parentID
+            parentID: parentID,
+            seriesID: seriesID
         ).Items
     }
 
@@ -280,7 +284,8 @@ public struct JellyfinClient: Sendable {
         userID: String,
         startIndex: Int?,
         limit: Int,
-        parentID: String?
+        parentID: String?,
+        seriesID: String?
     ) async throws -> ItemsResponse {
         var queryItems = [
             URLQueryItem(name: "UserId", value: userID),
@@ -296,6 +301,9 @@ public struct JellyfinClient: Sendable {
         }
         if let parentID {
             queryItems.append(URLQueryItem(name: "ParentId", value: parentID))
+        }
+        if let seriesID {
+            queryItems.append(URLQueryItem(name: "SeriesId", value: seriesID))
         }
         let endpoint = Endpoint(
             path: "/Shows/NextUp",
@@ -365,20 +373,12 @@ public struct JellyfinClient: Sendable {
         }
     }
 
-    /// Series the user has watched, most-recently-played first, each carrying its
-    /// series-level `UserData.LastPlayedDate` (the date of the most recent episode
-    /// play). Used to stamp NextUp suggestions — whose own episode
-    /// `LastPlayedDate` is nil — with their series' true last-watched time.
-    ///
-    /// Without this a just-finished show (present only in `/Shows/NextUp`, after
-    /// the whole `/Items/Resume` block) has no timestamp and either inherits an
-    /// unrelated in-progress item's date or sinks to the bottom of a merged
-    /// Continue Watching row — so the row stops reflecting what was watched last.
-    /// `/Users/{id}/Items` returns `UserData` by default, so no extra field is
-    /// requested. Only series referenced by the fetched Continue Watching feed
-    /// are requested; this avoids turning an unlimited row into an unrelated
-    /// full-library scan. IDs are split into bounded request batches.
-    func recentlyWatchedSeries(userID: String, seriesIDs: [String]) async throws -> [BaseItemDto] {
+    /// Lightweight metadata for exact series IDs, in bounded batches. Home needs
+    /// only external IDs; Continue Watching also needs UserData to stamp next-up
+    /// recency. Neither lookup needs artwork or playback metadata.
+    func seriesMetadata(
+        userID: String, seriesIDs: [String], includeUserData: Bool = true
+    ) async throws -> [BaseItemDto] {
         let uniqueIDs = Array(Set(seriesIDs.filter { !$0.isEmpty })).sorted()
         guard !uniqueIDs.isEmpty else { return [] }
 
@@ -398,6 +398,7 @@ public struct JellyfinClient: Sendable {
                     URLQueryItem(name: "Limit", value: String(batch.count)),
                     URLQueryItem(name: "Fields", value: "ProviderIds"),
                     URLQueryItem(name: "EnableImages", value: "false"),
+                    URLQueryItem(name: "EnableUserData", value: String(includeUserData)),
                     URLQueryItem(name: "EnableTotalRecordCount", value: "false")
                 ],
                 headers: authHeaders

@@ -1812,6 +1812,20 @@ public final class ItemDetailViewModel {
         provider: any MediaProvider
     ) async -> MediaItem? {
         guard item.kind == .series else { return nil }
+        if let scopedProvider = provider as? any SeriesResumeProviding {
+            do {
+                let episode = try await scopedProvider.resumeEpisode(inSeries: item.id)
+                guard episode?.kind == .episode, episode?.seriesID == item.id else { return nil }
+                return episode
+            } catch is CancellationError {
+                return nil
+            } catch let error as AppError where error == .cancelled {
+                return nil
+            } catch {
+                PlozzLog.networking.error("Series resume lookup failed: \(String(describing: error))")
+                return nil
+            }
+        }
         // The series may sit anywhere in the unlimited Home row. A preview-sized
         // lookup must not make an older show's detail page restart at episode one.
         guard let feed = try? await provider.continueWatching(limit: .max) else { return nil }
