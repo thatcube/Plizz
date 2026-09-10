@@ -230,6 +230,29 @@ final class SeasonPrewarmSchedulerTests: XCTestCase {
         )
         XCTAssertTrue(calls.isEmpty)
     }
+
+    func testArtworkWindowStartsAtTheResumeEpisodeInsteadOfDecodingAWholeSeason() {
+        let episodes = (0..<300).map { (number: Int) in
+            MediaItem(id: "e\(number)", title: "Episode", kind: .episode, episodeNumber: number)
+        }
+        let opening = SeasonArtworkPrewarmWindow.episodes(episodes, targetID: "e118", limit: 4)
+        XCTAssertEqual(opening.map(\.id), ["e118", "e119", "e120", "e121"])
+        let end = SeasonArtworkPrewarmWindow.episodes(episodes, targetID: "e299", limit: 4)
+        XCTAssertEqual(end.map(\.id), ["e299", "e296", "e297", "e298"])
+        let selected = SeasonArtworkPrewarmWindow.episodes(episodes, targetID: "e118", limit: 8)
+        XCTAssertEqual(selected.count, 8)
+        XCTAssertEqual(selected.first?.id, "e118")
+    }
+
+    func testArtworkWindowHandlesSmallEmptyAndUnknownTargets() {
+        let episodes = ["one", "two"].map { MediaItem(id: $0, title: $0, kind: .episode) }
+        XCTAssertEqual(
+            SeasonArtworkPrewarmWindow.episodes(episodes, targetID: "missing", limit: 4).map(\.id),
+            ["one", "two"]
+        )
+        XCTAssertTrue(SeasonArtworkPrewarmWindow.episodes([], targetID: nil, limit: 4).isEmpty)
+        XCTAssertTrue(SeasonArtworkPrewarmWindow.episodes(episodes, targetID: nil, limit: 0).isEmpty)
+    }
 }
 
 @MainActor

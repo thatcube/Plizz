@@ -185,6 +185,7 @@ struct DetailExtrasView: View {
                     externalAvailability: externalAvailability,
                     spoilerSettings: spoilerSettings
                 )
+                .disabled(suppressesFocus || !seriesContentRevealed)
                 .id("detail-extras-info")
             }
         }

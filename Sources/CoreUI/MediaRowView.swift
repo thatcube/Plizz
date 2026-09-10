@@ -756,6 +756,18 @@ public struct MediaRowView: View {
         )
         for i in fullIndices {
             let candidate = items[i]
+            if presentation == .episodeColumn {
+                if prefetchedIDs.insert(candidate.stablePresentationID).inserted {
+                    let source = EpisodeArtworkSource(item: candidate, spoilerSettings: spoilerSettings)
+                    artworkPrefetchTasks.track(Task {
+                        await ArtworkSession.warmLimiter.run {
+                            guard !Task.isCancelled else { return }
+                            await source.prepare()
+                        }
+                    })
+                }
+                continue
+            }
             let candidates = MediaArtworkPrefetchPolicy.candidates(
                 for: candidate,
                 style: artworkStyle,

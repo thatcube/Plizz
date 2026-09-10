@@ -367,6 +367,7 @@ public final class ArtworkImageCache: NSObject, @unchecked Sendable {
             // accounting directly here — otherwise the PLZXMEM sampler would stay
             // over-counted after a memory warning.
             Self.noteFlushedAll()
+            Task { @MainActor in ArtworkSeedMemo.removeAll() }
             Task { [weak self] in
                 guard let self else { return }
                 self.cancelBackgroundPrefetches()

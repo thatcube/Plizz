@@ -347,7 +347,9 @@ struct SeriesRecedeReveal<Content: View>: View {
     var body: some View {
         let revealed = recedeModel.isReceded || forceVisible
         content()
-            .opacity(revealed ? 1 : 0)
+            // Alpha-zero controls leave tvOS's focus tree. Mask the drawing,
+            // like the hero, so DOWN can reach the resting season bar.
+            .mask { Rectangle().opacity(revealed ? 1 : 0) }
             .animation(
                 reduceMotion
                     ? nil

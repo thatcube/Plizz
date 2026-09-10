@@ -1,3 +1,5 @@
+import CoreModels
+
 /// Coordinates the bounded neighboring-season work chosen by the series view.
 @MainActor
 public enum SeasonPrewarmScheduler {
@@ -35,5 +37,19 @@ public enum SeasonPrewarmScheduler {
             guard !Task.isCancelled else { return }
             if case .terminated = continuation.yield(seasonID) { return }
         }
+    }
+}
+
+public enum SeasonArtworkPrewarmWindow {
+    /// Cover the first viewport around the row's opening target, target first.
+    /// Do not decode whole seasons and evict the thumbnails the viewer needs next.
+    public static func episodes(
+        _ episodes: [MediaItem], targetID: String?, limit: Int
+    ) -> [MediaItem] {
+        guard !episodes.isEmpty, limit > 0 else { return [] }
+        let target = episodes.firstIndex { $0.id == targetID } ?? 0
+        let start = min(target, max(0, episodes.count - limit))
+        let end = min(episodes.count, start + limit)
+        return Array(episodes[target..<end]) + Array(episodes[start..<target])
     }
 }

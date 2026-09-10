@@ -84,6 +84,51 @@ final class SeriesSeasonRevealEdgeTests: XCTestCase {
 }
 
 final class SeriesDetailBrowserPolicyTests: XCTestCase {
+    func testUnknownSeasonsRetainAnEntryAndBlockAbout() {
+        XCTAssertTrue(SeriesDetailBrowserPolicy.showsSeasonEntry(childrenLoaded: false, hasSeasons: false))
+        XCTAssertFalse(SeriesDetailBrowserPolicy.allowsLowerContent(
+            browserEntered: false, hasEmptyBrowser: false
+        ))
+        XCTAssertFalse(SeriesDetailBrowserPolicy.allowsEpisodeEntry(
+            browserEntered: false, hasSeasonEntry: true, opensOnEpisode: false
+        ))
+    }
+
+    func testLoadedSeasonsStillReceiveFirstDownBeforeEpisodesOrAbout() {
+        XCTAssertTrue(SeriesDetailBrowserPolicy.showsSeasonEntry(childrenLoaded: true, hasSeasons: true))
+        XCTAssertFalse(SeriesDetailBrowserPolicy.allowsEpisodeEntry(
+            browserEntered: false, hasSeasonEntry: true, opensOnEpisode: false
+        ))
+        XCTAssertTrue(SeriesDetailBrowserPolicy.allowsEpisodeEntry(
+            browserEntered: true, hasSeasonEntry: true, opensOnEpisode: false
+        ))
+        XCTAssertTrue(SeriesDetailBrowserPolicy.allowsLowerContent(
+            browserEntered: true, hasEmptyBrowser: false
+        ))
+    }
+
+    func testDirectEpisodeAndGenuinelyEmptySeriesKeepTheirEntryPaths() {
+        XCTAssertTrue(SeriesDetailEntryPolicy.permitsInitialRailEntry(
+            hasInitialEpisode: true, hasSettledOpeningFocus: false
+        ))
+        XCTAssertFalse(SeriesDetailEntryPolicy.permitsInitialRailEntry(
+            hasInitialEpisode: true, hasSettledOpeningFocus: true
+        ))
+        XCTAssertFalse(SeriesDetailEntryPolicy.permitsInitialRailEntry(
+            hasInitialEpisode: false, hasSettledOpeningFocus: false
+        ))
+        XCTAssertTrue(SeriesDetailBrowserPolicy.allowsEpisodeEntry(
+            browserEntered: false, hasSeasonEntry: true, opensOnEpisode: true
+        ))
+        XCTAssertFalse(SeriesDetailBrowserPolicy.showsSeasonEntry(childrenLoaded: true, hasSeasons: false))
+        XCTAssertTrue(SeriesDetailBrowserPolicy.allowsEpisodeEntry(
+            browserEntered: false, hasSeasonEntry: false, opensOnEpisode: false
+        ))
+        XCTAssertTrue(SeriesDetailBrowserPolicy.allowsLowerContent(
+            browserEntered: false, hasEmptyBrowser: true
+        ))
+    }
+
     func testWholeSeriesEntryClaimsHeroPlay() {
         XCTAssertTrue(SeriesDetailEntryPolicy.claimsHeroPlay(
             hasOpenedOnce: false,
