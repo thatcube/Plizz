@@ -35,6 +35,9 @@ public struct HeroSettings: Codable, Equatable, Sendable {
     /// from every hero source.
     public var hideWatched: Bool
 
+    /// Scores are optional Home chrome, independent of detail-page rating preferences.
+    public var showsRatings: Bool
+
     /// The `AggregatedLibrary.key`s the Random source may draw from. **Empty
     /// means "all currently-visible libraries"** (the sensible default), so a
     /// fresh profile needs no configuration.
@@ -71,6 +74,7 @@ public struct HeroSettings: Codable, Equatable, Sendable {
         maxItems: Int,
         trailersEnabled: Bool,
         hideWatched: Bool = true,
+        showsRatings: Bool = false,
         randomLibraryKeys: Set<String>,
         autoAdvance: Bool,
         autoAdvanceSeconds: Int
@@ -83,13 +87,14 @@ public struct HeroSettings: Codable, Equatable, Sendable {
         self.maxItems = maxItems.clamped(to: HeroSettings.maxItemsRange)
         self.trailersEnabled = trailersEnabled
         self.hideWatched = hideWatched
+        self.showsRatings = showsRatings
         self.randomLibraryKeys = randomLibraryKeys
         self.autoAdvance = autoAdvance
         self.autoAdvanceSeconds = autoAdvanceSeconds.clamped(to: HeroSettings.autoAdvanceRange)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case isEnabled, sources, maxItems, trailersEnabled, hideWatched
+        case isEnabled, sources, maxItems, trailersEnabled, hideWatched, showsRatings
         case randomLibraryKeys, autoAdvance, autoAdvanceSeconds
         case offeredSourcesVersion
     }
@@ -113,6 +118,7 @@ public struct HeroSettings: Codable, Equatable, Sendable {
             maxItems: value(Int.self, .maxItems, d.maxItems),
             trailersEnabled: value(Bool.self, .trailersEnabled, d.trailersEnabled),
             hideWatched: value(Bool.self, .hideWatched, d.hideWatched),
+            showsRatings: value(Bool.self, .showsRatings, d.showsRatings),
             randomLibraryKeys: value(Set<String>.self, .randomLibraryKeys, d.randomLibraryKeys),
             autoAdvance: value(Bool.self, .autoAdvance, d.autoAdvance),
             autoAdvanceSeconds: value(Int.self, .autoAdvanceSeconds, d.autoAdvanceSeconds)
@@ -164,6 +170,7 @@ public struct HeroSettings: Codable, Equatable, Sendable {
         try c.encode(maxItems, forKey: .maxItems)
         try c.encode(trailersEnabled, forKey: .trailersEnabled)
         try c.encode(hideWatched, forKey: .hideWatched)
+        try c.encode(showsRatings, forKey: .showsRatings)
         try c.encode(randomLibraryKeys, forKey: .randomLibraryKeys)
         try c.encode(autoAdvance, forKey: .autoAdvance)
         try c.encode(autoAdvanceSeconds, forKey: .autoAdvanceSeconds)
@@ -179,6 +186,10 @@ public struct HeroSettings: Codable, Equatable, Sendable {
     /// one enabled source.
     public var isActive: Bool {
         isEnabled && !sources.isEmpty
+    }
+
+    public func shouldShowRatings(for item: MediaItem, spoilerSettings: SpoilerSettings) -> Bool {
+        showsRatings && !spoilerSettings.shouldHideRatings(for: item)
     }
 
     /// Whether honoring Hide Watched requires live external watch history beyond

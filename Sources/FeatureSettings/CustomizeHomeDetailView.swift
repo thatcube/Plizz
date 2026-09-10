@@ -253,6 +253,8 @@ struct CustomizeHomeDetailView: View {
                 .toggleStyle(SettingsSwitchToggleStyle())
 
             if hero.settings.isEnabled {
+                Toggle("Show ratings", isOn: $hero.settings.showsRatings)
+                    .toggleStyle(SettingsSwitchToggleStyle())
                 Toggle(
                     "Hide watched movies, shows, and episodes",
                     isOn: $hero.settings.hideWatched

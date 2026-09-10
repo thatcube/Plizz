@@ -339,14 +339,28 @@ private struct PlozziOSCanonicalItemDetailView: View {
                     )
                 }
 
-                if let detail = viewModel.state.value,
-                   seriesDownloadPresentation(for: detail).isVisible {
-                    Button {
-                        presentsSeriesDownloads = true
-                    } label: {
-                        Image(systemName: "arrow.down.circle")
+                if let detail = viewModel.state.value {
+                    if seriesDownloadPresentation(for: detail).isVisible {
+                        Button {
+                            presentsSeriesDownloads = true
+                        } label: {
+                            Image(systemName: "arrow.down.circle")
+                        }
+                        .accessibilityLabel("Manage Seasons")
+                    } else if let downloadItem = detailPlayableItem(for: detail.item) {
+                        let options = detailPlaybackOptions(for: detail.item)
+                        PlozziOSDetailDownloadButton(
+                            downloadItem: downloadItem,
+                            selectedSource: options.sources.first {
+                                $0.accountID == options.selectedSourceAccountID
+                            },
+                            selectedVersion: options.versions.first {
+                                $0.id == options.selectedVersionID
+                            }
+                        )
+                        // Recreate download state when the selected server, item or version changes.
+                        .id("\(downloadItem.sourceAccountID ?? "")|\(downloadItem.id)|\(downloadItem.selectedVersionID ?? "")")
                     }
-                    .accessibilityLabel("Manage Seasons")
                 }
             }
         }
@@ -447,7 +461,6 @@ private struct PlozziOSCanonicalItemDetailView: View {
                     backdropItem: detail.item,
                     playableItem: playableHeroTarget,
                     showsPlayPlaceholder: showsPlayPlaceholder,
-                    downloadItem: playableHeroTarget,
                     sources: options.sources,
                     scheduleLine: isDiscoveryItem
                         ? (

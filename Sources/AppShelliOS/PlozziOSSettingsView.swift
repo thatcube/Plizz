@@ -1795,6 +1795,7 @@ private struct PlozziOSHomeSettingsView: View {
                 Toggle("Show hero", isOn: $hero.settings.isEnabled)
                 if hero.settings.isEnabled {
                     Toggle("Hide watched titles", isOn: $hero.settings.hideWatched)
+                    Toggle("Show ratings", isOn: $hero.settings.showsRatings)
                     Toggle("Auto-advance", isOn: $hero.settings.autoAdvance)
                     Toggle(
                         "Play trailer behind the hero",

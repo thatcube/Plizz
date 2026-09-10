@@ -25,6 +25,7 @@ final class HeroSettingsTests: XCTestCase {
         XCTAssertTrue(d.isActive)
         XCTAssertEqual(d.sources, HeroSourceKind.allCases)
         XCTAssertTrue(d.hideWatched)
+        XCTAssertFalse(d.showsRatings)
     }
 
     func testMaxItemsIsClamped() {
@@ -87,6 +88,7 @@ final class HeroSettingsTests: XCTestCase {
         XCTAssertEqual(decoded.sources, HeroSettings.default.sources)
         XCTAssertEqual(decoded.autoAdvanceSeconds, HeroSettings.default.autoAdvanceSeconds)
         XCTAssertTrue(decoded.hideWatched)
+        XCTAssertFalse(decoded.showsRatings)
     }
 
     func testInMemoryStoreRoundTrips() {
@@ -125,4 +127,60 @@ final class HeroSettingsTests: XCTestCase {
         XCTAssertEqual(decoded?.sources, [])
     }
 
+    func testHomeRatingsOptInSurvivesPersistenceAndProfileTransfer() {
+        var settings = HeroSettings.default
+        settings.showsRatings = true
+        let first = HeroSettingsStore(defaults: defaults, namespace: "first")
+        let second = HeroSettingsStore(defaults: defaults, namespace: "second")
+        first.save(settings)
+        XCTAssertTrue(first.load().showsRatings)
+        XCTAssertFalse(second.load().showsRatings)
+        let snapshot = ProfileSettingsTransfer.capture(namespace: "first", defaults: defaults)
+        ProfileSettingsTransfer.apply(snapshot, namespace: "second", defaults: defaults)
+        XCTAssertEqual(second.load(), settings)
+
+        settings.showsRatings = false
+        first.save(settings)
+        XCTAssertFalse(first.load().showsRatings)
+        XCTAssertTrue(second.load().showsRatings)
+    }
+
+    func testMissingOrMalformedRatingPreferenceDefaultsOffWithoutResettingOtherSettings() throws {
+        for field in ["", #","showsRatings":null"#, #","showsRatings":"invalid""#] {
+            let data = Data(#"{"maxItems":4,"hideWatched":false\#(field)}"#.utf8)
+            let settings = try JSONDecoder().decode(HeroSettings.self, from: data)
+            XCTAssertFalse(settings.showsRatings)
+            XCTAssertEqual(settings.maxItems, 4)
+            XCTAssertFalse(settings.hideWatched)
+        }
+    }
+
+    func testHomeRatingsVisibilityStillHonorsSpoilersForEachPlayableKind() {
+        for kind in [MediaItemKind.movie, .series, .season, .episode, .video] {
+            var item = MediaItem(id: "title", title: "A title", kind: kind)
+            item.isPlayed = false
+            var settings = HeroSettings.default
+            XCTAssertFalse(settings.shouldShowRatings(for: item, spoilerSettings: .default))
+            item.isPlayed = true
+            XCTAssertFalse(settings.shouldShowRatings(for: item, spoilerSettings: .default))
+
+            settings.showsRatings = true
+            let spoilers = SpoilerSettings(hideRatingsUntilWatched: true)
+            XCTAssertTrue(settings.shouldShowRatings(for: item, spoilerSettings: spoilers))
+            item.isPlayed = false
+            XCTAssertFalse(settings.shouldShowRatings(for: item, spoilerSettings: spoilers))
+            XCTAssertTrue(settings.shouldShowRatings(for: item, spoilerSettings: .default))
+        }
+    }
+
+    @MainActor
+    func testRatingsToggleUpdatesTheExistingHeroModel() {
+        let store = InMemoryHeroSettingsStore()
+        let model = HeroSettingsModel(store: store)
+        XCTAssertFalse(model.settings.showsRatings)
+        model.settings.showsRatings = true
+        XCTAssertTrue(store.load().showsRatings)
+        model.settings.showsRatings = false
+        XCTAssertFalse(store.load().showsRatings)
+    }
 }

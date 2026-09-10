@@ -413,7 +413,6 @@ struct PlozziOSDetailHeroSection: View {
     let backdropItem: MediaItem
     let playableItem: MediaItem?
     var showsPlayPlaceholder: Bool = false
-    let downloadItem: MediaItem?
     let sources: [MediaSourceRef]
     /// The air-schedule badge for a series, resolved by the detail page.
     var scheduleLine: LocalizedStringResource? = nil
@@ -466,7 +465,6 @@ struct PlozziOSDetailHeroSection: View {
                 rootItem: backdropItem,
                 playableItem: playableItem,
                 showsPlayPlaceholder: showsPlayPlaceholder,
-                downloadItem: downloadItem,
                 sources: sources,
                 scheduleLine: scheduleLine,
                 selectedSourceAccountID: selectedSourceAccountID,
@@ -1613,8 +1611,10 @@ struct PlozziOSHomeHeroForeground: View {
             PlozziOSStableHomeHeroMetadata(
                 presentation: presentation,
                 style: style,
-                hidesRatings: appModel.settings.spoilers.settings
-                    .shouldHideRatings(for: item),
+                hidesRatings: !appModel.settings.hero.settings.shouldShowRatings(
+                    for: item,
+                    spoilerSettings: appModel.settings.spoilers.settings
+                ),
                 scheduleLine: scheduleLine,
                 logoFallback: PlozziOSHeroMetadata.tmdbLogoFallback(for: item)
             )
@@ -1768,15 +1768,11 @@ struct PlozziOSHomeHeroForeground: View {
 private struct PlozziOSDetailHeroForeground: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(PlozziOSAppModel.self) private var appModel
-    @State private var downloadRecord: DownloadedMediaRecord?
-    @State private var downloadError: String?
-    @State private var showsDownloadConfirmation = false
 
     let item: MediaItem
     let rootItem: MediaItem
     let playableItem: MediaItem?
     var showsPlayPlaceholder: Bool = false
-    let downloadItem: MediaItem?
     let sources: [MediaSourceRef]
     /// The air-schedule badge for a series, resolved by the detail page.
     var scheduleLine: LocalizedStringResource? = nil
@@ -1842,6 +1838,7 @@ private struct PlozziOSDetailHeroForeground: View {
 
     /// this page can't otherwise reach, and only when something can route it.
     private func offersAction(_ action: MediaItemAction) -> Bool {
+        guard !action.isDownload else { return false }
         guard action.isNavigation else { return true }
         if action == .browseFiles { return navigator != nil }
         return offersParentNavigation && !action.navigatesToSelf && navigator != nil
@@ -2001,81 +1998,6 @@ private struct PlozziOSDetailHeroForeground: View {
         .contextMenu {
             detailContextMenu
         }
-        // Keyed on version too: switching version must re-check whether THAT
-        // file is downloaded, not leave the button showing the old answer.
-        .task(id: "\(downloadItem?.id ?? "")|\(downloadItem?.selectedVersionID ?? "")") {
-            guard let downloadItem else {
-                downloadRecord = nil
-                return
-            }
-            downloadRecord = await appModel.downloads
-                .record(forSelectedVersionOf: downloadItem)
-            if let provider = appModel.provider(for: downloadItem) {
-                await appModel.downloads.refreshReducedQualitySupport(
-                    for: downloadItem,
-                    provider: provider
-                )
-            }
-        }
-        .alert(
-            "Download Failed",
-            isPresented: Binding(
-                get: { downloadError != nil },
-                set: { if !$0 { downloadError = nil } }
-            )
-        ) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(verbatim: downloadError ?? "")
-        }
-        .confirmationDialog(
-            downloadItem.map {
-                if currentDownloadRecord?.status == .completed {
-                    return Text("Change Offline Copy of ")
-                        + Text(verbatim: $0.title)
-                        + Text(verbatim: "?")
-                }
-                return Text("Download ")
-                    + Text(verbatim: $0.title)
-                    + Text(verbatim: "?")
-            } ?? Text("Download?"),
-            isPresented: $showsDownloadConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button(
-                currentDownloadRecord?.status == .completed
-                    ? "Use Original"
-                    : "Download Original"
-            ) {
-                Task { await startDownload(quality: .original) }
-            }
-            if let downloadItem,
-               appModel.downloads.supportsReducedQuality(for: downloadItem) {
-                Button("Download 1080p • 20 Mbps") {
-                    Task { await startDownload(quality: .hd1080) }
-                }
-                Button("Download 720p • 4 Mbps") {
-                    Task { await startDownload(quality: .hd720) }
-                }
-                Button("Download 480p • 1.5 Mbps") {
-                    Task { await startDownload(quality: .sd480) }
-                }
-                if let custom = appModel.downloads.customDownloadQuality,
-                   let title = appModel.downloads.customDownloadQualityTitle {
-                    Button(title) {
-                        Task { await startDownload(quality: custom) }
-                    }
-                }
-            }
-            if currentDownloadRecord?.status == .completed {
-                Button("Remove Download", role: .destructive) {
-                    Task { await removeDownload() }
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            downloadConfirmationMessage
-        }
     }
 
     /// A secondary hero action that can either sit inline as its own button or
@@ -2084,13 +2006,11 @@ private struct PlozziOSDetailHeroForeground: View {
     /// the least-used action is the first to move into "…".
     private enum InlineExtra: Identifiable {
         case primary(ActionEntry)
-        case download
         case trailer
 
         var id: String {
             switch self {
             case .primary(let entry): return "media.\(entry.action.rawValue)"
-            case .download: return "download"
             case .trailer: return "trailer"
             }
         }
@@ -2116,19 +2036,15 @@ private struct PlozziOSDetailHeroForeground: View {
         if !presentsEpisodeStill, let parentNavigationEntry {
             extras.append(.primary(parentNavigationEntry))
         }
-        if downloadItem != nil {
-            extras.append(.download)
-        }
         return extras
     }
 
-    /// Fold priority, lowest folds into "…" first. The power-user Download goes
+    /// Fold priority, lowest folds into "…" first. Navigation goes
     /// before everyday watch-state actions, and the trailer is the last to leave
     /// the row. It sheds its label first (see `actionRow`), which usually buys
     /// enough width that it never has to leave at all.
     private func foldRank(_ extra: InlineExtra) -> Int {
         switch extra {
-        case .download: return 0
         case .primary(let entry):
             return entry.action.isNavigation ? 1 : 2
         case .trailer: return 3
@@ -2176,7 +2092,7 @@ private struct PlozziOSDetailHeroForeground: View {
     }
 
     /// Overflow-menu entries for the collapsed extras, preserving the canonical
-    /// menu ordering (primary actions, then Download) regardless of which subset
+    /// menu ordering regardless of which subset
     /// happens to be collapsed at the current width.
     private func menuActions(collapsing extras: [InlineExtra]) -> [PlaybackSourceMenuAction] {
         let ids = Set(extras.map(\.id))
@@ -2191,8 +2107,6 @@ private struct PlozziOSDetailHeroForeground: View {
         switch extra {
         case .primary(let entry):
             primaryActionButton(entry)
-        case .download:
-            downloadActionButton
         case .trailer:
             trailerActionButton(labelled: labelledTrailer)
         }
@@ -2291,19 +2205,6 @@ private struct PlozziOSDetailHeroForeground: View {
         .accessibilityLabel(entry.action.title)
     }
 
-    @ViewBuilder
-    private var downloadActionButton: some View {
-        if downloadItem != nil {
-            downloadMenuAction
-                .buttonStyle(
-                    PlozziOSHeroActionButtonStyle(
-                        kind: .secondary,
-                        circular: true
-                    )
-                )
-        }
-    }
-
     private func sourceVersionMenuButton(
         actions: [PlaybackSourceMenuAction] = []
     ) -> some View {
@@ -2343,13 +2244,6 @@ private struct PlozziOSDetailHeroForeground: View {
                 systemImage: primaryActionSymbol(for: entry)
             )
         }
-        if downloadItem != nil {
-            result.append(PlaybackSourceMenuAction(
-                id: "download",
-                title: downloadActionTitle,
-                systemImage: downloadActionSymbol
-            ))
-        }
         // So a collapsed Trailer is still reachable rather than simply gone.
         if trailerItem != nil, onPlayTrailer != nil {
             result.append(PlaybackSourceMenuAction(
@@ -2364,10 +2258,6 @@ private struct PlozziOSDetailHeroForeground: View {
     private func performCompactPanelAction(_ id: String) {
         if id == "media.browseFiles", let fileBrowserAction {
             perform(fileBrowserAction)
-            return
-        }
-        if id == "download" {
-            Task { await performDownloadAction() }
             return
         }
         if id == "trailer" {
@@ -2493,125 +2383,6 @@ private struct PlozziOSDetailHeroForeground: View {
         return "S\(season), E\(episode)"
     }
 
-    @ViewBuilder
-    private var downloadMenuAction: some View {
-        Button {
-            Task { await performDownloadAction() }
-        } label: {
-            Image(systemName: downloadActionSymbol)
-                .font(.headline)
-        }
-        .accessibilityLabel(downloadActionTitle)
-    }
-
-    /// Reuses `MediaItemAction`'s labels rather than repeating them: these were
-    /// four duplicate literals of the same copy, which meant a wording change had
-    /// to be made twice and — once localized — would have produced two catalog
-    /// entries translators had to keep in sync by hand.
-    private var downloadActionTitle: LocalizedStringResource {
-        switch currentDownloadRecord?.status {
-        case .queued, .preparing, .downloading:
-            return MediaItemAction.pauseDownload.title
-        case .paused, .failed:
-            return MediaItemAction.resumeDownload.title
-        case .completed:
-            return MediaItemAction.removeDownload.title
-        case nil:
-            return MediaItemAction.startDownload.title
-        }
-    }
-
-    private var downloadActionSymbol: String {
-        switch currentDownloadRecord?.status {
-        case .queued, .preparing, .downloading:
-            return "pause.circle"
-        case .paused, .failed:
-            return "arrow.clockwise.circle"
-        case .completed:
-            return "trash"
-        case nil:
-            return "arrow.down.circle"
-        }
-    }
-
-    private func performDownloadAction() async {
-        switch currentDownloadRecord?.status {
-        case .queued, .preparing, .downloading:
-            await pauseDownload()
-        case .paused, .failed:
-            await resumeDownload()
-        case .completed:
-            showsDownloadConfirmation = true
-        case nil:
-            if appModel.downloads.asksBeforeDownloading {
-                showsDownloadConfirmation = true
-            } else {
-                await startDownload()
-            }
-        }
-    }
-
-    private var currentDownloadRecord: DownloadedMediaRecord? {
-        guard let downloadRecord else { return nil }
-        return appModel.downloads.records.first {
-            $0.identityKey == downloadRecord.identityKey
-        } ?? downloadRecord
-    }
-
-    private func startDownload(
-        quality: DownloadQuality? = nil
-    ) async {
-        guard let downloadItem else { return }
-        do {
-            guard let provider = appModel.provider(for: downloadItem) else {
-                downloadError = String(localized: "The selected server is no longer available.") // l10n:content — alert storage requires resolved text
-                return
-            }
-            downloadRecord = try await appModel.downloads.enqueue(
-                item: downloadItem,
-                provider: provider,
-                quality: quality
-            )
-        } catch {
-            downloadError = error.localizedDescription
-        }
-    }
-
-    private var downloadConfirmationMessage: Text {
-        let source = selectedSource.map {
-            Text(verbatim: $0.displayName)
-        } ?? Text("Selected server")
-        let size = selectedVersion?.sizeBytes.map {
-            Text(verbatim: $0.formatted(.byteCount(style: .file)))
-        } ?? Text("Size unavailable")
-        return source
-            + Text(verbatim: " • ")
-            + size
-            + Text(verbatim: ". ")
-            + Text("Reduced qualities are transcoded by your media server.")
-    }
-
-    private func pauseDownload() async {
-        guard let record = currentDownloadRecord else { return }
-        await appModel.downloads.pause(record)
-        downloadRecord = appModel.downloads.records.first {
-            $0.identityKey == record.identityKey
-        }
-    }
-
-    private func resumeDownload() async {
-        guard let record = currentDownloadRecord else { return }
-        await appModel.downloads.resume(record)
-        downloadRecord = appModel.downloads.records.first {
-            $0.identityKey == record.identityKey
-        }
-    }
-
-    private func removeDownload() async {
-        guard let record = currentDownloadRecord else { return }
-        await appModel.downloads.remove(record)
-        downloadRecord = nil
-    }
 }
 
 private typealias PlozziOSHeroActionButtonStyle = TouchHeroActionButtonStyle
@@ -2792,7 +2563,7 @@ private struct PlozziOSHeroMetadata: View {
                         )
                         .font(.subheadline)
                         .plozzForeground(.secondary)
-                        .lineLimit(3)
+                        .lineLimit(mode == .home ? 2 : 3)
                         .frame(
                             maxWidth: PlozziOSPageLayout.heroTextMaxWidth(
                                 for: style
