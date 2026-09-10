@@ -522,6 +522,45 @@ final class LiveTVPrototypeModelTests: XCTestCase {
         XCTAssertEqual(model.recentChannelIDs, [channels[1].id])
     }
 
+    func testMultiviewFavoritesSurviveOrdinaryChannelPreferenceChanges() {
+        let store = HiddenChannelsFixtureStore()
+        let channels = hiddenChannelFixtures
+        let model = LiveTVPrototypeModel(channels: channels, preferencesStore: store)
+        let favorite = LiveTVMultiviewFavorite(
+            id: "saved", name: "My channels", channelIDs: channels.map(\.id), layout: .mainAndStack)
+        XCTAssertTrue(model.saveMultiviewFavorite(favorite))
+        model.toggleFavorite(channels[0].id)
+        model.tune(channels[0].id)
+        XCTAssertTrue(model.recordWatched(channels[0].id))
+        XCTAssertTrue(model.hideChannel(channels[1]))
+        model.category = channels[0].category
+        XCTAssertEqual(store.value.favoriteMultiviews, [favorite])
+        model.reloadPreferences()
+        XCTAssertEqual(model.favoriteMultiviews, [favorite])
+        XCTAssertTrue(model.removeMultiviewFavorite(favorite.id))
+        XCTAssertTrue(model.favoriteMultiviews.isEmpty)
+        XCTAssertEqual(model.favoriteIDs, [channels[0].id])
+    }
+
+    func testFailedMultiviewSaveRetriesWithoutErasingConcurrentFavorites() {
+        let store = HiddenChannelsFixtureStore()
+        let channels = hiddenChannelFixtures
+        let model = LiveTVPrototypeModel(channels: channels, preferencesStore: store)
+        let requested = LiveTVMultiviewFavorite(
+            id: "requested", name: "My channels", channelIDs: channels.map(\.id), layout: .sideBySide)
+        let concurrent = LiveTVMultiviewFavorite(
+            id: "concurrent", name: "Another setup", channelIDs: channels.map(\.id), layout: .mainAndStack)
+        store.failSave = true
+        XCTAssertFalse(model.saveMultiviewFavorite(requested))
+        XCTAssertTrue(model.favoriteMultiviews.isEmpty)
+        store.value = LiveTVPreferences(favoriteIDs: [channels[0].id], favoriteMultiviews: [concurrent])
+        store.failSave = false
+        model.retryPreferences()
+        XCTAssertNil(model.preferencesIssue)
+        XCTAssertEqual(model.favoriteMultiviews, [concurrent, requested])
+        XCTAssertEqual(model.favoriteIDs, [channels[0].id])
+    }
+
     private var hiddenChannelFixtures: [LiveTVPrototypeChannel] {
         [
             LiveTVPrototypeChannel(

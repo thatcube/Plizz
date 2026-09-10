@@ -71,6 +71,7 @@ public struct LiveTVPreferences: Codable, Equatable, Sendable {
     public let favoriteChannels: [LiveTVHiddenChannel]
     public let channelOverrides: [String: LiveTVChannelMetadataOverride]
     public let browse: LiveTVBrowsePreferences
+    public let favoriteMultiviews: [LiveTVMultiviewFavorite]
     public var hiddenChannelIDs: Set<String> { Set(hiddenChannels.map(\.id)) }
 
     public init(
@@ -80,7 +81,8 @@ public struct LiveTVPreferences: Codable, Equatable, Sendable {
         favoriteOrder: [String] = [],
         favoriteChannels: [LiveTVHiddenChannel] = [],
         channelOverrides: [String: LiveTVChannelMetadataOverride] = [:],
-        browse: LiveTVBrowsePreferences = .init()
+        browse: LiveTVBrowsePreferences = .init(),
+        favoriteMultiviews: [LiveTVMultiviewFavorite] = []
     ) {
         self.favoriteIDs = favoriteIDs
         var ordered = Set<String>()
@@ -90,6 +92,7 @@ public struct LiveTVPreferences: Codable, Equatable, Sendable {
         self.favoriteChannels = favoriteChannels.filter { favoriteIDs.contains($0.id) && named.insert($0.id).inserted }
         self.channelOverrides = channelOverrides
         self.browse = browse
+        self.favoriteMultiviews = favoriteMultiviews
 
         var seen = Set<String>()
         self.recentChannelIDs = Array(
@@ -109,10 +112,16 @@ public struct LiveTVPreferences: Codable, Equatable, Sendable {
         case recentChannelIDs
         case hiddenChannels
         case favoriteOrder, favoriteChannels, channelOverrides, browse
+        case favoriteMultiviews
     }
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let multiviews = try container.decodeIfPresent([LiveTVMultiviewFavorite].self, forKey: .favoriteMultiviews) ?? []
+        guard multiviews.allSatisfy(\.isValid), Set(multiviews.map(\.id)).count == multiviews.count else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .favoriteMultiviews, in: container, debugDescription: "Invalid Multiview favorites")
+        }
         let hiddenChannels: [LiveTVHiddenChannel]
         if container.contains(.hiddenChannels) {
             hiddenChannels = try container.decode(
@@ -129,7 +138,8 @@ public struct LiveTVPreferences: Codable, Equatable, Sendable {
             favoriteOrder: try container.decodeIfPresent([String].self, forKey: .favoriteOrder) ?? [],
             favoriteChannels: try container.decodeIfPresent([LiveTVHiddenChannel].self, forKey: .favoriteChannels) ?? [],
             channelOverrides: try container.decodeIfPresent([String: LiveTVChannelMetadataOverride].self, forKey: .channelOverrides) ?? [:],
-            browse: try container.decodeIfPresent(LiveTVBrowsePreferences.self, forKey: .browse) ?? .init()
+            browse: try container.decodeIfPresent(LiveTVBrowsePreferences.self, forKey: .browse) ?? .init(),
+            favoriteMultiviews: multiviews
         )
     }
 
@@ -139,7 +149,8 @@ public struct LiveTVPreferences: Codable, Equatable, Sendable {
             favoriteIDs: favoriteIDs,
             recentChannelIDs: recentChannelIDs,
             hiddenChannels: hiddenChannels + [LiveTVHiddenChannel(id: id, name: name)],
-            favoriteOrder: favoriteOrder, favoriteChannels: favoriteChannels, channelOverrides: channelOverrides, browse: browse
+            favoriteOrder: favoriteOrder, favoriteChannels: favoriteChannels, channelOverrides: channelOverrides,
+            browse: browse, favoriteMultiviews: favoriteMultiviews
         )
     }
 
@@ -148,7 +159,8 @@ public struct LiveTVPreferences: Codable, Equatable, Sendable {
             favoriteIDs: favoriteIDs,
             recentChannelIDs: recentChannelIDs,
             hiddenChannels: hiddenChannels.filter { $0.id != id },
-            favoriteOrder: favoriteOrder, favoriteChannels: favoriteChannels, channelOverrides: channelOverrides, browse: browse
+            favoriteOrder: favoriteOrder, favoriteChannels: favoriteChannels, channelOverrides: channelOverrides,
+            browse: browse, favoriteMultiviews: favoriteMultiviews
         )
     }
 
@@ -156,7 +168,8 @@ public struct LiveTVPreferences: Codable, Equatable, Sendable {
         LiveTVPreferences(
             favoriteIDs: favoriteIDs,
             recentChannelIDs: recentChannelIDs,
-            favoriteOrder: favoriteOrder, favoriteChannels: favoriteChannels, channelOverrides: channelOverrides, browse: browse
+            favoriteOrder: favoriteOrder, favoriteChannels: favoriteChannels, channelOverrides: channelOverrides,
+            browse: browse, favoriteMultiviews: favoriteMultiviews
         )
     }
 
@@ -172,7 +185,8 @@ public struct LiveTVPreferences: Codable, Equatable, Sendable {
             hiddenChannels: hiddenChannels.map { .init(id: identifier($0.id), name: $0.name) },
             favoriteOrder: favoriteOrder.map(identifier),
             favoriteChannels: favoriteChannels.map { .init(id: identifier($0.id), name: $0.name) },
-            channelOverrides: overrides, browse: browse
+            channelOverrides: overrides, browse: browse,
+            favoriteMultiviews: favoriteMultiviews.map { $0.migratingChannelIDs(migration) }
         )
     }
 }
@@ -216,6 +230,10 @@ public final class LiveTVPreferencesStore: LiveTVPreferencesStoring, @unchecked 
     }
 
     public func save(_ preferences: LiveTVPreferences) throws {
+        guard preferences.favoriteMultiviews.allSatisfy(\.isValid),
+              Set(preferences.favoriteMultiviews.map(\.id)).count == preferences.favoriteMultiviews.count else {
+            throw LiveTVPreferencesStoreError.encodingFailed
+        }
         let encoded: Data
         do {
             encoded = try JSONEncoder().encode(preferences)

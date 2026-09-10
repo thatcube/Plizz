@@ -1,52 +1,7 @@
 #if DEBUG
-import CoreModels
+@_exported import CoreModels
 import Foundation
 import Observation
-
-public enum LiveTVMultiviewLayout: String, CaseIterable, Sendable {
-    case sideBySide
-    case corner
-
-    public var title: LocalizedStringResource {
-        switch self {
-        case .sideBySide: "Grid"
-        case .corner: "Corner"
-        }
-    }
-}
-
-public enum LiveTVMultiviewCorner: String, CaseIterable, Sendable {
-    case topLeading, topTrailing, bottomLeading, bottomTrailing
-
-    public var title: LocalizedStringResource {
-        switch self {
-        case .topLeading: "Top left"
-        case .topTrailing: "Top right"
-        case .bottomLeading: "Bottom left"
-        case .bottomTrailing: "Bottom right"
-        }
-    }
-}
-
-public enum LiveTVMultiviewInsetSize: String, CaseIterable, Sendable {
-    case small, medium, large
-
-    public var fraction: Double {
-        switch self {
-        case .small: 0.25
-        case .medium: 0.32
-        case .large: 0.40
-        }
-    }
-
-    public var title: LocalizedStringResource {
-        switch self {
-        case .small: "Small"
-        case .medium: "Medium"
-        case .large: "Large"
-        }
-    }
-}
 
 @MainActor
 @Observable
@@ -87,7 +42,7 @@ public final class LiveTVMultiviewCoordinator {
     public var insetSize: LiveTVMultiviewInsetSize = .medium
     public private(set) var issue: LocalizedStringResource?
     public private(set) var isClosing = false
-    public let maximumPanes = 4
+    public let maximumPanes = LiveTVMultiviewFavorite.maximumChannelCount
 
     @ObservationIgnored private let makePreparation: @MainActor () -> LiveTVPlaybackPreparation
     @ObservationIgnored private let reference: @MainActor (String) -> LiveTVServerChannelReference?
@@ -130,10 +85,74 @@ public final class LiveTVMultiviewCoordinator {
         issue = nil
         isEnabled = true
         isEditingLayout = true
+        panes[0].requestedChannel = panes[0].preparation.current?.channel
         return true
     }
 
     public func dismissIssue() { issue = nil }
+
+    private var orderedPanes: [LiveTVMultiviewPane] {
+        panes.filter { $0.id == primaryPaneID } + panes.filter { $0.id != primaryPaneID }
+    }
+
+    public func favoriteSnapshot() -> LiveTVMultiviewFavorite? {
+        let channels = orderedPanes.compactMap { $0.preparation.current?.channel }
+        guard isEnabled, channels.count == panes.count, !channels.isEmpty,
+              !panes.contains(where: { $0.preparation.isPreparing }) else { return nil }
+        return LiveTVMultiviewFavorite(
+            name: String(channels.map(\.name).joined(separator: " + ").prefix(240)),
+            channelIDs: channels.map(\.id), layout: layout, corner: corner, insetSize: insetSize)
+    }
+
+    public func matches(_ favorite: LiveTVMultiviewFavorite) -> Bool {
+        let ids = orderedPanes.compactMap { $0.channel?.id }
+        guard isEnabled, ids.count == panes.count else { return false }
+        return ids == favorite.channelIDs && layout == favorite.layout
+            && (layout != .corner || (corner == favorite.corner && insetSize == favorite.insetSize))
+    }
+
+    @discardableResult
+    public func restore(_ favorite: LiveTVMultiviewFavorite, from channels: [LiveTVPrototypeChannel]) -> Bool {
+        guard active, !isEnabled, !isClosing, panes.count == 1 else {
+            issue = "Close the current Multiview before opening a favorite."
+            return false
+        }
+        guard favorite.isValid, favorite.channelIDs.count <= maximumPanes else {
+            issue = "This Multiview favorite has an unsupported configuration."
+            return false
+        }
+        let byID = Dictionary(channels.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let resolved = favorite.channelIDs.compactMap { byID[$0] }
+        guard resolved.count == favorite.channelIDs.count,
+              resolved.allSatisfy({ authorizes($0, reference($0.id)) }) else {
+            issue = "Some channels in this Multiview are unavailable. Check its sources and try again."
+            return false
+        }
+        issue = nil
+        isEnabled = true
+        isEditingLayout = false
+        expandedPaneID = nil
+        layout = favorite.layout
+        corner = favorite.corner
+        insetSize = favorite.insetSize
+        let retained = panes[0]
+        let retainedChannelID = retained.preparation.current?.channel.id
+        let retainedIndex = resolved.firstIndex { $0.id == retainedChannelID } ?? 0
+        // Reuse the current renderer even when it belongs in the saved side column.
+        panes = resolved.enumerated().map { index, channel in
+            let pane = index == retainedIndex ? retained : LiveTVMultiviewPane(preparation: makePreparation())
+            pane.requestedChannel = channel
+            return pane
+        }
+        primaryPaneID = panes[0].id
+        audiblePaneID = primaryPaneID
+        for (pane, channel) in zip(panes, resolved) {
+            if pane.preparation.current?.channel.id != channel.id {
+                _ = prepare(channel, in: pane)
+            }
+        }
+        return true
+    }
 
     public func beginEditingLayout() {
         guard isEnabled else { return }
@@ -173,8 +192,8 @@ public final class LiveTVMultiviewCoordinator {
 
     @discardableResult
     public func add(_ channel: LiveTVPrototypeChannel) -> Task<Void, Never>? {
-        if let existing = panes.first(where: { $0.channel?.id == channel.id }) {
-            selectAudio(existing.id)
+        if let existing = panes.first(where: { $0.channel?.id == channel.id || $0.requestedChannel?.id == channel.id }) {
+            if existing.preparation.current != nil { selectAudio(existing.id) }
             return nil
         }
         guard canAdd else {
@@ -190,8 +209,10 @@ public final class LiveTVMultiviewCoordinator {
     @discardableResult
     public func replace(_ id: UUID, with channel: LiveTVPrototypeChannel) -> Task<Void, Never>? {
         guard isEnabled, let pane = panes.first(where: { $0.id == id }) else { return nil }
-        if let existing = panes.first(where: { $0.id != id && $0.channel?.id == channel.id }) {
-            selectAudio(existing.id)
+        if let existing = panes.first(where: {
+            $0.id != id && ($0.channel?.id == channel.id || $0.requestedChannel?.id == channel.id)
+        }) {
+            if existing.preparation.current != nil { selectAudio(existing.id) }
             return nil
         }
         return prepare(channel, in: pane)
@@ -223,6 +244,7 @@ public final class LiveTVMultiviewCoordinator {
         survivor.task?.cancel()
         survivor.requestID = UUID()
         survivor.preparation.cancelPendingPreparation()
+        survivor.requestedChannel = survivor.preparation.current?.channel
         panes = [survivor]
         audiblePaneID = survivor.id
         primaryPaneID = survivor.id

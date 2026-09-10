@@ -93,7 +93,9 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
     @State private var pendingTuneID: String?
     @State private var pendingServerConnection = false
     @State private var externalPlayback: PrototypeExternalPlayback?
-    @State private var multiviewPickerIsPresented = false
+    @State private var multiviewSelection: LiveTVMultiviewSelection?
+    @State private var pendingMultiviewFavorite: LiveTVMultiviewFavorite?
+    @State private var multiviewFavoriteIssue: LocalizedStringResource?
     @State private var managesLibraryChannels = false
     @State private var libraryGuideIssue: LibraryChannelError?
     @State private var portableIdentityHold: LiveTVPlaybackIdentityHold
@@ -298,14 +300,14 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
                 navigationInset: navigationInset, largeText: typeSize.isAccessibilitySize,
                 isSearching: isSearching
             )
-            let expanded = preview.isExpanded || multiview.isEnabled
+            let expanded = multiviewSelection == nil && (preview.isExpanded || multiview.isEnabled)
             ZStack(alignment: .topLeading) {
                 palette.backgroundBase.ignoresSafeArea()
 
                 // Stable pane IDs retain renderers through single/multiple layouts and promotion.
                 ForEach(multiview.panes) { pane in
                     if let prepared = pane.preparation.current {
-                        let videoFrame = multiview.isEnabled
+                        let videoFrame = showingMultiview
                             ? LiveTVMultiviewGeometry.frame(
                                 for: pane.id, panes: multiview.panes.map(\.id),
                                 primary: multiview.primaryPaneID, layout: multiview.layout,
@@ -320,7 +322,7 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
                     .environment(\.themePalette, ThemePalette.dark)
                     .frame(width: videoFrame.width, height: videoFrame.height)
                     .clipShape(RoundedRectangle(
-                        cornerRadius: multiview.isEnabled && multiview.isEditingLayout ? 10 : 0))
+                        cornerRadius: showingMultiview && multiview.isEditingLayout ? 10 : 0))
                     .overlay {
                         LinearGradient(
                             stops: [
@@ -335,13 +337,15 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
                         .accessibilityHidden(true)
                     }
                     .position(
-                        x: !multiview.isEnabled && layoutDirection == .rightToLeft
+                        x: !showingMultiview && layoutDirection == .rightToLeft
                             ? geometry.size.width - videoFrame.midX : videoFrame.midX,
                         y: videoFrame.midY
                     )
                     .animation(reduceMotion ? nil : .easeInOut(duration: 0.32), value: preview.isExpanded)
-                    .zIndex(multiview.isEnabled && pane.id != multiview.primaryPaneID ? 1 : 0)
-                    .opacity(multiview.expandedPaneID == nil || multiview.expandedPaneID == pane.id ? 1 : 0)
+                    .zIndex(showingMultiview && pane.id != multiview.primaryPaneID ? 1 : 0)
+                    .opacity(multiviewSelection != nil
+                        ? (pane.id == multiview.audiblePaneID ? 1 : 0)
+                        : (multiview.expandedPaneID == nil || multiview.expandedPaneID == pane.id ? 1 : 0))
                     .allowsHitTesting(!multiview.isEnabled)
                     .accessibilityHidden(multiview.isEnabled)
                     }
@@ -369,14 +373,15 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
                 .accessibilityHidden(expanded || !isActive)
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.32), value: preview.isExpanded)
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: isSearching)
-                if multiview.isEnabled {
+                if showingMultiview {
                     LiveTVMultiviewOverlay(
                         coordinator: multiview,
-                        channels: model.unhiddenCatalogChannels, favoriteIDs: model.favoriteIDs,
-                        recentChannelIDs: model.recentChannelIDs,
                         exit: { leaveMultiview() },
                         returnToGuide: { leaveMultiview(); returnToGuide() },
-                        pickerVisibilityChanged: { multiviewPickerIsPresented = $0 }
+                        addChannel: { beginMultiviewSelection(.add) },
+                        replaceChannel: { beginMultiviewSelection(.replace($0)) },
+                        isFavorite: model.favoriteMultiviews.contains(where: multiview.matches),
+                        toggleFavorite: toggleMultiviewFavorite
                     )
                     .frame(width: layout.bounds.width, height: layout.bounds.height)
                     .position(x: layout.bounds.midX, y: layout.bounds.midY)
@@ -497,7 +502,7 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
 
     private func countsAsWatching(paneID: UUID) -> Bool {
         let isExternal = hasAuthorizedExternalPlayback && externalPlayback?.paneID == paneID
-        let visible = sheet == nil && !multiviewPickerIsPresented && (multiview.isEnabled
+        let visible = sheet == nil && multiviewSelection == nil && (multiview.isEnabled
             ? multiview.expandedPaneID == nil || multiview.expandedPaneID == paneID
             : preview.isExpanded || !isSearching)
         return activity.countsAsWatching(
@@ -507,6 +512,7 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
     }
 
     private func leaveMultiview() {
+        multiviewSelection = nil
         if let retained = multiview.exit() { playback.adoptPreparation(retained) }
         playback.setInteractionActive(activity.acceptsInteraction)
         updatePreviewAvailability()
@@ -515,7 +521,10 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
     private var presentedContent: some View {
         playerAndGuideSurface
         .sheet(item: $sheet, onDismiss: {
-            if pendingServerConnection {
+            if let favorite = pendingMultiviewFavorite {
+                pendingMultiviewFavorite = nil
+                restoreMultiviewFavorite(favorite)
+            } else if pendingServerConnection {
                 pendingServerConnection = false
                 connectServer?()
             } else if let id = pendingTuneID {
@@ -537,10 +546,28 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
                 goToNow: { nowRequest += 1 },
                 guideStart: timeAnchor.addingTimeInterval(guideOffset),
                 tune: { pendingTuneID = $0 },
+                openMultiview: { pendingMultiviewFavorite = $0; sheet = nil },
+                channelActionTitle: multiviewSelection?.title,
                 sourceManagement: sources == nil ? nil : { AnyView(sourceSetupDestination($0)) }
             )
             .environment(\.themePalette, palette)
             .tint(palette.accent)
+        }
+        .alert("Multiview", isPresented: Binding(
+            get: { isActive && (multiviewFavoriteIssue != nil || (!multiview.isEnabled && multiview.issue != nil)) },
+            set: {
+                if !$0 {
+                    multiviewFavoriteIssue = nil
+                    if !multiview.isEnabled { multiview.dismissIssue() }
+                }
+            }
+        )) {
+            Button("OK", role: .cancel) {
+                multiviewFavoriteIssue = nil
+                if !multiview.isEnabled { multiview.dismissIssue() }
+            }
+        } message: {
+            if let issue = multiviewFavoriteIssue ?? multiview.issue { Text(issue) }
         }
         .alert("Can't play this channel", isPresented: Binding(
             get: { isActive && playback.watchFailure != nil },
@@ -556,7 +583,7 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
             Text(failure.message)
         }
         .alert("Live TV preferences unavailable", isPresented: Binding(
-            get: { isActive && model.preferencesIssue != nil },
+            get: { isActive && sheet == nil && model.preferencesIssue != nil },
             set: { if !$0 { model.dismissPreferencesIssue() } }
         )) {
             Button("Retry") { model.retryPreferences() }
@@ -741,6 +768,7 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
                 loadedRequest = nil
                 pendingServerConnection = false
                 pendingTuneID = nil
+                pendingMultiviewFavorite = nil
                 sheet = nil
                 if !hasAuthorizedExternalPlayback {
                     leaveMultiview()
@@ -843,10 +871,14 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
             PrototypeGuidePlacement(frame: layout.bounds, canvasWidth: canvasWidth) {
                 PrototypeNativeSearch(
                     query: $model.query, restoresGuideFocus: preview.isRestoringGuideFocus,
-                    isPresented: isActive && !preview.isExpanded && sheet == nil,
+                    isPresented: isActive && isGuidePresented && sheet == nil,
                     close: closeSearch, editing: { controlsActive = true }
                 ) { dismissSearch in
                     VStack(alignment: .leading, spacing: PrototypeLayout.smallGap) {
+                        if let multiviewSelection {
+                            LiveTVMultiviewGuideSelectionHeader(
+                                selection: multiviewSelection, cancel: finishMultiviewSelection)
+                        }
                         searchScopePicker
                         if searchScope == .channels {
                             PrototypeSearchSummary(channelCount: model.visibleChannels.count, category: model.category)
@@ -1082,7 +1114,8 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
             ZStack(alignment: .bottomLeading) {
                 PrototypePreviewHero(
                     channel: heroChannel, program: heroProgram, layout: layout,
-                    watch: { if let id = heroChannel?.id { tune(id) } }
+                    watch: { if let id = heroChannel?.id { tune(id) } },
+                    watchTitle: multiviewSelection?.title
                 )
                 .opacity(isSearching ? 0 : 1)
                 .allowsHitTesting(!isSearching)
@@ -1102,6 +1135,10 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
                 #endif
             }
             .frame(height: layout.heroHeight, alignment: .bottomLeading)
+            if let multiviewSelection {
+                LiveTVMultiviewGuideSelectionHeader(
+                    selection: multiviewSelection, cancel: finishMultiviewSelection)
+            }
             if heroIsGuideOnly && !isSearching {
                 Text("Guide only · This server's Live TV playback mode isn't supported yet.")
                     .font(.caption)
@@ -1135,8 +1172,11 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
                         model: model, active: $controlsActive,
                         focusRequest: toolbarFocusRequest, isSearching: isSearching,
                         search: { if isSearching { closeSearch() } else { openSearch() } },
-                        enterGuide: enterGuide
+                        enterGuide: enterGuide,
+                        multiviews: multiviewSelection == nil ? { sheet = .multiviewFavorites } : nil
                     )
+                    .modifier(LiveTVMultiviewGuideExit(
+                        cancel: multiviewSelection == nil ? nil : finishMultiviewSelection))
                     .frame(width: layout.sidebarWidth)
                     .disabled(blocksBrowseControls)
                 }
@@ -1148,8 +1188,11 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
                             compact: layout.contentFrame.width < 650,
                             isSearching: isSearching,
                             search: { if isSearching { closeSearch() } else { openSearch() } },
-                            filters: { sheet = .filters }
+                            filters: { sheet = .filters },
+                            multiviews: multiviewSelection == nil ? { sheet = .multiviewFavorites } : nil
                         )
+                        .modifier(LiveTVMultiviewGuideExit(
+                            cancel: multiviewSelection == nil ? nil : finishMultiviewSelection))
                         .disabled(blocksBrowseControls)
                     }
                     if isSearching {
@@ -1174,7 +1217,7 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
             topRequest: topRequest, nowRequest: nowRequest, guideOffset: $guideOffset,
             timeAnchor: $timeAnchor, timelineOffset: $timelineOffset,
             restoreFocusRequest: preview.focusRestoreRequest,
-            isPresented: isActive && !preview.isExpanded && sheet == nil,
+            isPresented: isActive && isGuidePresented && sheet == nil,
             isRestoringFocus: preview.isRestoringGuideFocus,
             restoresPlaybackFocus: preview.restoresPlaybackFocus, watchOrigin: preview.watchOrigin,
             focusRestored: {
@@ -1200,6 +1243,8 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
             loadFailed: imports.catalogPhase == .failed,
             reload: { reloadRequest += 1 },
             hideChannel: hideChannel,
+            selectionAction: multiviewSelection?.title,
+            selectedChannelIDs: multiviewSelection == nil ? [] : Set(multiview.panes.compactMap { $0.channel?.id }),
             libraryCatalog: libraryCatalogRevision,
             loadLibraryGuide: publishLibraryGuide
         )
@@ -1243,12 +1288,46 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
     }
 
     private var hidesAppNavigation: Bool {
-        if multiview.isEnabled { return isActive }
+        if showingMultiview { return isActive }
         #if os(tvOS)
         return preview.suppressesNavigation(isActive: isActive, isSearching: isSearching)
         #else
         return preview.suppressesNavigation(isActive: isActive)
         #endif
+    }
+
+    private var showingMultiview: Bool { multiview.isEnabled && multiviewSelection == nil }
+    private var isGuidePresented: Bool { !showingMultiview && !preview.isExpanded }
+
+    private func beginMultiviewSelection(_ selection: LiveTVMultiviewSelection) {
+        guard activity.acceptsInteraction, multiview.isEnabled else { return }
+        multiviewSelection = selection
+        returnToGuide()
+        if !preview.isRestoringGuideFocus { enterGuide() }
+    }
+
+    private func finishMultiviewSelection() {
+        preview.completeGuideFocusRestore(preview.focusRestoreRequest, focusedChannelID: selectedChannelID)
+        controlsActive = false
+        multiviewSelection = nil
+    }
+
+    private func toggleMultiviewFavorite() {
+        if let favorite = model.favoriteMultiviews.first(where: multiview.matches) {
+            model.removeMultiviewFavorite(favorite.id)
+        } else if let favorite = multiview.favoriteSnapshot() {
+            model.saveMultiviewFavorite(favorite)
+        } else {
+            multiviewFavoriteIssue = "Wait for the channels to load before saving this Multiview."
+        }
+    }
+
+    private func restoreMultiviewFavorite(_ favorite: LiveTVMultiviewFavorite) {
+        guard activity.acceptsInteraction else { return }
+        guard multiview.restore(favorite, from: model.channels),
+              let first = favorite.channelIDs.first else { return }
+        updatePlaybackAvailability()
+        preview.watch(first)
     }
 
     private var blocksBrowseControls: Bool {
@@ -1477,7 +1556,7 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
             enterGuide()
         } else {
             controlsActive = true
-            if preview.followsFocus && !preview.isHoldingWatchedChannel { playback.stop() }
+            if !multiview.isEnabled && preview.followsFocus && !preview.isHoldingWatchedChannel { playback.stop() }
             toolbarFocusRequest &+= 1
         }
     }
@@ -1506,6 +1585,15 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
     private func tune(_ id: String, origin: LiveTVGuideRowID? = nil) {
         guard activity.acceptsInteraction else {
             HandoffDiagnostics.emit("LIVE_TV event=watchIgnored reason=inactiveDestination")
+            return
+        }
+        if let selection = multiviewSelection {
+            guard let channel = model.channel(id: id) else {
+                multiviewFavoriteIssue = "This channel is no longer available."
+                return
+            }
+            selection.apply(channel, to: multiview)
+            finishMultiviewSelection()
             return
         }
         if !preview.isExpanded {

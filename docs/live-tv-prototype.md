@@ -551,15 +551,21 @@ Multiview. Multiview retains each player's decoder and prepared stream through
 side-by-side/corner layout changes, audio selection and returning to one player.
 Setup keeps the pictures inside a bounded canvas with room for controls.
 Focus outlines hug the actual video aspect, reported by the retained player,
-rather than its letterbox area or caption. The channel chooser starts with
-Home-style Recent channels, Favorites and All channels shelves using shared
-card, caption and logo components. Search opens the full catalog and its filters.
-Already-added channels are marked and cannot be added twice.
+rather than its letterbox area or caption. Add and Replace return to the actual
+guide in selection mode: the same channel/programme rows, vertical catalog,
+Favorites, Recents, category sidebar and native Search, backed by the same
+profile model and loaded guide. There is no separate channel browser or
+horizontal all-channel shelf. The current audible picture remains in the guide
+preview, and browsing never retunes a Multiview player. Selecting a station or
+programme adds/replaces its live channel, then returns to setup. Already-added
+channels are marked; selecting one returns to it without allocating another
+player. Cancel preserves every stream and the existing composition.
 
 Watch switches to the full physical-screen canvas, including safe-area edges,
 with no video focus outlines. Two channels split horizontally in landscape and
-vertically in portrait; three or four use a two-row grid. Corner mode keeps the
-main picture large with a separate, nonoverlapping column of up to three insets.
+vertically in portrait; three or four use a two-row grid. Main and stack places
+one large picture on the left and up to three separate pictures stacked on the
+right, without overlap. Corner mode retains its overlaid inset column.
 Each renderer fits its source without cropping. Edit layout returns to setup;
 ordinary viewing never reserves permanent space for controls.
 
@@ -572,8 +578,21 @@ Watching hides controls after four seconds of inactivity. Editing, native menus,
 channel selection, preparation failures and VoiceOver keep them available.
 Native menu focus notifications do not write back into the pinned controls'
 activity state, avoiding an update loop that can repeatedly rebuild the menu.
-Back closes channel selection first, restores all pictures if expanded, then
-leaves setup or dismisses active controls; otherwise it returns to the guide.
+Back from a guide row still focuses Search; Back from those controls or Cancel
+returns to setup. In Multiview, Back restores all pictures if expanded, then
+leaves setup or dismisses active controls. Any Back or Close Multiview action
+that would end the composition asks for confirmation. Keep watching dismisses
+the confirmation without closing streams.
+
+Favorite saves channel IDs in display order, the main picture and the chosen
+layout. The guide's Multiviews control opens these saved compositions. Favorites
+are profile-scoped and device-local, survive relaunches, and store no stream
+URLs, credentials or tuner leases. Restoring resolves channels against the
+current catalog and authorization; missing or unauthorized channels produce an
+error without replacing current playback. Channel identity migrations update
+the saved composition, and ordinary channel preferences or portable preference
+imports preserve it. Required lifecycle or authorization cleanup never waits
+for exit confirmation.
 
 Its hardware decoder capacity, mixed HDR/SDR behavior and long-running resource
 use still need real-device acceptance; controlled fixtures are not proof of

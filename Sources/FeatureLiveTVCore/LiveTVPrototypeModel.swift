@@ -175,6 +175,7 @@ public struct LiveTVProgramDetails: Codable, Equatable, Sendable {
 private final class LiveTVPrototypePreferencesState {
     var recentChannelIDs: [String] = []
     var favoriteIDs: Set<String> = []
+    var favoriteMultiviews: [LiveTVMultiviewFavorite] = []
     var favoriteOrder: [String] = []
     var favoriteChannels: [LiveTVHiddenChannel] = []
     var channelOverrides: [String: LiveTVChannelMetadataOverride] = [:]
@@ -192,6 +193,32 @@ private final class LiveTVPrototypeGuideState {
 @MainActor
 @Observable
 public final class LiveTVPrototypeModel {
+    public var favoriteMultiviews: [LiveTVMultiviewFavorite] { preferences.favoriteMultiviews }
+
+    @discardableResult
+    public func saveMultiviewFavorite(_ favorite: LiveTVMultiviewFavorite) -> Bool {
+        guard favorite.isValid else {
+            preferencesIssue = .saveFailed
+            return false
+        }
+        var updated = favoriteMultiviews
+        updated.removeAll { $0.id == favorite.id }
+        updated.append(favorite)
+        return persistMultiviewFavorites(updated)
+    }
+
+    @discardableResult
+    public func removeMultiviewFavorite(_ id: String) -> Bool {
+        persistMultiviewFavorites(favoriteMultiviews.filter { $0.id != id })
+    }
+
+    private func persistMultiviewFavorites(_ favorites: [LiveTVMultiviewFavorite]) -> Bool {
+        persistPreferences(LiveTVPreferences(
+            favoriteIDs: favoriteIDs, recentChannelIDs: recentChannelIDs, hiddenChannels: hiddenChannels,
+            favoriteOrder: favoriteOrder, favoriteChannels: favoriteChannels, channelOverrides: channelOverrides,
+            browse: browsePreferences, favoriteMultiviews: favorites))
+    }
+
     public var query: String = "" {
         didSet {
             guard query != oldValue else { return }
@@ -500,7 +527,7 @@ public final class LiveTVPrototypeModel {
             hiddenChannels: hiddenChannels,
             favoriteOrder: favoriteOrder + (favorites.contains(id) ? [id] : []),
             favoriteChannels: favoriteChannels + (channelsByID[id].map { [.init(id: id, name: $0.name)] } ?? []),
-            channelOverrides: channelOverrides, browse: browsePreferences
+            channelOverrides: channelOverrides, browse: browsePreferences, favoriteMultiviews: favoriteMultiviews
         )) else { return }
         if favoritesOnly {
             refreshVisibleChannels()
@@ -520,7 +547,7 @@ public final class LiveTVPrototypeModel {
             favoriteIDs: favoriteIDs,
             recentChannelIDs: recent,
             hiddenChannels: hiddenChannels, favoriteOrder: favoriteOrder, favoriteChannels: favoriteChannels,
-            channelOverrides: channelOverrides, browse: browsePreferences
+            channelOverrides: channelOverrides, browse: browsePreferences, favoriteMultiviews: favoriteMultiviews
         )) else { return false }
         refreshGuideChannels()
         return true
@@ -558,7 +585,8 @@ public final class LiveTVPrototypeModel {
         guard Set(ids) == favoriteIDs, ids.count == favoriteIDs.count else { return false }
         guard persistPreferences(LiveTVPreferences(
             favoriteIDs: favoriteIDs, recentChannelIDs: recentChannelIDs, hiddenChannels: hiddenChannels,
-            favoriteOrder: ids, favoriteChannels: favoriteChannels, channelOverrides: channelOverrides, browse: browsePreferences
+            favoriteOrder: ids, favoriteChannels: favoriteChannels, channelOverrides: channelOverrides,
+            browse: browsePreferences, favoriteMultiviews: favoriteMultiviews
         )) else { return false }
         refreshGuideChannels()
         return true
@@ -575,7 +603,8 @@ public final class LiveTVPrototypeModel {
         updated[channelID] = value
         guard persistPreferences(LiveTVPreferences(
             favoriteIDs: favoriteIDs, recentChannelIDs: recentChannelIDs, hiddenChannels: hiddenChannels,
-            favoriteOrder: favoriteOrder, favoriteChannels: favoriteChannels, channelOverrides: updated, browse: browsePreferences
+            favoriteOrder: favoriteOrder, favoriteChannels: favoriteChannels, channelOverrides: updated,
+            browse: browsePreferences, favoriteMultiviews: favoriteMultiviews
         )) else { return false }
         rebuildCatalog()
         return true
@@ -607,6 +636,7 @@ public final class LiveTVPrototypeModel {
         do {
             let preferences = try preferencesStore.load()
             favoriteIDs = preferences.favoriteIDs
+            self.preferences.favoriteMultiviews = preferences.favoriteMultiviews
             recentChannelIDs = preferences.recentChannelIDs
             hiddenChannels = preferences.hiddenChannels
             favoriteOrder = preferences.favoriteOrder
@@ -645,6 +675,7 @@ public final class LiveTVPrototypeModel {
             }
         }
         favoriteIDs = preferences.favoriteIDs
+        self.preferences.favoriteMultiviews = preferences.favoriteMultiviews
         recentChannelIDs = preferences.recentChannelIDs
         hiddenChannels = preferences.hiddenChannels
         favoriteOrder = preferences.favoriteOrder
@@ -661,7 +692,7 @@ public final class LiveTVPrototypeModel {
             favoriteIDs: favoriteIDs,
             recentChannelIDs: recentChannelIDs,
             hiddenChannels: hiddenChannels, favoriteOrder: favoriteOrder, favoriteChannels: favoriteChannels,
-            channelOverrides: channelOverrides, browse: browsePreferences
+            channelOverrides: channelOverrides, browse: browsePreferences, favoriteMultiviews: favoriteMultiviews
         )
     }
 
@@ -685,13 +716,22 @@ public final class LiveTVPrototypeModel {
         if pending.recentChannelIDs != base.recentChannelIDs, let watched = pending.recentChannelIDs.first {
             recent = [watched] + recent.filter { $0 != watched }
         }
+        let removedMultiviews = Set(base.favoriteMultiviews.map(\.id)).subtracting(pending.favoriteMultiviews.map(\.id))
+        let changedMultiviews = pending.favoriteMultiviews.filter { item in
+            base.favoriteMultiviews.first(where: { $0.id == item.id }) != item
+        }
+        let changedIDs = Set(changedMultiviews.map(\.id))
+        let multiviews = latest.favoriteMultiviews.filter {
+            !removedMultiviews.contains($0.id) && !changedIDs.contains($0.id)
+        } + changedMultiviews
         // Retry only the failed changes; Settings may have restored channels meanwhile.
         return LiveTVPreferences(
             favoriteIDs: favorites, recentChannelIDs: recent, hiddenChannels: hidden,
             favoriteOrder: pending.favoriteOrder == base.favoriteOrder ? latest.favoriteOrder : pending.favoriteOrder,
             favoriteChannels: latest.favoriteChannels + pending.favoriteChannels,
             channelOverrides: pending.channelOverrides == base.channelOverrides ? latest.channelOverrides : pending.channelOverrides,
-            browse: pending.browse == base.browse ? latest.browse : pending.browse
+            browse: pending.browse == base.browse ? latest.browse : pending.browse,
+            favoriteMultiviews: multiviews
         )
     }
 

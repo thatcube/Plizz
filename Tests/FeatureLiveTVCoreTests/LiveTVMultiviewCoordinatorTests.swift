@@ -60,6 +60,18 @@ final class LiveTVMultiviewCoordinatorTests: XCTestCase {
         await coordinator.close()
     }
 
+    func testSelectingAnAlreadyPendingGuideChannelDoesNotMuteCurrentAudioOrAllocateAnotherPane() async {
+        let coordinator = await makeCoordinator()
+        coordinator.begin()
+        let originalAudio = coordinator.audiblePaneID
+        let pending = coordinator.add(channel(2))
+        XCTAssertNil(coordinator.add(channel(2)))
+        XCTAssertEqual(coordinator.panes.count, 2)
+        XCTAssertEqual(coordinator.audiblePaneID, originalAudio)
+        await pending?.value
+        await coordinator.close()
+    }
+
     func testFourChannelCapacityRejectsFifthWithoutTouchingExistingStreams() async {
         let coordinator = await makeCoordinator()
         coordinator.begin()
@@ -202,6 +214,84 @@ final class LiveTVMultiviewCoordinatorTests: XCTestCase {
         coordinator.setActive(false)
         XCTAssertFalse(coordinator.isEnabled)
         XCTAssertTrue(owners.allSatisfy { $0.current == nil })
+        await coordinator.close()
+    }
+
+    func testFavoriteCapturesDisplayedOrderAndLayoutNotChangingAudioFocus() async throws {
+        let coordinator = await makeCoordinator()
+        coordinator.begin()
+        for number in 2...4 { await coordinator.add(channel(number))?.value }
+        coordinator.layout = .mainAndStack
+        coordinator.promote(coordinator.panes[2].id)
+        let favorite = try XCTUnwrap(coordinator.favoriteSnapshot())
+        XCTAssertEqual(favorite.channelIDs, ["multiview-3", "multiview-1", "multiview-2", "multiview-4"])
+        XCTAssertEqual(favorite.layout, .mainAndStack)
+        coordinator.selectAudio(coordinator.panes[3].id)
+        XCTAssertTrue(coordinator.matches(favorite))
+        coordinator.layout = .sideBySide
+        XCTAssertFalse(coordinator.matches(favorite))
+        await coordinator.close()
+    }
+
+    func testRestoreFavoriteReusesMatchingFirstStreamAndPreparesOnlyRemainingChannels() async {
+        let coordinator = await makeCoordinator()
+        let original = coordinator.panes[0].preparation.current
+        let favorite = LiveTVMultiviewFavorite(
+            name: "Four channels", channelIDs: (1...4).map { channel($0).id }, layout: .mainAndStack)
+        XCTAssertTrue(coordinator.restore(favorite, from: (1...4).map(channel)))
+        for _ in 0..<100 {
+            if coordinator.panes.allSatisfy({ $0.preparation.current != nil }) { break }
+            await Task.yield()
+        }
+        XCTAssertEqual(coordinator.panes.count, 4)
+        XCTAssertTrue(coordinator.panes.allSatisfy { $0.preparation.current != nil })
+        XCTAssertEqual(coordinator.panes[0].preparation.current, original)
+        XCTAssertFalse(coordinator.isEditingLayout)
+        XCTAssertTrue(coordinator.matches(favorite))
+        await coordinator.close()
+    }
+
+    func testMissingFavoriteChannelsDoNotReplaceCurrentPlayback() async {
+        let coordinator = await makeCoordinator()
+        let original = coordinator.panes[0].preparation.current
+        let favorite = LiveTVMultiviewFavorite(
+            name: "Missing channel", channelIDs: [channel(1).id, "missing"], layout: .mainAndStack)
+        XCTAssertFalse(coordinator.restore(favorite, from: [channel(1)]))
+        XCTAssertFalse(coordinator.isEnabled)
+        XCTAssertEqual(coordinator.panes.count, 1)
+        XCTAssertEqual(coordinator.panes[0].preparation.current, original)
+        XCTAssertNotNil(coordinator.issue)
+        await coordinator.close()
+    }
+
+    func testRestoringFavoriteReusesCurrentChannelWhenItBelongsInSideColumn() async {
+        let coordinator = await makeCoordinator()
+        let retained = coordinator.panes[0]
+        let prepared = retained.preparation.current
+        let favorite = LiveTVMultiviewFavorite(
+            name: "Different main", channelIDs: [channel(2).id, channel(1).id, channel(3).id],
+            layout: .mainAndStack)
+        XCTAssertTrue(coordinator.restore(favorite, from: (1...3).map(channel)))
+        for _ in 0..<100 {
+            if coordinator.panes.allSatisfy({ $0.preparation.current != nil }) { break }
+            await Task.yield()
+        }
+        XCTAssertEqual(coordinator.panes.map { $0.channel?.id }, favorite.channelIDs)
+        XCTAssertTrue(coordinator.panes[1] === retained)
+        XCTAssertEqual(retained.preparation.current, prepared)
+        XCTAssertEqual(coordinator.primaryPaneID, coordinator.panes[0].id)
+        XCTAssertTrue(coordinator.matches(favorite))
+        await coordinator.close()
+    }
+
+    func testUnauthorizedFavoriteDoesNotAcquireAdditionalStreams() async {
+        let coordinator = await makeCoordinator(authorizes: { channel, _ in channel.id == "multiview-1" })
+        let favorite = LiveTVMultiviewFavorite(
+            name: "Restricted channel", channelIDs: [channel(1).id, channel(2).id], layout: .sideBySide)
+        XCTAssertFalse(coordinator.restore(favorite, from: [channel(1), channel(2)]))
+        XCTAssertFalse(coordinator.isEnabled)
+        XCTAssertEqual(coordinator.panes.count, 1)
+        XCTAssertNotNil(coordinator.issue)
         await coordinator.close()
     }
 }

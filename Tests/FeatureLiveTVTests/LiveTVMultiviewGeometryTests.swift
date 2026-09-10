@@ -302,18 +302,31 @@ final class LiveTVMultiviewGeometryTests: XCTestCase {
         }
     }
 
-    func testChannelShelvesUseRecentOrderAndExcludeMissingOrDuplicateRecords() {
-        let channels = (1...4).map {
-            LiveTVPrototypeChannel(
-                id: "channel-\($0)", number: $0, name: "Channel \($0)", category: "Sports",
-                symbol: "tv", accent: 0, source: .iptv, tagline: "")
+    func testMainAndStackHasOneLargeLeftPictureAndThreeNonoverlappingRightPictures() {
+        let panes = (0..<4).map { _ in UUID() }
+        for size in sizes {
+            for editing in [false, true] {
+                let frames = panes.map {
+                    LiveTVMultiviewGeometry.frame(
+                        for: $0, panes: panes, primary: panes[0], layout: .mainAndStack,
+                        corner: .bottomTrailing, insetSize: .medium, expanded: nil,
+                        size: size, isEditing: editing)
+                }
+                XCTAssertGreaterThan(frames[0].width, frames[1].width * 2)
+                for index in 1..<4 {
+                    XCTAssertGreaterThan(frames[index].minX, frames[0].maxX)
+                    XCTAssertTrue(CGRect(origin: .zero, size: size).contains(frames[index]))
+                    if index > 1 {
+                        XCTAssertGreaterThan(frames[index].minY, frames[index - 1].maxY)
+                    }
+                }
+                for index in frames.indices {
+                    for other in frames.indices where other > index {
+                        XCTAssertFalse(frames[index].intersects(frames[other]))
+                    }
+                }
+            }
         }
-        let sections = LiveTVMultiviewChannelSections(
-            channels: channels + [channels[0]], favoriteIDs: ["channel-2", "hidden"],
-            recentChannelIDs: ["channel-3", "missing", "channel-1", "channel-3"])
-        XCTAssertEqual(sections.recent.map(\.id), ["channel-3", "channel-1"])
-        XCTAssertEqual(sections.favorites.map(\.id), ["channel-2"])
-        XCTAssertEqual(sections.all.map(\.id), channels.map(\.id))
     }
 }
 #endif

@@ -365,7 +365,8 @@ public final class LiveTVPortableSyncAdapter: @unchecked Sendable {
                 return left == right ? $0 < $1 : left < right
             },
             favoriteChannels: favoriteNames.keys.sorted().map { LiveTVHiddenChannel(id: $0, name: favoriteNames[$0]!) },
-            channelOverrides: metadata, browse: savedPreferences.browse
+            channelOverrides: metadata, browse: savedPreferences.browse,
+            favoriteMultiviews: savedPreferences.favoriteMultiviews
         )
         // Source validation happens before any writes. A failed local store keeps
         // the caller's cloud fallback intact; the next capture never fabricates emptiness.

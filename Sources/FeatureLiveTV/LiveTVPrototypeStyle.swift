@@ -296,7 +296,7 @@ struct PrototypeControlSurface: View {
 }
 
 enum PrototypeSheet: Identifiable {
-    case filters, sources, guideTime, addPlaylist, serverSetup
+    case filters, sources, guideTime, addPlaylist, serverSetup, multiviewFavorites
     case program(LiveTVPrototypeProgram)
 
     var id: String {
@@ -306,6 +306,7 @@ enum PrototypeSheet: Identifiable {
         case .addPlaylist: "add-playlist"
         case .serverSetup: "server-setup"
         case .guideTime: "guide-time"
+        case .multiviewFavorites: "multiview-favorites"
         case .program(let program): program.id
         }
     }

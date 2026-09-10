@@ -10,6 +10,7 @@ struct PrototypeBrowseSidebar: View {
     var isSearching = false
     let search: () -> Void
     let enterGuide: () -> Void
+    var multiviews: (() -> Void)?
     @FocusState private var focused: Control?
     @State private var categoryFade = PrototypeScrollFade()
     @ScaledMetric(relativeTo: .subheadline) private var fontSize = PrototypeLayout.guideFontSize
@@ -17,6 +18,7 @@ struct PrototypeBrowseSidebar: View {
 
     private enum Control: Hashable {
         case search
+        case multiviews
         case category(String?)
     }
 
@@ -33,6 +35,13 @@ struct PrototypeBrowseSidebar: View {
             .accessibilityIdentifier("live-tv-search")
             .padding(PrototypeLayout.controlInset)
             .background { PrototypeControlSurface() }
+            if let multiviews {
+                Button("Multiviews", systemImage: "rectangle.split.2x2", action: multiviews)
+                    .frame(maxWidth: .infinity, minHeight: PrototypeLayout.controlHeight, alignment: .leading)
+                    .buttonStyle(PrototypeButtonStyle(surface: .control))
+                    .focused($focused, equals: .multiviews)
+                    .accessibilityIdentifier("live-tv-multiview-favorites")
+            }
 
             ScrollView {
                 LazyVStack(spacing: PrototypeLayout.smallGap) {

@@ -35,6 +35,8 @@ struct PrototypeBrowser: View {
     let loadFailed: Bool
     let reload: () -> Void
     var hideChannel: ((LiveTVPrototypeChannel, LiveTVGuideRowID) -> Void)?
+    var selectionAction: LocalizedStringResource?
+    var selectedChannelIDs: Set<String> = []
     var libraryCatalog: PrototypeLibraryCatalogRevision?
     var loadLibraryGuide: ((Set<String>, DateInterval) -> Void)?
     @State private var scrollID: LiveTVGuideRowID?
@@ -155,7 +157,11 @@ struct PrototypeBrowser: View {
                                                 guideGapState: imports.gapState(
                                                     for: channel, from: guideStart,
                                                     to: guideStart.addingTimeInterval(TimeInterval(guideHours) * 3_600)
-                                                )
+                                                ),
+                                                selectionAction: selectionAction.map {
+                                                    selectedChannelIDs.contains(channel.id) ? "Show in Multiview" : $0
+                                                },
+                                                selectionMarked: selectedChannelIDs.contains(channel.id)
                                             )
                                         }
                                     }
@@ -635,6 +641,8 @@ struct PrototypeGuideRow: View {
     var guideTime: () -> Void = {}
     var hide: (() -> Void)?
     var guideGapState: LiveTVGuideGapState?
+    var selectionAction: LocalizedStringResource?
+    var selectionMarked = false
     @ScaledMetric(relativeTo: .subheadline) private var rowHeight: CGFloat = PrototypeLayout.rowHeight
     @State private var compactFade = PrototypeScrollFade()
 
@@ -647,7 +655,8 @@ struct PrototypeGuideRow: View {
                         favorite: favorite, playing: playing, tune: tune, toggleFavorite: toggleFavorite,
                         controls: controls, top: top, height: rowHeight,
                         focusChanged: { focusChanged(channelFocus, $0) },
-                        sources: sources, guideTime: programs.isEmpty ? nil : guideTime, hide: hide
+                        sources: sources, guideTime: programs.isEmpty ? nil : guideTime, hide: hide,
+                        selectionAction: selectionAction, selectionMarked: selectionMarked
                     )
                     .focused(focus, equals: channelFocus)
                     .disabled(railActive && returnTarget != channelFocus)
@@ -707,7 +716,8 @@ struct PrototypeGuideRow: View {
                     favorite: favorite, playing: playing, tune: tune, toggleFavorite: toggleFavorite,
                     controls: controls, top: top, height: rowHeight,
                     focusChanged: { focusChanged(channelFocus, $0) },
-                    sources: sources, guideTime: programs.isEmpty ? nil : guideTime, hide: hide
+                    sources: sources, guideTime: programs.isEmpty ? nil : guideTime, hide: hide,
+                    selectionAction: selectionAction, selectionMarked: selectionMarked
                 )
                     .frame(width: PrototypeLayout.stationWidth(for: width))
                     .focused(focus, equals: channelFocus)
@@ -761,7 +771,9 @@ struct PrototypeGuideRow: View {
                                     )
                                     .contextMenu {
                                         Button("Program details", systemImage: "info.circle") { details(program) }
-                                        PrototypeChannelActions(favorite: favorite, play: tune, toggleFavorite: toggleFavorite, hide: hide)
+                                        PrototypeChannelActions(
+                                            favorite: favorite, play: tune, toggleFavorite: toggleFavorite, hide: hide,
+                                            primaryTitle: selectionAction ?? "Play channel", isSelection: selectionAction != nil)
                                         Button("Search channels", systemImage: "magnifyingglass", action: controls)
                                         Button("Sources", systemImage: "antenna.radiowaves.left.and.right", action: sources)
                                         Button("Guide time", systemImage: "calendar", action: guideTime)
@@ -818,10 +830,13 @@ struct PrototypeGuideRow: View {
         .disabled(railActive && returnTarget != target)
         .accessibilityLabel(Text(channel.name))
         .accessibilityValue(guideGapState.map { Text($0.title) } ?? Text(""))
-        .accessibilityHint("Play channel")
+        .accessibilityHint(Text(selectionAction ?? "Play channel"))
+        .accessibilityAddTraits(selectionMarked ? .isSelected : [])
         .accessibilityIdentifier("live-tv-channel-content-\(section.rawValue)-\(channel.number)-\(slotID ?? "whole")")
         .contextMenu {
-            PrototypeChannelActions(favorite: favorite, play: tune, toggleFavorite: toggleFavorite, hide: hide)
+            PrototypeChannelActions(
+                favorite: favorite, play: tune, toggleFavorite: toggleFavorite, hide: hide,
+                primaryTitle: selectionAction ?? "Play channel", isSelection: selectionAction != nil)
             Button("Search channels", systemImage: "magnifyingglass", action: controls)
             Button("Sources", systemImage: "antenna.radiowaves.left.and.right", action: sources)
             Button("Back to top", systemImage: "arrow.up.to.line", action: top)
@@ -842,7 +857,7 @@ struct PrototypeGuideRow: View {
     }
 
     private func open(_ program: LiveTVPrototypeProgram) {
-        if program.start <= now && now < program.end { tune() }
+        if selectionAction != nil || (program.start <= now && now < program.end) { tune() }
         else { details(program) }
     }
 }
@@ -861,32 +876,59 @@ struct PrototypeGuideStation: View {
     var sources: () -> Void = {}
     var guideTime: (() -> Void)?
     var hide: (() -> Void)?
+    var selectionAction: LocalizedStringResource?
+    var selectionMarked = false
 
     var body: some View {
-        Menu {
-            PrototypeChannelActions(favorite: favorite, play: tune, toggleFavorite: toggleFavorite, hide: hide)
-            Divider()
-            Button("Search channels", systemImage: "magnifyingglass", action: controls)
-            Button("Sources", systemImage: "antenna.radiowaves.left.and.right", action: sources)
-            if let guideTime {
-                Button("Guide time", systemImage: "calendar", action: guideTime)
+        Group {
+            if selectionAction != nil {
+                Button(action: tune) { stationMark }
+                    .contextMenu {
+                        PrototypeChannelActions(
+                            favorite: favorite, play: tune, toggleFavorite: toggleFavorite, hide: hide,
+                            primaryTitle: selectionAction ?? "Play channel", isSelection: true)
+                    }
+            } else {
+                Menu {
+                    PrototypeChannelActions(favorite: favorite, play: tune, toggleFavorite: toggleFavorite, hide: hide)
+                    Divider()
+                    Button("Search channels", systemImage: "magnifyingglass", action: controls)
+                    Button("Sources", systemImage: "antenna.radiowaves.left.and.right", action: sources)
+                    if let guideTime {
+                        Button("Guide time", systemImage: "calendar", action: guideTime)
+                    }
+                    Button("Back to top", systemImage: "arrow.up.to.line", action: top)
+                } label: {
+                    stationMark
+                }
             }
-            Button("Back to top", systemImage: "arrow.up.to.line", action: top)
-        } label: {
-            PrototypeStationMark(
-                channel: channel,
-                plateSize: CGSize(width: PrototypeLayout.stationColumnWidth, height: height ?? PrototypeLayout.rowHeight),
-                cornerRadius: PrototypeLayout.rowRadius
-            )
-                .clipped()
         }
         .buttonStyle(PrototypeButtonStyle(padded: false, surface: .station, focusChanged: focusChanged))
         .focusEffectDisabled()
         .accessibilityLabel(Text(channel.name))
         .accessibilityValue(Text("Channel \(channel.number)"))
-        .accessibilityHint("Channel actions")
-        .accessibilityAddTraits(playing ? .isSelected : [])
+        .accessibilityHint(Text(selectionAction ?? "Channel actions"))
+        .accessibilityAddTraits(playing || selectionMarked ? .isSelected : [])
         .accessibilityIdentifier("live-tv-channel-\(section.rawValue)-\(channel.number)")
+    }
+
+    private var stationMark: some View {
+        PrototypeStationMark(
+            channel: channel,
+            plateSize: CGSize(width: PrototypeLayout.stationColumnWidth, height: height ?? PrototypeLayout.rowHeight),
+            cornerRadius: PrototypeLayout.rowRadius
+        )
+        .clipped()
+        .overlay(alignment: .topTrailing) {
+            if selectionMarked {
+                Image(systemName: "checkmark.circle.fill")
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, .black.opacity(0.8))
+                    .padding(10)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
     }
 }
 
@@ -895,9 +937,17 @@ private struct PrototypeChannelActions: View {
     let play: () -> Void
     let toggleFavorite: () -> Void
     let hide: (() -> Void)?
+    var primaryTitle: LocalizedStringResource = "Play channel"
+    var isSelection = false
 
     var body: some View {
-        Button("Play channel", systemImage: "play.fill", action: play)
+        Button(action: play) {
+            Label {
+                Text(primaryTitle)
+            } icon: {
+                Image(systemName: isSelection ? "rectangle.split.2x2" : "play.fill")
+            }
+        }
         Button(
             favorite ? "Remove from Favorites" : "Add to Favorites",
             systemImage: favorite ? "star.slash" : "star", action: toggleFavorite

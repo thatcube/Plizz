@@ -11,6 +11,7 @@ struct PrototypeBrowseToolbar: View {
     var isSearching = false
     let search: () -> Void
     let filters: () -> Void
+    var multiviews: (() -> Void)?
     @FocusState private var focused: Control?
     @Environment(\.themePalette) private var palette
 
@@ -49,6 +50,11 @@ struct PrototypeBrowseToolbar: View {
             }
             .padding(PrototypeLayout.controlInset)
             .background { PrototypeControlSurface() }
+            if let multiviews {
+                Button("Multiviews", systemImage: "rectangle.split.2x2", action: multiviews)
+                    .buttonStyle(PrototypeButtonStyle(surface: .control))
+                    .accessibilityIdentifier("live-tv-multiview-favorites")
+            }
             if !compact {
                 Spacer(minLength: 0)
                 Text(model.now, format: .dateTime.hour().minute())
@@ -90,6 +96,8 @@ struct PrototypeSheetContent: View {
     let goToNow: () -> Void
     let guideStart: Date
     let tune: (String) -> Void
+    let openMultiview: (LiveTVMultiviewFavorite) -> Void
+    var channelActionTitle: LocalizedStringResource?
     var sourceManagement: ((PrototypeSheet) -> AnyView)? = nil
     @Environment(\.dismiss) private var dismiss
     @Environment(\.themePalette) private var palette
@@ -98,6 +106,8 @@ struct PrototypeSheetContent: View {
         NavigationStack {
             Group {
                 switch destination {
+                case .multiviewFavorites:
+                    LiveTVMultiviewFavoritesView(model: model, open: openMultiview)
                 case .filters:
                     PrototypeFilterForm(model: model)
                         .navigationTitle("Categories")
@@ -123,7 +133,8 @@ struct PrototypeSheetContent: View {
                                 $0.id == imports.selectedSourceByChannel[program.channelID]
                             }?.source.name,
                             isFavorite: model.favoriteIDs.contains(program.channelID),
-                            toggleFavorite: { model.toggleFavorite(program.channelID) }
+                            toggleFavorite: { model.toggleFavorite(program.channelID) },
+                            watchTitle: channelActionTitle ?? "Watch channel"
                         ) {
                             guard imports.isProgramSearchResultAvailable(program, catalog: model) else { return }
                             tune(program.channelID)

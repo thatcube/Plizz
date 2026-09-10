@@ -44,6 +44,22 @@ enum LiveTVMultiviewGeometry {
             return isEditing ? contentFrame(in: area, aspectRatio: aspectRatio) : area
         }
         let index = ordered.firstIndex(of: id) ?? 0
+        if layout == .mainAndStack {
+            let gap = min(CGFloat(16), max(0, min(area.width, area.height) / 12))
+            let sideWidth = area.width * 0.28
+            let mainWidth = area.width - sideWidth - gap
+            let slot: CGRect
+            if id == primary {
+                slot = CGRect(x: area.minX, y: area.minY, width: mainWidth, height: area.height)
+            } else {
+                let count = CGFloat(ordered.count - 1)
+                let height = (area.height - gap * (count - 1)) / count
+                slot = CGRect(
+                    x: area.maxX - sideWidth, y: area.minY + CGFloat(index - 1) * (height + gap),
+                    width: sideWidth, height: height)
+            }
+            return isEditing ? contentFrame(in: slot, aspectRatio: aspectRatio) : slot
+        }
         if layout == .sideBySide {
             let horizontal = area.width >= area.height
             let slot: CGRect
@@ -163,13 +179,13 @@ struct LiveTVMultiviewChromeState: Equatable {
 
 struct LiveTVMultiviewOverlay: View {
     let coordinator: LiveTVMultiviewCoordinator
-    let channels: [LiveTVPrototypeChannel]
-    let favoriteIDs: Set<String>
-    var recentChannelIDs: [String] = []
     let exit: () -> Void
     let returnToGuide: () -> Void
-    var pickerVisibilityChanged: (Bool) -> Void = { _ in }
-    @State private var picker: ChannelPickerDestination?
+    let addChannel: () -> Void
+    let replaceChannel: (UUID) -> Void
+    var isFavorite = false
+    var toggleFavorite: (() -> Void)?
+    @State private var exitDestination: ExitDestination?
     @State private var chrome = LiveTVMultiviewChromeState()
     @State private var focusedPaneID: UUID?
     @State private var focusRestoreRequest = 0
@@ -183,17 +199,7 @@ struct LiveTVMultiviewOverlay: View {
     @Environment(\.resetFocus) private var resetFocus
     #endif
 
-    private enum ChannelPickerDestination: Identifiable {
-        case add
-        case replace(UUID)
-
-        var id: String {
-            switch self {
-            case .add: "add"
-            case .replace(let id): id.uuidString
-            }
-        }
-    }
+    private enum ExitDestination { case player, guide }
 
     var body: some View {
         GeometryReader { geometry in
@@ -206,18 +212,19 @@ struct LiveTVMultiviewOverlay: View {
                         preparedWhileFocused: selectPreparedAudio,
                         activate: expand,
                         editing: beginEditing,
-                        replace: { beginEditing(); picker = .replace($0) }
+                        replace: { beginEditing(); replaceChannel($0) }
                     )
                     if chrome.isVisible {
                         LiveTVMultiviewChrome(
                             coordinator: coordinator,
-                            exit: exit, collapse: collapse, watch: finishSetup, setup: startSetup,
+                            exit: { exitDestination = .player }, collapse: collapse, watch: finishSetup, setup: startSetup,
                             focusScope: controlsFocusScope,
                             restoresSetupFocus: restoringSetupFocus,
                             setupFocused: { restoringSetupFocus = false },
                             editing: beginEditing,
-                            add: { beginEditing(); picker = .add },
-                            replace: { beginEditing(); picker = .replace(coordinator.audiblePaneID) }
+                            add: { beginEditing(); addChannel() },
+                            replace: { beginEditing(); replaceChannel(coordinator.audiblePaneID) },
+                            isFavorite: isFavorite, toggleFavorite: toggleFavorite
                         )
                         .transition(.identity)
                     }
@@ -255,13 +262,6 @@ struct LiveTVMultiviewOverlay: View {
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: coordinator.layout)
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: coordinator.primaryPaneID)
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: coordinator.corner)
-                .disabled(picker != nil)
-                .accessibilityHidden(picker != nil)
-                if let destination = picker {
-                    channelPicker(destination)
-                        .background(.black)
-                        .ignoresSafeArea()
-                }
             }
         }
         .alert(
@@ -275,29 +275,42 @@ struct LiveTVMultiviewOverlay: View {
         } message: {
             if let issue = coordinator.issue { Text(issue) }
         }
-        .onChange(of: picker != nil, initial: true) { _, visible in
-            pickerVisibilityChanged(visible)
+        .confirmationDialog(
+            "Close Multiview?",
+            isPresented: Binding(
+                get: { exitDestination != nil },
+                set: { if !$0 { exitDestination = nil } }),
+            titleVisibility: .visible, presenting: exitDestination
+        ) { destination in
+            Button("Close Multiview", role: .destructive) {
+                exitDestination = nil
+                if destination == .player { exit() } else { returnToGuide() }
+            }
+            Button("Keep watching", role: .cancel) { exitDestination = nil }
+        } message: { _ in
+            if isFavorite {
+                Text("This Multiview will close. Its favorite will remain available in the guide.")
+            } else {
+                Text("This Multiview will close. Favorite it first if you want to open this setup again.")
+            }
         }
-        .onDisappear { pickerVisibilityChanged(false) }
         #if os(tvOS)
         .onExitCommand {
-            if picker != nil {
-                picker = nil
-            } else if coordinator.expandedPaneID != nil {
+            if coordinator.expandedPaneID != nil {
                 collapse()
             } else if coordinator.isEditingLayout {
                 finishSetup()
             } else if chrome.isEditing {
                 hideChrome()
             } else {
-                returnToGuide()
+                exitDestination = .guide
             }
         }
         #endif
     }
 
     private var autoHideRequest: TimeInterval? {
-        let blocked = coordinator.isEditingLayout || picker != nil || coordinator.issue != nil || voiceOver
+        let blocked = coordinator.isEditingLayout || exitDestination != nil || coordinator.issue != nil || voiceOver
             || coordinator.panes.contains {
                 $0.preparation.failure != nil
                     || ($0.preparation.current == nil && $0.preparation.isPreparing)
@@ -306,7 +319,6 @@ struct LiveTVMultiviewOverlay: View {
     }
 
     private func activity() {
-        guard picker == nil else { return }
         if restoringHiddenPaneFocus {
             restoringHiddenPaneFocus = false
             return
@@ -316,7 +328,6 @@ struct LiveTVMultiviewOverlay: View {
     }
 
     private func nativeFocusChanged(_ focusedFrame: CGRect, size: CGSize) {
-        guard picker == nil else { return }
         let id = coordinator.panes.first { pane in
             guard coordinator.expandedPaneID == nil || coordinator.expandedPaneID == pane.id else { return false }
             let frame = LiveTVMultiviewGeometry.focusFrame(
@@ -407,21 +418,6 @@ struct LiveTVMultiviewOverlay: View {
         #endif
     }
 
-    private func channelPicker(_ destination: ChannelPickerDestination) -> some View {
-        LiveTVMultiviewChannelPicker(
-            channels: channels, favoriteIDs: favoriteIDs, recentChannelIDs: recentChannelIDs,
-            selectedIDs: Set(coordinator.panes.compactMap { $0.channel?.id }),
-            cancel: { picker = nil }
-        ) { channel in
-            switch destination {
-            case .add:
-                coordinator.collapse()
-                coordinator.add(channel)
-            case .replace(let id): coordinator.replace(id, with: channel)
-            }
-            picker = nil
-        }
-    }
 }
 
 private struct LiveTVMultiviewPaneViewport: View {
@@ -500,6 +496,8 @@ private struct LiveTVMultiviewChrome: View {
     let editing: () -> Void
     let add: () -> Void
     let replace: () -> Void
+    let isFavorite: Bool
+    let toggleFavorite: (() -> Void)?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -522,7 +520,8 @@ private struct LiveTVMultiviewChrome: View {
             LiveTVMultiviewToolbar(
                 coordinator: coordinator, add: add, replace: replace,
                 collapse: collapse, setup: setup, focusScope: focusScope,
-                restoresSetupFocus: restoresSetupFocus, setupFocused: setupFocused, editing: editing
+                restoresSetupFocus: restoresSetupFocus, setupFocused: setupFocused, editing: editing,
+                isFavorite: isFavorite, toggleFavorite: toggleFavorite
             )
             #if os(tvOS)
             .padding(.horizontal, 72)
@@ -559,7 +558,7 @@ private struct LiveTVMultiviewHeader: View {
                 LiveTVMultiviewAction(title: "Watch", symbol: "play.fill", action: watch, editing: editing)
                     .accessibilityIdentifier("live-multiview-watch")
             }
-            LiveTVMultiviewAction(title: "Done", symbol: "xmark", action: exit, editing: editing)
+            LiveTVMultiviewAction(title: "Close Multiview", symbol: "xmark", action: exit, editing: editing)
                 .accessibilityIdentifier("live-multiview-done")
         }
         .foregroundStyle(.white)
@@ -732,11 +731,21 @@ private struct LiveTVMultiviewToolbar: View {
     let restoresSetupFocus: Bool
     let setupFocused: () -> Void
     let editing: () -> Void
+    let isFavorite: Bool
+    let toggleFavorite: (() -> Void)?
     @FocusState private var layoutFocused: Bool
 
     var body: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 16) {
+                if let toggleFavorite {
+                    LiveTVMultiviewAction(
+                        title: isFavorite ? "Unfavorite" : "Favorite",
+                        symbol: isFavorite ? "star.fill" : "star",
+                        action: toggleFavorite, editing: editing)
+                        .accessibilityIdentifier("live-multiview-favorite")
+                        .accessibilityValue(isFavorite ? "Saved" : "Not saved")
+                }
                 if !coordinator.isEditingLayout {
                     LiveTVMultiviewAction(
                         title: "Edit layout", symbol: "rectangle.split.2x2",
@@ -867,187 +876,4 @@ private struct LiveTVMultiviewAction: View {
     }
 }
 
-private struct LiveTVMultiviewChannelPicker: View {
-    let channels: [LiveTVPrototypeChannel]
-    let favoriteIDs: Set<String>
-    let recentChannelIDs: [String]
-    let selectedIDs: Set<String>
-    let cancel: () -> Void
-    let select: (LiveTVPrototypeChannel) -> Void
-    @State private var query = ""
-    @State private var favoritesOnly = false
-    @State private var category: String?
-    @State private var isSearching = false
-
-    private var results: [LiveTVPrototypeChannel] {
-        channels.filter { channel in
-            (!favoritesOnly || favoriteIDs.contains(channel.id))
-                && (category == nil || category == channel.category)
-                && (query.isEmpty || channel.name.localizedStandardContains(query)
-                    || channel.category.localizedStandardContains(query)
-                    || String(channel.number).localizedStandardContains(query))
-        }
-    }
-
-    var body: some View {
-        #if os(tvOS)
-        if isSearching {
-            PrototypeNativeSearch(
-                query: $query, restoresGuideFocus: false, isPresented: true,
-                close: { isSearching = false; query = "" }, editing: {}
-            ) { close in
-                LiveTVMultiviewSearchResults(
-                    channels: results, categories: Array(Set(channels.map(\.category))).sorted(),
-                    selectedIDs: selectedIDs, query: query,
-                    favoritesOnly: $favoritesOnly, category: $category,
-                    cancel: close, select: select
-                )
-            }
-        } else {
-            LiveTVMultiviewChannelHome(
-                channels: channels, favoriteIDs: favoriteIDs, recentChannelIDs: recentChannelIDs,
-                selectedIDs: selectedIDs, search: { isSearching = true }, cancel: cancel, select: select
-            )
-        }
-        #else
-        NavigationStack {
-            Group {
-                if query.isEmpty {
-                    LiveTVMultiviewChannelHome(
-                        channels: channels, favoriteIDs: favoriteIDs, recentChannelIDs: recentChannelIDs,
-                        selectedIDs: selectedIDs, select: select
-                    )
-                } else {
-                    channelList
-                }
-            }
-                .searchable(text: $query, prompt: "Search channels")
-                .navigationTitle("Choose channel")
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel", role: .cancel, action: cancel)
-                    }
-                }
-        }
-        #endif
-    }
-
-    private var channelList: some View {
-        List {
-            Section {
-                Toggle("Favorites only", isOn: $favoritesOnly)
-                    .toggleStyle(SettingsSwitchToggleStyle())
-                Picker("Category", selection: $category) {
-                    Text("All categories").tag(String?.none)
-                    ForEach(Array(Set(channels.map(\.category))).sorted(), id: \.self) { value in
-                        Text(value).tag(Optional(value))
-                    }
-                }
-                .pickerStyle(.menu)
-            }
-            Section {
-                ForEach(results) { channel in
-                    LiveTVMultiviewChannelRow(
-                        channel: channel, isSelected: selectedIDs.contains(channel.id),
-                        select: { select(channel) }
-                    )
-                }
-                if results.isEmpty {
-                    ContentUnavailableView.search(text: query)
-                }
-            }
-        }
-    }
-}
-
-#if os(tvOS)
-private struct LiveTVMultiviewSearchResults: View {
-    let channels: [LiveTVPrototypeChannel]
-    let categories: [String]
-    let selectedIDs: Set<String>
-    let query: String
-    @Binding var favoritesOnly: Bool
-    @Binding var category: String?
-    let cancel: () -> Void
-    let select: (LiveTVPrototypeChannel) -> Void
-
-    var body: some View {
-        VStack(spacing: 16) {
-            PrototypeSearchFocusBoundary {
-                HStack {
-                    Text("Choose channel").font(.title2.weight(.semibold))
-                    Spacer()
-                    LiveTVMultiviewAction(title: "Cancel", symbol: "xmark", action: cancel)
-                }
-            }
-            ScrollView {
-                LazyVStack(spacing: 16) {
-                    PrototypeSearchFocusBoundary {
-                        Toggle("Favorites only", isOn: $favoritesOnly)
-                            .toggleStyle(SettingsSwitchToggleStyle())
-                    }
-                    PrototypeSearchFocusBoundary {
-                        Picker("Category", selection: $category) {
-                            Text("All categories").tag(String?.none)
-                            ForEach(categories, id: \.self) { value in
-                                Text(value).tag(Optional(value))
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    ForEach(channels) { channel in
-                        // Native Search needs the same row-sized UIKit boundary as the guide.
-                        PrototypeSearchFocusBoundary {
-                            LiveTVMultiviewChannelRow(
-                                channel: channel, isSelected: selectedIDs.contains(channel.id),
-                                select: { select(channel) }
-                            )
-                            .buttonStyle(PrototypeButtonStyle(surface: .guide))
-                            .focusEffectDisabled()
-                        }
-                    }
-                    if channels.isEmpty {
-                        ContentUnavailableView.search(text: query)
-                    }
-                }
-                .padding(.vertical, 8)
-            }
-        }
-        .padding(.horizontal, 48)
-    }
-}
-#endif
-
-private struct LiveTVMultiviewChannelRow: View {
-    let channel: LiveTVPrototypeChannel
-    let isSelected: Bool
-    let select: () -> Void
-
-    var body: some View {
-        Button(action: select) {
-            HStack(spacing: 16) {
-                ChannelLogoArtwork(
-                    name: channel.name, logoURL: channel.logoURL,
-                    size: CGSize(width: 72, height: 48), cornerRadius: 8
-                )
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(channel.name)
-                    Text(channel.category).font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                if isSelected {
-                    Image(systemName: "checkmark")
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .accessibilityLabel(channel.name)
-        .accessibilityValue(channel.category)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .accessibilityIdentifier("live-multiview-channel-\(channel.id)")
-        .disabled(isSelected)
-    }
-}
 #endif

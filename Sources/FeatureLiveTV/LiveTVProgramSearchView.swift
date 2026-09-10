@@ -190,11 +190,13 @@ public struct LiveTVProgramDetailsView: View {
     private let guideSourceName: String?
     private let isFavorite: Bool
     private let toggleFavorite: (() -> Void)?
+    private let watchTitle: LocalizedStringResource
 
     public init(
         program: LiveTVPrototypeProgram, channelName: String, now: Date,
         guideSourceName: String? = nil, isFavorite: Bool = false,
-        toggleFavorite: (() -> Void)? = nil, watch: @escaping () -> Void
+        toggleFavorite: (() -> Void)? = nil,
+        watchTitle: LocalizedStringResource = "Watch channel", watch: @escaping () -> Void
     ) {
         self.program = program
         self.channelName = channelName
@@ -203,6 +205,7 @@ public struct LiveTVProgramDetailsView: View {
         self.guideSourceName = guideSourceName
         self.isFavorite = isFavorite
         self.toggleFavorite = toggleFavorite
+        self.watchTitle = watchTitle
     }
 
     public var body: some View {
@@ -228,7 +231,7 @@ public struct LiveTVProgramDetailsView: View {
                     if let rating = details.rating { Text(rating) }
                     if details.endWasInferred { Text("End time estimated from the next programme.").font(.caption) }
                 }
-                Button("Watch channel", action: watch)
+                Button(action: watch) { Text(watchTitle) }
                     .buttonStyle(SettingsFocusButtonStyle(size: .contained))
                 if let toggleFavorite {
                     Button(isFavorite ? "Remove from Favorites" : "Add to Favorites", action: toggleFavorite)

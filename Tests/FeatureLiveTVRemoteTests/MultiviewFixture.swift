@@ -92,6 +92,8 @@ private final class MultiviewFixtureState {
     var engines: [MultiviewFixtureEngine] = []
 
     let channels = MultiviewFixtureCatalog.channels
+    let guide = LiveTVPrototypeModel(now: Date(), channels: MultiviewFixtureCatalog.channels)
+    let guideImports = LiveTVPrototypeImportModel(configuration: .init())
 
     func makeEngine() -> MultiviewFixtureEngine {
         let engine = MultiviewFixtureEngine(number: engines.count + 1)
@@ -109,6 +111,7 @@ private final class MultiviewFixtureState {
 struct MultiviewFixture: View {
     @State private var state = MultiviewFixtureState()
     @State private var isFavorite = false
+    @State private var channelSelection: LiveTVMultiviewSelection?
 
     var body: some View {
         GeometryReader { geometry in
@@ -157,14 +160,27 @@ struct MultiviewFixture: View {
                         .opacity(coordinator.expandedPaneID == nil || coordinator.expandedPaneID == pane.id ? 1 : 0)
                     }
                 }
-                if coordinator.isEnabled {
+                if coordinator.isEnabled && channelSelection == nil {
                     LiveTVMultiviewOverlay(
-                        coordinator: coordinator, channels: state.channels,
-                        favoriteIDs: ["sports-2"],
-                        recentChannelIDs: ["sports-3", "sports-1"],
+                        coordinator: coordinator,
                         exit: { _ = coordinator.exit() },
-                        returnToGuide: { _ = coordinator.exit() }
+                        returnToGuide: { _ = coordinator.exit() },
+                        addChannel: { channelSelection = .add },
+                        replaceChannel: { channelSelection = .replace($0) }
                     )
+                    .frame(width: bounds.width, height: bounds.height)
+                    .position(x: bounds.midX, y: bounds.midY)
+                    .zIndex(2)
+                }
+                if let channelSelection {
+                    MultiviewGuideFixture(
+                        model: state.guide, imports: state.guideImports, selection: channelSelection,
+                        selectedIDs: Set(coordinator.panes.compactMap { $0.channel?.id }),
+                        cancel: { self.channelSelection = nil }
+                    ) { channel in
+                        channelSelection.apply(channel, to: coordinator)
+                        self.channelSelection = nil
+                    }
                     .frame(width: bounds.width, height: bounds.height)
                     .position(x: bounds.midX, y: bounds.midY)
                     .zIndex(2)
@@ -197,6 +213,56 @@ struct MultiviewFixture: View {
     }
 }
 
+private struct MultiviewGuideFixture: View {
+    let model: LiveTVPrototypeModel
+    let imports: LiveTVPrototypeImportModel
+    let selection: LiveTVMultiviewSelection
+    let selectedIDs: Set<String>
+    let cancel: () -> Void
+    let select: (LiveTVPrototypeChannel) -> Void
+    @State private var selectedID: String?
+    @State private var rowID: LiveTVGuideRowID?
+    @State private var controlsActive = false
+    @State private var focusedProgram: LiveTVPrototypeProgram?
+    @State private var guideHasFocus = false
+    @State private var guideOffset: TimeInterval = 0
+    @State private var timeAnchor = Date()
+    @State private var timelineOffset: CGFloat = 0
+    @State private var restoresFocus = true
+
+    var body: some View {
+        VStack(spacing: 24) {
+            LiveTVMultiviewGuideSelectionHeader(selection: selection, cancel: cancel)
+            PrototypeBrowser(
+                model: model, imports: imports, selectedID: $selectedID, selectedRowID: $rowID,
+                railActive: $controlsActive, focusedProgram: $focusedProgram, hasFocus: $guideHasFocus,
+                topRequest: 0, nowRequest: 0, guideOffset: $guideOffset,
+                timeAnchor: $timeAnchor, timelineOffset: $timelineOffset,
+                restoreFocusRequest: 1, isPresented: true, isRestoringFocus: restoresFocus,
+                restoresPlaybackFocus: false, watchOrigin: nil,
+                focusRestored: { _ in restoresFocus = false },
+                tune: { row in if let channel = model.channel(id: row.channelID) { select(channel) } },
+                details: { _ in }, openControls: {}, openSources: {}, openGuideTime: {},
+                openToolbar: cancel, isLoading: false, loadFailed: false, reload: {},
+                selectionAction: selection.title, selectedChannelIDs: selectedIDs
+            )
+        }
+        .padding(60)
+        .background(.black)
+    }
+}
+
+private enum LiveTVRootFixtureStorage {
+    static let preferences: LiveTVPreferencesStore = {
+        let suite = "com.thatcube.Plozz.MultiviewGuideFixture"
+        let defaults = UserDefaults(suiteName: suite)!
+        if !ProcessInfo.processInfo.arguments.contains("--preserve-multiview-favorites") {
+            defaults.removePersistentDomain(forName: suite)
+        }
+        return LiveTVPreferencesStore(defaults: defaults)
+    }()
+}
+
 struct LiveTVRootFixture: View {
     @State private var isActive = true
     @State private var hostRevision = 0
@@ -224,7 +290,7 @@ struct LiveTVRootFixture: View {
             LiveTVPrototypeView(
                 isActive: isActive,
                 usesNativeFullscreen: true,
-                preferencesStore: SourceSmokePreferences(),
+                preferencesStore: LiveTVRootFixtureStorage.preferences,
                 viewSettingsStore: LiveTVRootFixtureSettings(),
                 sourceStore: sources,
                 serverAuthorizationID: "fixture-\(hostRevision)",

@@ -140,6 +140,7 @@ struct PrototypePreviewHero: View {
     let program: LiveTVPrototypeProgram?
     let layout: PrototypePreviewLayout
     let watch: () -> Void
+    var watchTitle: LocalizedStringResource?
     @Environment(\.themePalette) private var palette
 
     var body: some View {
@@ -164,7 +165,13 @@ struct PrototypePreviewHero: View {
                 .font(.caption)
                 .foregroundStyle(palette.secondaryText)
                 #if os(iOS)
-                Button("Watch channel", systemImage: "arrow.up.left.and.arrow.down.right", action: watch)
+                Button(action: watch) {
+                    Label {
+                        Text(watchTitle ?? "Watch channel")
+                    } icon: {
+                        Image(systemName: watchTitle == nil ? "arrow.up.left.and.arrow.down.right" : "rectangle.split.2x2")
+                    }
+                }
                     .font(.subheadline)
                     .plozzGlassPillButton()
                 #endif
