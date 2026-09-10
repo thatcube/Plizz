@@ -435,11 +435,6 @@ private struct PlozziOSCanonicalItemDetailView: View {
             : .landscape
         let headerPresentation = HeroPresentation(item: heroTarget, artworkStyle: heroStyle, surface: .detail)
         let rootPresentation = HeroPresentation(item: detail.item, artworkStyle: heroStyle, surface: .detail)
-        let headerRatings = appModel.settings.detailPage.settings.headerRatings(
-            from: HeroContentPolicy.ratings(focused: headerPresentation, root: rootPresentation),
-            isAnime: rootPresentation.isAnime,
-            hidesRatings: appModel.settings.spoilers.settings.shouldHideRatings(for: heroTarget)
-        )
         let trailerPauseThreshold = PlozziOSHeroMetrics.height(
             style: heroStyle,
             surfaceRole: .detail,
@@ -562,8 +557,7 @@ private struct PlozziOSCanonicalItemDetailView: View {
                     spoilerSettings: appModel.settings.spoilers.settings,
                     overviewAlreadyShown: heroStyle == .compactPortrait
                         ? HeroContentPolicy.detailDescription(focused: headerPresentation, root: rootPresentation)
-                        : nil,
-                    ratingsAlreadyShown: heroStyle == .compactPortrait ? headerRatings : []
+                        : nil
                 )
             }
             // No trailing padding here. The information band is the last thing in

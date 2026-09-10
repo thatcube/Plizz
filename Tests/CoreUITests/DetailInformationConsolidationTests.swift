@@ -6,7 +6,9 @@ import XCTest
 @MainActor
 final class DetailInformationConsolidationTests: XCTestCase {
     private let audience = ExternalRating(source: .rottenTomatoesAudience, value: 88, scale: .percent)
+    private let critics = ExternalRating(source: .rottenTomatoes, value: 96, scale: .percent)
     private let imdb = ExternalRating(source: .imdb, value: 7.9, scale: .outOfTen)
+    private let tmdb = ExternalRating(source: .tmdb, value: 8.1, scale: .outOfTen)
 
     private func item(overview: String? = "The series synopsis.") -> MediaItem {
         var item = MediaItem(id: "show", title: "The show", kind: .series)
@@ -21,38 +23,49 @@ final class DetailInformationConsolidationTests: XCTestCase {
         XCTAssertEqual(sections.sortedRatings, [audience, imdb])
     }
 
-    func testHeaderSummaryAndRatingsAreNotRepeated() {
+    func testRepeatedSummaryDoesNotRemoveAnyRatings() {
         let sections = DetailInformationSections(
             item: item(), horizontalInset: 22,
-            overviewAlreadyShown: "  The series synopsis.\n",
-            ratingsAlreadyShown: [imdb, audience]
+            overviewAlreadyShown: "  The series synopsis.\n"
         )
         XCTAssertFalse(sections.hasAbout)
-        XCTAssertTrue(sections.sortedRatings.isEmpty)
+        XCTAssertEqual(sections.sortedRatings, [audience, imdb])
     }
 
     func testDifferentSeriesSummaryAndScoresRemainAccessible() {
-        let episodeScore = ExternalRating(source: .imdb, value: 9.1, scale: .outOfTen)
         let sections = DetailInformationSections(
             item: item(), horizontalInset: 22,
-            overviewAlreadyShown: "A different episode synopsis.",
-            ratingsAlreadyShown: [episodeScore]
+            overviewAlreadyShown: "A different episode synopsis."
         )
         XCTAssertTrue(sections.hasAbout)
         XCTAssertEqual(sections.sortedRatings, [audience, imdb])
     }
 
-    func testPartialOrHiddenHeaderRatingsDoNotDiscardOtherScores() {
-        let partial = DetailInformationSections(
-            item: item(), horizontalInset: 22, ratingsAlreadyShown: [imdb]
+    func testTwoRatingHeaderLeavesAllFourScoresInFullInformation() {
+        var title = item()
+        title.ratings = [tmdb, imdb, critics, audience]
+        let headerRatings = DetailPageSettings.default.headerRatings(
+            from: title.ratings, isAnime: false, hidesRatings: false
         )
-        XCTAssertEqual(partial.sortedRatings, [audience])
-        let hidden = DetailInformationSections(
-            item: item(), horizontalInset: 22,
-            spoilerSettings: SpoilerSettings(hideRatingsUntilWatched: true),
-            ratingsAlreadyShown: []
+        XCTAssertEqual(headerRatings, [audience, critics])
+        let sections = DetailInformationSections(item: title, horizontalInset: 22)
+        XCTAssertEqual(sections.sortedRatings, [critics, audience, imdb, tmdb])
+        XCTAssertTrue(headerRatings.allSatisfy(sections.sortedRatings.contains))
+    }
+
+    func testSpoilerSettingsStillControlTheFullRatingPresentation() {
+        var title = item()
+        title.isPlayed = false
+        let spoilers = SpoilerSettings(hideRatingsUntilWatched: true)
+        XCTAssertTrue(spoilers.shouldHideRatings(for: title))
+        XCTAssertTrue(DetailPageSettings.default.headerRatings(
+            from: title.ratings, isAnime: false, hidesRatings: spoilers.shouldHideRatings(for: title)
+        ).isEmpty)
+        let sections = DetailInformationSections(
+            item: title, horizontalInset: 22, spoilerSettings: spoilers
         )
-        XCTAssertEqual(hidden.sortedRatings, [audience, imdb])
+        // Scores remain available to the existing spoiler-protected tiles, not discarded.
+        XCTAssertEqual(sections.sortedRatings, [audience, imdb])
     }
 
     func testMissingDescriptionsDoNotCreateAnAboutSection() {

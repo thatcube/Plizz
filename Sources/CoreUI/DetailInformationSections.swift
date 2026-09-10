@@ -45,10 +45,9 @@ public struct DetailInformationSections: View {
     /// heroes above do — the section is blurred, not removed, so a deliberate
     /// press can still lift it.
     private let spoilerSettings: SpoilerSettings
-    /// Only omit content already accessible in the header. A focused episode
-    /// can have different prose or scores from the series represented below.
+    /// Only omit prose already accessible in the header. A focused episode
+    /// can have a different synopsis from the series represented below.
     private let overviewAlreadyShown: String?
-    private let ratingsAlreadyShown: Set<ExternalRating>
 
     @State private var showsFullOverview = false
     @State private var overviewCardHeight: CGFloat = 0
@@ -74,8 +73,7 @@ public struct DetailInformationSections: View {
         selectedVersion: MediaVersion? = nil,
         externalAvailability: ExternalTitleAvailability? = nil,
         spoilerSettings: SpoilerSettings = .default,
-        overviewAlreadyShown: String? = nil,
-        ratingsAlreadyShown: [ExternalRating] = []
+        overviewAlreadyShown: String? = nil
     ) {
         self.item = item
         self.horizontalInset = horizontalInset
@@ -84,7 +82,6 @@ public struct DetailInformationSections: View {
         self.externalAvailability = externalAvailability
         self.spoilerSettings = spoilerSettings
         self.overviewAlreadyShown = overviewAlreadyShown
-        self.ratingsAlreadyShown = Set(ratingsAlreadyShown)
     }
 
     public var body: some View {
@@ -820,9 +817,8 @@ public struct DetailInformationSections: View {
     }
 
     var sortedRatings: [ExternalRating] {
-        item.ratings
-            .filter { !ratingsAlreadyShown.contains($0) }
-            .sorted { $0.source.sortRank < $1.source.sortRank }
+        // Header preferences select a preview, never a subset of the full Ratings section.
+        item.ratings.sorted { $0.source.sortRank < $1.source.sortRank }
     }
 
     /// Every Information column occupies one third of the spine so the lower row
