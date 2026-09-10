@@ -260,6 +260,8 @@ struct PlozziOSHeroRequest {
     var onRequestSeasons: (([Int]) -> Void)? = nil
     var seasonRefreshFailed = false
     var onRefreshSeasons: (() -> Void)? = nil
+    /// Detail pages reuse their season manager rather than opening a second request flow.
+    var onOpenSeasonRequests: (() -> Void)? = nil
 }
 
 /// The shared Seerr request / download-status CTA for both the Home and detail
@@ -273,7 +275,22 @@ struct PlozziOSHeroRequestButton: View {
     let request: PlozziOSHeroRequest
 
     var body: some View {
-        if showsSeasonRequestControl,
+        if let onOpenSeasonRequests = request.onOpenSeasonRequests {
+            Button(action: onOpenSeasonRequests) {
+                if let availability = request.seasonAvailability {
+                    PlozziOSSeasonRequestSummaryLabel(
+                        presentation: SeasonRequestPresentation(
+                            availability: availability,
+                            isSubmitting: request.isRequesting
+                        )
+                    )
+                } else {
+                    Label("Request Seasons", systemImage: "plus.circle")
+                }
+            }
+            .buttonStyle(PlozziOSHeroActionButtonStyle(kind: .primary))
+            .accessibilityHint("Choose seasons and review their request status.")
+        } else if showsSeasonRequestControl,
            let onRequestSeasons = request.onRequestSeasons {
             if let availability = request.seasonAvailability {
                 let presentation = SeasonRequestPresentation(
@@ -2112,10 +2129,7 @@ private struct PlozziOSDetailHeroForeground: View {
         }
     }
 
-    /// The Seerr request CTA for a discovery (not-in-library) title — matching
-    /// tvOS, which surfaces Request in the hero itself rather than in a separate
-    /// block. Uses the shared `PlozziOSHeroRequestButton` so Home and detail read
-    /// identically (Request / Requested / live download progress).
+    /// Request-only titles keep their primary request action out of overflow.
     @ViewBuilder
     private var heroRequestButton: some View {
         if let heroRequest {

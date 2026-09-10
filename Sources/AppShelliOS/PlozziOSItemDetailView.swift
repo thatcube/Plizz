@@ -492,7 +492,10 @@ private struct PlozziOSCanonicalItemDetailView: View {
                     },
                     trailerItem: viewModel.trailers.first,
                     onPlayTrailer: { play($0, fromBeginning: true) },
-                    heroRequest: heroRequest(for: detail.item),
+                    heroRequest: heroRequest(
+                        for: detail,
+                        hasPlayAction: playableHeroTarget != nil || showsPlayPlaceholder
+                    ),
                     // An episode's own page can be reached from Continue Watching
                     // or Search, where Back leaves the show entirely — so offer a
                     // way over to it.
@@ -649,8 +652,22 @@ private struct PlozziOSCanonicalItemDetailView: View {
         presentsEpisodeAsSubject && item.kind == .episode
     }
 
-    /// Series requests live in the download sheet; movie requests stay in the hero.
-    private func heroRequest(for item: MediaItem) -> PlozziOSHeroRequest? {
+    /// Request-only series expose their season picker in the hero as well as the toolbar.
+    private func heroRequest(
+        for detail: ItemDetailViewModel.Detail,
+        hasPlayAction: Bool
+    ) -> PlozziOSHeroRequest? {
+        let item = detail.item
+        if seriesDownloadPresentation(for: detail).showsHeroRequest(hasPlayAction: hasPlayAction) {
+            return PlozziOSHeroRequest(
+                cta: .request,
+                isRequesting: isRequesting,
+                actingName: appModel.activeSeerrRequestActingName,
+                onRequest: { beginRequest($0) },
+                seasonAvailability: currentSeasonRequestAvailability(for: detail),
+                onOpenSeasonRequests: { presentsSeriesDownloads = true }
+            )
+        }
         guard isDiscoveryItem, item.kind == .movie else { return nil }
         let availability = requestStatusOverride ?? item.availability
         return PlozziOSHeroRequest(
