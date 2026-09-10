@@ -44,6 +44,20 @@ final class ForegroundReloadCoordinatorTests: XCTestCase {
         XCTAssertFalse(sut.isRecovering)
     }
 
+    func testContinuingBackgroundAudioOrPiPDoesNotRebuildAHealthySession() async {
+        let (sut, host, engine) = makeSUT()
+        engine.needsBackgroundReload = false
+        sut.markEnteredBackground()
+        await sut.resume()
+        XCTAssertEqual(engine.reloadCount, 0)
+        XCTAssertEqual(engine.playCount, 0)
+        XCTAssertEqual(engine.pauseCount, 0)
+        XCTAssertFalse(host.reconcilePausedCalled)
+        engine.needsBackgroundReload = true
+        await sut.resume()
+        XCTAssertEqual(engine.reloadCount, 0, "The background generation was already consumed")
+    }
+
     // MARK: - Happy path
 
     func testHappyPathPlayingIntent() async {
@@ -250,6 +264,7 @@ private final class ReloadSpyHost: ForegroundReloadCoordinatorHost {
 
 @MainActor
 private final class ReloadSpyEngine: VideoEngine {
+    var needsBackgroundReload = true
     let displayName = "reload-spy"
     var status: VideoEngineStatus = .ready
     var isPaused = false

@@ -1,6 +1,78 @@
 import XCTest
 import CoreModels
+import CoreUI
+import AVFoundation
+import MediaPlayer
 @testable import FeatureMusic
+
+@MainActor
+final class MusicNowPlayingOwnershipTests: XCTestCase {
+    func testVideoTakeoverCancelsPendingMusicAndExplicitResumeReclaimsIt() async {
+        let publisher = MusicPublisherSpy()
+        let controller = AudioPlaybackController(nowPlayingPublisher: publisher)
+        let began = expectation(description: "Music resolution began")
+        let gate = MusicResolveGate()
+        controller.play(tracks: [MusicTrack(id: "track", title: "Track")], startIndex: 0,
+                        resolveStreamURL: { _ in
+            began.fulfill()
+            await gate.wait()
+            return nil
+        })
+        await fulfillment(of: [began], timeout: 1)
+        publisher.resign()
+        await gate.release()
+        await Task.yield()
+
+        XCTAssertFalse(controller.isPlaying)
+        XCTAssertFalse(publisher.isActive)
+        XCTAssertEqual(publisher.activations, 1)
+        XCTAssertEqual(controller.currentTrack?.id, "track", "Takeover preserves the queue")
+
+        // A new explicit queue request may reclaim transport; asynchronous
+        // completion of the old request must never do so.
+        controller.play(tracks: [MusicTrack(id: "other", title: "Other")], startIndex: 0,
+                        resolveStreamURL: { _ in nil })
+        XCTAssertTrue(publisher.isActive)
+        XCTAssertEqual(publisher.activations, 2)
+        controller.stop()
+        XCTAssertFalse(publisher.isActive)
+    }
+}
+
+private actor MusicResolveGate {
+    var continuation: CheckedContinuation<Void, Never>?
+    var released = false
+    func wait() async {
+        if released { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func release() {
+        released = true
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+@MainActor
+private final class MusicPublisherSpy: NowPlayingPublishing {
+    var isActive = false
+    var activations = 0
+    var resigned: (@MainActor () -> Void)?
+    func bind(player: AVPlayer?) {}
+    func activate(onCommand: @escaping @MainActor (NowPlayingCommand) -> Void,
+                  onResigned: @escaping @MainActor () -> Void) {
+        isActive = true
+        activations += 1
+        resigned = onResigned
+    }
+    func publish(_ info: [String: Any], state: MPNowPlayingPlaybackState,
+                 transport: NowPlayingTransport) {}
+    func invalidate() { isActive = false }
+    func resign() {
+        isActive = false
+        resigned?()
+    }
+}
 
 final class MusicFormatTests: XCTestCase {
     func testDurationUnderAnHour() {

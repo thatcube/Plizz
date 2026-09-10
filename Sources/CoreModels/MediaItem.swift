@@ -721,6 +721,22 @@ public struct MediaItem: Codable, Hashable, Identifiable, Sendable {
         return references.filter { seen.insert($0).inserted }
     }
 
+    /// Series-only artwork for episode cards and system playback surfaces.
+    /// The generic series-poster ladder also contains the episode's own still,
+    /// which must not leak into a surface promising spoiler-safe show artwork.
+    public func seriesArtworkReferences(prefersPortrait: Bool = false) -> [ArtworkReference] {
+        let local = artworkSelections
+            .first(where: { $0.placement == .seriesPoster })?
+            .references ?? []
+        let urls = prefersPortrait
+            ? [seriesPosterURL, fallbackArtworkURL]
+            : [fallbackArtworkURL, seriesPosterURL]
+        let remote = urls.compactMap { $0.map(ArtworkReference.remote) }
+        let ordered = prefersPortrait ? local + remote : remote + local
+        var seen = Set<ArtworkReference>()
+        return ordered.filter { seen.insert($0).inserted }
+    }
+
     private func legacyArtworkURLs(for placement: ArtworkPlacement) -> [URL] {
         switch placement {
         case .homeHero:

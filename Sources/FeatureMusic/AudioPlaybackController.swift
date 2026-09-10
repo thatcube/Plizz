@@ -281,7 +281,7 @@ public final class AudioPlaybackController {
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
     private var sessionConfigured = false
-    private var remoteCommandsActive = false
+    private let nowPlaying: any NowPlayingPublishing
     /// Retry loop that re-claims the audio session after an interruption `.began`
     /// when `.ended` never arrives (the AirPlay/HomePod drop fingerprint on
     /// tvOS 27). Cancelled when a new one starts or an `.ended` fires.
@@ -357,7 +357,8 @@ public final class AudioPlaybackController {
     /// other's handle; both are gated by the watchdog and cancelled by `stop()`.
     private var stalledRetryTask: Task<Void, Never>?
 
-    public init() {
+    public init(nowPlayingPublisher: (any NowPlayingPublishing)? = nil) {
+        nowPlaying = nowPlayingPublisher ?? NowPlayingSession()
         player.actionAtItemEnd = .none
         installTimeObserver()
         installRouteRecoveryObservers()
@@ -428,6 +429,7 @@ public final class AudioPlaybackController {
         // Tapping the song that's already playing shouldn't restart it — just
         // surface the full-screen player again (the Music tab observes the token).
         if hasActivePlayback, currentTrack?.id == tracks[clampedStart].id {
+            if !nowPlaying.isActive { resume() }
             playbackStartToken &+= 1
             return
         }
@@ -444,7 +446,6 @@ public final class AudioPlaybackController {
         self.isShuffled = false
         self.queue = tracks
         self.index = clampedStart
-        configureSessionIfNeeded()
         playbackStartToken &+= 1
         scheduleStart(debounced: false)
     }
@@ -472,7 +473,6 @@ public final class AudioPlaybackController {
         self.isShuffled = true
         self.queue = tracks.shuffled()
         self.index = 0
-        configureSessionIfNeeded()
         playbackStartToken &+= 1
         scheduleStart(debounced: false)
     }
@@ -483,6 +483,11 @@ public final class AudioPlaybackController {
 
     public func resume() {
         guard hasActivePlayback else { return }
+        enableRemoteCommands()
+        if player.currentItem == nil || startPending {
+            scheduleStart(debounced: false)
+            return
+        }
         // Re-assert the audio session in case it was deactivated while paused,
         // and use `playImmediately(atRate:)` so playback resumes now instead of
         // getting stuck in AVPlayer's stall-avoidance wait state.
@@ -718,6 +723,7 @@ public final class AudioPlaybackController {
 
     /// Called when the current item finishes on its own.
     private func handleItemDidEnd() {
+        guard nowPlaying.isActive else { return }
         // A natural end means the track played to completion — report a stop at
         // full duration so the server marks it *played* (the signal that feeds
         // "Recently Played"). Do it before advancing; startCurrent's own stop
@@ -741,6 +747,7 @@ public final class AudioPlaybackController {
     /// the generation here supersedes any start still resolving so it bails
     /// instead of transitioning to a track the user has already skipped past.
     private func scheduleStart(debounced: Bool) {
+        enableRemoteCommands()
         diag("skip", "scheduleStart debounced=\(debounced) index=\(index) track=\"\(currentTrack?.title ?? "nil")\" route=\(routeSummary())")
         startTask?.cancel()
         trackTransitionGeneration &+= 1
@@ -761,7 +768,10 @@ public final class AudioPlaybackController {
             // natural gapless end (or fresh play), which must stay seamless, so it
             // keeps the plain treadmill hand-off with no session reactivation.
             await self.startCurrent(reactivateRoute: debounced)
-            if !Task.isCancelled { self.startPending = false }
+            if !Task.isCancelled {
+                self.startPending = false
+                self.startTask = nil
+            }
         }
     }
 
@@ -842,11 +852,9 @@ public final class AudioPlaybackController {
             return
         }
         currentQuality = resolved.quality
-        // Claim the system remote/Now Playing controls only once music is
-        // actually playing. Registering them eagerly (e.g. at app launch) makes
-        // tvOS route the Siri Remote's Play/Pause button to the command center
-        // instead of delivering it to the foreground view, which silently breaks
-        // the video player's own Play/Pause handling.
+        // Scheduled starts already own transport. Direct recovery paths also
+        // pass here, so keep activation idempotent rather than install another
+        // set of command handlers on every track transition.
         enableRemoteCommands()
         if let current = player.currentItem {
             // Insert-and-buffer with a bounded retry. A rapid-skip burst (or any
@@ -1716,10 +1724,9 @@ public final class AudioPlaybackController {
     /// replaces the whole dictionary, so we rebuild it (re-attaching artwork)
     /// on every state change.
     private func updateNowPlayingInfo() {
-        let center = MPNowPlayingInfoCenter.default()
+        guard nowPlaying.isActive else { return }
         guard let track = currentTrack else {
-            center.nowPlayingInfo = nil
-            center.playbackState = .stopped
+            nowPlaying.invalidate()
             return
         }
         var info: [String: Any] = [
@@ -1732,54 +1739,64 @@ public final class AudioPlaybackController {
         if let album = track.albumTitle { info[MPMediaItemPropertyAlbumTitle] = album }
         if duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = duration }
         if let currentArtwork { info[MPMediaItemPropertyArtwork] = currentArtwork }
-        center.nowPlayingInfo = info
-        center.playbackState = isPlaying ? .playing : .paused
+        nowPlaying.bind(player: player)
+        nowPlaying.publish(
+            info, state: isPlaying ? .playing : .paused,
+            transport: .init(
+                canSeek: duration.isFinite && duration > 0,
+                hasNext: index + 1 < queue.count || repeatMode == .all,
+                hasPrevious: currentTime > 3 || index > 0 || repeatMode == .all
+            )
+        )
     }
     #endif
 
     private func enableRemoteCommands() {
         #if canImport(MediaPlayer)
-        guard !remoteCommandsActive else { return }
-        remoteCommandsActive = true
-        let center = MPRemoteCommandCenter.shared()
-        center.playCommand.isEnabled = true
-        center.pauseCommand.isEnabled = true
-        center.togglePlayPauseCommand.isEnabled = true
-        center.nextTrackCommand.isEnabled = true
-        center.previousTrackCommand.isEnabled = true
-        center.changePlaybackPositionCommand.isEnabled = true
-        // tvOS delivers remote-command handlers on a background queue, but these
-        // actions mutate main-actor `@Observable` state and the player, so hop
-        // to the main actor instead of touching it off-thread.
-        center.playCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.resume() }
-            return .success
-        }
-        center.pauseCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.pause() }
-            return .success
-        }
-        center.togglePlayPauseCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.togglePlayPause() }
-            return .success
-        }
-        center.nextTrackCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.next() }
-            return .success
-        }
-        center.previousTrackCommand.addTarget { [weak self] _ in
-            Task { @MainActor in self?.previous() }
-            return .success
-        }
-        center.changePlaybackPositionCommand.addTarget { [weak self] event in
-            guard let event = event as? MPChangePlaybackPositionCommandEvent else {
-                return .commandFailed
-            }
-            let position = event.positionTime
-            Task { @MainActor in await self?.seek(to: position) }
-            return .success
-        }
+        guard !nowPlaying.isActive else { return }
+        nowPlaying.activate(
+            onCommand: { [weak self] command in
+                guard let self else { return }
+                switch command {
+                case .play: resume()
+                case .pause: pause()
+                case .togglePlayPause: togglePlayPause()
+                case .stop: stop()
+                case .nextTrack: next()
+                case .previousTrack: previous()
+                case .seek(let seconds):
+                    Task { [weak self] in
+                        guard let self, nowPlaying.isActive else { return }
+                        await seek(to: min(duration, max(0, seconds)))
+                    }
+                case .skip: break
+                }
+            },
+            onResigned: { [weak self] in self?.relinquishNowPlaying() }
+        )
+        nowPlaying.bind(player: player)
+        configureSessionIfNeeded()
         #endif
+    }
+
+    private func relinquishNowPlaying() {
+        // An outgoing URL resolve or route-repair loop must not restart music
+        // after video has claimed the system session. Keep the queue for a later
+        // explicit resume, but cancel all work capable of restarting transport.
+        trackTransitionGeneration &+= 1
+        if startTask != nil { startPending = true }
+        startTask?.cancel()
+        startTask = nil
+        stuckRecoveryTask?.cancel()
+        stuckRecoveryTask = nil
+        stalledRetryTask?.cancel()
+        stalledRetryTask = nil
+        interruptionRecoveryTask?.cancel()
+        interruptionRecoveryTask = nil
+        artworkLoadTask?.cancel()
+        artworkLoadTask = nil
+        pause()
+        sessionConfigured = false
     }
 
     /// Removes our handlers and clears Now Playing so the system no longer
@@ -1787,19 +1804,10 @@ public final class AudioPlaybackController {
     /// player receive it again.
     private func disableRemoteCommands() {
         #if canImport(MediaPlayer)
-        guard remoteCommandsActive else { return }
-        remoteCommandsActive = false
-        let center = MPRemoteCommandCenter.shared()
-        center.playCommand.removeTarget(nil)
-        center.pauseCommand.removeTarget(nil)
-        center.togglePlayPauseCommand.removeTarget(nil)
-        center.nextTrackCommand.removeTarget(nil)
-        center.previousTrackCommand.removeTarget(nil)
-        center.changePlaybackPositionCommand.removeTarget(nil)
+        nowPlaying.invalidate()
+        artworkLoadTask?.cancel()
+        artworkLoadTask = nil
         currentArtwork = nil
-        let info = MPNowPlayingInfoCenter.default()
-        info.nowPlayingInfo = nil
-        info.playbackState = .stopped
         #endif
     }
 
@@ -1817,7 +1825,8 @@ public final class AudioPlaybackController {
             guard let image = await ArtworkImageCache.shared.image(for: url) else { return }
             let artwork = Self.makeArtwork(from: image)
             await MainActor.run {
-                guard let self, self.currentTrack?.id == trackID else { return }
+                guard !Task.isCancelled, let self, self.nowPlaying.isActive,
+                      self.currentTrack?.id == trackID else { return }
                 self.currentArtwork = artwork
                 self.updateNowPlayingInfo()
             }
@@ -1844,13 +1853,7 @@ public final class AudioPlaybackController {
     /// the system requests (returning a mismatched/original-size image makes the
     /// Now Playing surfaces silently drop the artwork).
     private nonisolated static func makeArtwork(from image: UIImage) -> MPMediaItemArtwork {
-        MPMediaItemArtwork(boundsSize: image.size) { size in
-            let format = UIGraphicsImageRendererFormat.default()
-            format.opaque = true
-            return UIGraphicsImageRenderer(size: size, format: format).image { _ in
-                image.draw(in: CGRect(origin: .zero, size: size))
-            }
-        }
+        NowPlayingSession.artwork(from: image)
     }
     #endif
 }

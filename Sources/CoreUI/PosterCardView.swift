@@ -894,21 +894,7 @@ public struct PosterCardView: View {
     /// keeps the other as a last resort — a cropped poster still identifies the
     /// show, and a blank card does not.
     private var placeholderArtworkReferences: [ArtworkReference] {
-        // Direct-share local artwork, but only the explicitly series-scoped
-        // selection. Going through `artworkReferences(for: .seriesPoster)` would
-        // append that placement's legacy ladder, which ends in the episode's own
-        // `posterURL`.
-        let localSeriesArt = item.artworkSelections
-            .first(where: { $0.placement == .seriesPoster })?
-            .references ?? []
-        let remote: [URL?] = style == .poster
-            ? [item.seriesPosterURL, item.fallbackArtworkURL]
-            : [item.fallbackArtworkURL, item.seriesPosterURL]
-        let ordered = style == .poster
-            ? localSeriesArt + remote.compactMap { $0.map(ArtworkReference.remote) }
-            : remote.compactMap { $0.map(ArtworkReference.remote) } + localSeriesArt
-        var seen = Set<ArtworkReference>()
-        return ordered.filter { seen.insert($0).inserted }
+        item.seriesArtworkReferences(prefersPortrait: style == .poster)
     }
 
     /// Last-resort series art from the metadata router, so a show whose server

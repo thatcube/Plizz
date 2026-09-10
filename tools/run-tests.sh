@@ -90,16 +90,16 @@ fi
 #      PLOZZ_HANG_SECS, the xcodebuild process tree is killed, this worktree's
 #      DerivedData is cleared, and the invocation is retried ONCE from clean.
 PLOZZ_DERIVED_DATA="${PLOZZ_DERIVED_DATA:-$PWD/.build/test-derived-data}"
+PLOZZ_TEST_RESULTS_DIR="${PLOZZ_TEST_RESULTS_DIR:-$PWD/.build/test-results}"
 PLOZZ_CLONED_SOURCE_PACKAGES="${PLOZZ_CLONED_SOURCE_PACKAGES:-$PLOZZ_DERIVED_DATA/SourcePackages}"
 configure_plozz_package_resolution "$PLOZZ_CLONED_SOURCE_PACKAGES"
 PLOZZ_HANG_SECS="${PLOZZ_HANG_SECS:-180}"
 # How long to let xcodebuild wind down AFTER every test bundle has reported its
-# result. Past that point the run is logically over and everything else is
-# teardown (result bundle, simulator shutdown), so waiting just delays a result
-# we already have. Measured on this Mac: 6s is enough for a clean exit in the
-# common case, and the results are read from the log either way, so reaping early
-# never changes the verdict.
+# result. Surviving tests can report success after a crash/restart, so these
+# lines only start the teardown grace period; xcresult decides the verdict.
 PLOZZ_VERDICT_GRACE="${PLOZZ_VERDICT_GRACE:-6}"
+# Xcode can run simctl diagnose with a 600-second timeout before finalizing.
+PLOZZ_RESULT_TIMEOUT="${PLOZZ_RESULT_TIMEOUT:-660}"
 # Watchdog/grace poll granularity. Must divide into both budgets sensibly.
 POLL_SECS="${PLOZZ_POLL_SECS:-2}"
 
@@ -180,6 +180,8 @@ for runtime,devs in d["devices"].items():
       print(dev["udid"]); sys.exit(0)')
 fi
 echo "Using tvOS Simulator: $PLOZZ_SIM_ID"
+python3 tools/run-bounded.py "${PLOZZ_SIM_BOOT_TIMEOUT:-300}" "simulator startup" -- \
+  xcrun simctl bootstatus "$PLOZZ_SIM_ID" -b
 
 # --- Scheme resolution + self-heal -------------------------------------------
 list_schemes() {
@@ -317,10 +319,11 @@ ensure_package_scheme() {
 # --- Run helpers --------------------------------------------------------------
 SUMMARY_RE="Test Suite '.*\.xctest'|Executed [0-9]+ test|TEST (SUCCEEDED|FAILED)|Failing tests:|error:|XCTAssert"
 
-# Print the bundle-level test targets that FAILED in a given log (one per line).
-failed_bundles_from_log() {
-  grep -Eo "Test Suite '[A-Za-z0-9_]+\.xctest' failed" "$1" 2>/dev/null \
-    | sed -E "s/Test Suite '([A-Za-z0-9_]+)\.xctest' failed/\1/" | sort -u
+# A restarted bundle can print "passed" after skipping a crashed test.
+failed_bundles_from_result() {
+  if [[ -s "$1.summary.json" ]]; then
+    python3 tools/xcresult-summary.py failed-targets "$1.summary.json"
+  fi
 }
 
 # Count the distinct test bundles that have reported a bundle-level result.
@@ -345,9 +348,15 @@ has_verdict() {
 # killed it for making no progress for PLOZZ_HANG_SECS.
 _xcb_once() {
   local log="$1"; shift
+  local result_dir result_bundle summary="$log.summary.json"
+  mkdir -p "$PLOZZ_TEST_RESULTS_DIR" || return 1
+  result_dir=$(mktemp -d "$PLOZZ_TEST_RESULTS_DIR/Run-XXXXXXXX") || return 1
+  result_bundle="$result_dir/Test.xcresult"
   : > "$log"
+  : > "$summary"
   xcodebuild test \
     "$@" \
+    -resultBundlePath "$result_bundle" \
     -destination "platform=tvOS Simulator,id=$PLOZZ_SIM_ID" \
     -parallel-testing-enabled "$PARALLEL" \
     -derivedDataPath "$PLOZZ_DERIVED_DATA" \
@@ -364,28 +373,34 @@ _xcb_once() {
   # Watchdog: poll the log size; if it doesn't grow for PLOZZ_HANG_SECS, the
   # build is wedged — kill the tree and report a hang (124).
   #
-  # Separately: once xcodebuild has printed its final verdict the run is
-  # logically DONE, and anything after it is teardown (result bundle, simulator
-  # shutdown) that regularly stalls on this Mac. Waiting out the full hang
-  # watchdog there turns an answer we already have into a 3-minute delay — and,
-  # because the stall reports as 124, it used to trigger a from-clean rebuild
-  # and pay the whole cost a second time. Reap it after a short grace instead.
-  #
-  # The poll interval is deliberately much finer than the grace: at the old 10s
-  # granularity a 20s grace could take 30s to trigger, so every green run paid up
-  # to half a minute of pure waiting after the last bundle had already reported.
-  local last_size=-1 stalled=0 hung=0 size verdict_wait=0 reaped_after_verdict=0
+  # Console summaries start the grace period, not a success verdict. Do not
+  # interrupt result finalization: only reap teardown once xcresult is readable.
+  local last_size=-1 stalled=0 hung=0 size verdict_wait=0 reported_at=-1 reaped_after_verdict=0
   while kill -0 "$xcb_pid" 2>/dev/null; do
     sleep "$POLL_SECS"
     if [[ ${EXPECTED_BUNDLES:-0} -gt 0 ]] \
        && [[ $(reported_bundles_count "$log") -ge ${EXPECTED_BUNDLES} ]]; then
-      verdict_wait=$(( verdict_wait + POLL_SECS ))
+      [[ $reported_at -lt 0 ]] && reported_at=$SECONDS
+      verdict_wait=$(( SECONDS - reported_at ))
       if [[ $verdict_wait -ge $PLOZZ_VERDICT_GRACE ]]; then
-        echo "" >&2
-        echo "run-tests.sh: all ${EXPECTED_BUNDLES} test bundle(s) reported; xcodebuild is still winding down after ${PLOZZ_VERDICT_GRACE}s — reaping it and using the reported results." >&2
-        kill_tree "$xcb_pid"
-        reaped_after_verdict=1
-        break
+        if [[ -f "$result_bundle/Info.plist" ]] \
+           && python3 tools/run-bounded.py 30 "xcresult finalization" -- \
+                xcrun xcresulttool get test-results summary --path "$result_bundle" \
+                > "$summary" 2> "$log.result-error.log" \
+           && python3 tools/xcresult-summary.py failed-targets "$summary" \
+                > /dev/null 2>> "$log.result-error.log"; then
+          echo "" >&2
+          echo "run-tests.sh: all ${EXPECTED_BUNDLES} test bundle(s) reported and xcresult is readable — reaping stalled teardown." >&2
+          kill_tree "$xcb_pid"
+          reaped_after_verdict=1
+          break
+        fi
+        if [[ $verdict_wait -ge $PLOZZ_RESULT_TIMEOUT ]]; then
+          echo "run-tests.sh: FAILURE — xcresult did not finalize within ${PLOZZ_RESULT_TIMEOUT}s." >&2
+          kill_tree "$xcb_pid"
+          hung=1
+          break
+        fi
       fi
     fi
     size=$(stat -f%z "$log" 2>/dev/null || echo 0)
@@ -412,13 +427,24 @@ _xcb_once() {
   # long after the build actually finished. kill_tree reaps tail -F + grep too.
   kill_tree "$tail_pid"
   wait "$tail_pid" 2>/dev/null || true
-  if [[ $reaped_after_verdict -eq 1 ]]; then
-    # We killed it, so `wait` reports the signal, not the outcome. Every bundle
-    # already reported, so the bundle results are the truth.
-    [[ -n "$(failed_bundles_from_log "$log")" ]] && return 1
-    return 0
+  if [[ $hung -eq 1 ]] && ! has_verdict "$log" \
+     && [[ $(reported_bundles_count "$log") -eq 0 ]]; then
+    return 124
   fi
-  [[ $hung -eq 1 ]] && return 124
+  echo "run-tests.sh: result bundle: $result_bundle"
+  if [[ $reaped_after_verdict -ne 1 ]] \
+     && ! python3 tools/run-bounded.py 30 "xcresult summary" -- \
+       xcrun xcresulttool get test-results summary --path "$result_bundle" > "$summary"; then
+    echo "run-tests.sh: FAILURE — no readable xcresult; console summaries cannot prove success." >&2
+    return 1
+  fi
+  python3 tools/xcresult-summary.py verdict "$summary" || return 1
+  if [[ $reaped_after_verdict -eq 1 || $hung -eq 1 ]]; then
+    [[ ${EXPECTED_BUNDLES:-0} -gt 0 ]] \
+      && [[ $(reported_bundles_count "$log") -ge ${EXPECTED_BUNDLES} ]] && return 0
+    echo "run-tests.sh: FAILURE — the interrupted run did not report every requested bundle." >&2
+    return 1
+  fi
   return $status
 }
 
@@ -438,9 +464,7 @@ xcodebuild_test() {
       # tests already ran and reported, rebuilding cannot change the outcome — it
       # just pays the full compile cost again to reprint the same failures.
       if has_verdict "$log" || [[ $(reported_bundles_count "$log") -gt 0 ]]; then
-        echo "run-tests.sh: xcodebuild stalled after reporting results — using them instead of rebuilding from clean." >&2
-        [[ -n "$(failed_bundles_from_log "$log")" ]] && return 1
-        grep -qE '^[[:space:]]*\*\* TEST[A-Z ]* SUCCEEDED \*\*' "$log" && return 0
+        echo "run-tests.sh: xcodebuild stalled after reporting results — not rebuilding an incomplete run." >&2
         return 1
       fi
       echo "run-tests.sh: clearing DerivedData ($PLOZZ_DERIVED_DATA) and retrying the build once from clean." >&2
@@ -506,10 +530,14 @@ fi
 
 # --- Retry-once for flaky suites ---------------------------------------------
 if [[ $STATUS -ne 0 ]]; then
+  if [[ $(reported_bundles_count "$MAIN_LOG") -lt ${EXPECTED_BUNDLES} ]]; then
+    echo "FAILURE: the run did not finish every requested bundle. An isolated retry cannot complete the matrix."
+    exit 1
+  fi
   FAILED=()
   while IFS= read -r S; do
     [[ -n "$S" ]] && FAILED+=("$S")
-  done < <(failed_bundles_from_log "$MAIN_LOG")
+  done < <(failed_bundles_from_result "$MAIN_LOG")
   if [[ ${#FAILED[@]} -eq 0 ]]; then
     echo "FAILURE: the test run failed but no per-suite result was found (build/compile error, or the run was aborted). Not retrying."
     exit 1

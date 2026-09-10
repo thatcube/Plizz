@@ -2189,6 +2189,14 @@ private struct PlozziOSPlaybackSettingsView: View {
             }
 
             SettingsSectionGroup("Playback") {
+                Toggle(isOn: $model.settings.backgroundAudio) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Background Audio")
+                        Text("Keep video audio playing when you lock your device or leave Plozz.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Toggle("Seek without pausing", isOn: $model.settings.seekWithoutPausing)
                 // Autoplay first: whether the next episode starts at all, then
                 // whether the card announces it. Independent switches.

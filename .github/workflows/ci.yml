@@ -59,6 +59,9 @@ jobs:
       - name: Package storage regression tests
         run: python3 -m unittest discover -s tools/tests -p 'test_package_storage.py'
 
+      - name: XCTest result regression tests
+        run: python3 -m unittest discover -s tools/tests -p 'test_xcresult_summary.py'
+
       # Validates the artifact translators actually receive: brands marked
       # non-translatable, no keys without words in them, every counted string
       # carrying plural variations, and the permission prompts in each

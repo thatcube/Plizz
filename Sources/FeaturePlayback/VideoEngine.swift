@@ -1,5 +1,6 @@
 #if canImport(AVFoundation)
 import Foundation
+import AVFoundation
 import CoreModels
 #if canImport(UIKit)
 import UIKit
@@ -76,6 +77,15 @@ public struct PlayerEngineCapabilities: OptionSet, Sendable {
 ///    lives above the engine, not inside it.
 @MainActor
 public protocol VideoEngine: AnyObject {
+    /// Optional association for system Now Playing; custom decoders use the
+    /// app-level center and still receive transport through this protocol.
+    var nowPlayingPlayer: AVPlayer? { get }
+
+    /// iOS opt-in for audio to continue without PiP or an external display.
+    func setBackgroundAudioEnabled(_ enabled: Bool)
+    var needsBackgroundReload: Bool { get }
+    var maximumPlaybackSpeed: Double { get }
+
     // MARK: Lifecycle
 
     /// Builds and starts playback for an already-resolved stream, seeking to
@@ -326,6 +336,11 @@ public protocol VideoEngine: AnyObject {
 }
 
 public extension VideoEngine {
+    var needsBackgroundReload: Bool { true }
+    var maximumPlaybackSpeed: Double { 4 }
+    var nowPlayingPlayer: AVPlayer? { nil }
+    func setBackgroundAudioEnabled(_ enabled: Bool) {}
+
     /// Default: the engine's playback resources survive background suspension.
     func reloadAfterForeground() async throws {}
 

@@ -765,6 +765,8 @@ public final class PlozzigenVideoEngine: VideoEngine, LiveChannelEngine {
         engine.setRate(Float(rate))
     }
 
+    public var maximumPlaybackSpeed: Double { Double(engine.maxSupportedRate) }
+
     public func setAudioDelay(_ seconds: TimeInterval) {}
     public func setSubtitleDelay(_ seconds: TimeInterval) {}
     public func setDialogEnhanceEnabled(_ enabled: Bool) {}
@@ -797,6 +799,22 @@ public final class PlozzigenVideoEngine: VideoEngine, LiveChannelEngine {
     #if canImport(UIKit)
     public func makeVideoOutputView() -> UIView {
         videoView
+    }
+
+    public var nowPlayingPlayer: AVPlayer? { engine.currentAVPlayer }
+    public var needsBackgroundReload: Bool { !engine.isSessionReady }
+
+    private var backgroundAudioEnabled = false
+
+    public func setBackgroundAudioEnabled(_ enabled: Bool) {
+        #if os(iOS)
+        backgroundAudioEnabled = enabled
+        engine.currentAVPlayer?.audiovisualBackgroundPlaybackPolicy = enabled ? .continuesIfPossible : .automatic
+        // Leave Aether's PiP/background master enabled. The host pauses ordinary
+        // video by default; the engine keeps native or software audio alive only
+        // when the host intentionally leaves it playing.
+        engine.backgroundPlaybackEnabled = true
+        #endif
     }
 
     /// The layer actually presenting video on the native path, for a host-built
@@ -899,6 +917,10 @@ public final class PlozzigenVideoEngine: VideoEngine, LiveChannelEngine {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] player in
                 guard let player else { return }
+                #if os(iOS)
+                player.audiovisualBackgroundPlaybackPolicy =
+                    self?.backgroundAudioEnabled == true ? .continuesIfPossible : .automatic
+                #endif
                 player.allowsExternalPlayback = true
                 player.usesExternalPlaybackWhileExternalScreenIsActive = true
                 // A new player means a new layer. Announce it on the next turn so

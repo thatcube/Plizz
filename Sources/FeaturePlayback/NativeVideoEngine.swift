@@ -90,6 +90,7 @@ public final class NativeVideoEngine: VideoEngine {
     // MARK: Private playback state
 
     @ObservationIgnored private var player: AVPlayer?
+    @ObservationIgnored private var backgroundAudioEnabled = false
     @ObservationIgnored private var request: PlaybackRequest?
     @ObservationIgnored private let authenticatedHTTPResolver:
         (any AuthenticatedHTTPResourceResolving)?
@@ -163,6 +164,15 @@ public final class NativeVideoEngine: VideoEngine {
     /// non-AVFoundation engine simply wouldn't offer it (diagnostics is
     /// best-effort and non-fatal).
     public var underlyingPlayer: AVPlayer? { player }
+    public var nowPlayingPlayer: AVPlayer? { player }
+    public var needsBackgroundReload: Bool { false }
+
+    public func setBackgroundAudioEnabled(_ enabled: Bool) {
+        #if os(iOS)
+        backgroundAudioEnabled = enabled
+        player?.audiovisualBackgroundPlaybackPolicy = enabled ? .continuesIfPossible : .automatic
+        #endif
+    }
 
     public var videoAspectRatio: Double? {
         if let size = player?.currentItem?.presentationSize,
@@ -254,6 +264,9 @@ public final class NativeVideoEngine: VideoEngine {
         configureDynamicRange(for: request, item: item)
 
         let player = AVPlayer(playerItem: item)
+        #if os(iOS)
+        player.audiovisualBackgroundPlaybackPolicy = backgroundAudioEnabled ? .continuesIfPossible : .automatic
+        #endif
         player.allowsExternalPlayback = true
         self.player = player
         #if canImport(UIKit)
