@@ -1832,6 +1832,29 @@ public final class ItemDetailViewModel {
         return feed.first { $0.seriesID == item.id }
     }
 
+    /// Speculative artwork waits outside the image limiter for the currently
+    /// selected list. Explicit selection and preloading share the same in-flight
+    /// fetch; a failed selected season is not retried by an artwork warmer.
+    public func prepareForSpeculativeSeasonArtwork(
+        selectedSeasonID: @MainActor () -> String?
+    ) async -> Bool {
+        while !Task.isCancelled {
+            guard let id = selectedSeasonID() else { return false }
+            switch seasonLoadState(for: id) {
+            case .loaded:
+                return true
+            case .failed:
+                return false
+            case .notLoaded:
+                await loadEpisodes(for: id)
+            }
+            guard !Task.isCancelled else { return false }
+            if selectedSeasonID() != id { continue }
+            return seasonLoadState(for: id).authoritativeEpisodes != nil
+        }
+        return false
+    }
+
     /// Loads episode children from a season or the active series container.
     /// Concurrent calls coalesce onto one request and all await its result. Fetch
     /// failures cache an empty list so a missing season does not retry on every

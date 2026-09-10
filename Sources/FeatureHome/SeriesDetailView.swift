@@ -1193,8 +1193,8 @@ struct SeriesDetailView: View {
         }
     }
 
-    /// Background-warms the nearest seasons after the visible season has settled.
-    /// Bounded so long multi-season shows do not decode their entire catalog.
+    /// Keeps nearby lists warming independently of slow artwork, so selecting
+    /// the next season never waits for the previous neighbor's thumbnails.
     private func prewarmAllSeasons() async {
         try? await Task.sleep(for: .seconds(2.5))
         if Task.isCancelled { return }
@@ -1204,12 +1204,11 @@ struct SeriesDetailView: View {
             .sorted { abs($0.offset - selectedIndex) < abs($1.offset - selectedIndex) }
             .prefix(Self.prewarmSeasonWindow)
             .map(\.element)
-        for season in neighbors {
-            if Task.isCancelled { return }
-            await viewModel.loadEpisodes(for: season.id)
-            await warmSeason(season.id)
-            await Task.yield()
-        }
+        await SeasonPrewarmScheduler.run(
+            seasonIDs: neighbors.map(\.id),
+            loadEpisodes: { await viewModel.loadEpisodes(for: $0) },
+            warmArtwork: { await warmSeason($0, speculative: true) }
+        )
     }
 
     private static let prewarmSeasonWindow = 4
@@ -1229,13 +1228,17 @@ struct SeriesDetailView: View {
     ///     series hero), decode it, and **inject it as the episode's `posterURL`**
     ///     so it becomes a seedable candidate. The enriched episodes are handed back
     ///     to the view model so the rail re-renders seeding the now-decoded image.
-    private func warmSeason(_ seasonID: String) async {
+    private func warmSeason(_ seasonID: String, speculative: Bool = false) async {
         guard let episodes = viewModel.episodes(for: seasonID) else { return }
         var resolvedPosterURLs: [String: URL] = [:]
         var heroResolved = false
         var heroURL: URL?
         for episode in episodes {
             if Task.isCancelled { return }
+            if speculative,
+               !(await viewModel.prepareForSpeculativeSeasonArtwork(
+                   selectedSeasonID: { selectedSeasonID }
+               )) { return }
             let candidates = MediaArtworkPrefetchPolicy.candidates(
                 for: episode,
                 style: .landscape,
@@ -1265,6 +1268,11 @@ struct SeriesDetailView: View {
                 still = heroURL ?? series.fallbackArtworkURL
             }
             guard let still else { continue }
+            // Selection may have changed during the metadata resolution above.
+            if speculative,
+               !(await viewModel.prepareForSpeculativeSeasonArtwork(
+                   selectedSeasonID: { selectedSeasonID }
+               )) { return }
             #if canImport(UIKit)
             await ArtworkSession.warmLimiter.run {
                 _ = await ArtworkImageCache.shared.image(for: still, variant: .landscapeCard, background: true)
