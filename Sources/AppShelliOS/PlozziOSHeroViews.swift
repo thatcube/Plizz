@@ -13,6 +13,7 @@ import UIKit
 
 enum PlozziOSHeroMetrics {
     static let compactDetailActionSpacing: CGFloat = 20
+    static let detailContentTopInset: CGFloat = 24
 
     /// Whether this hero fills its stage by **mirroring** its own bottom edge
     /// into the space the picture doesn't reach, rather than by cropping the
@@ -50,7 +51,9 @@ enum PlozziOSHeroMetrics {
         let base: CGFloat = style == .compactPortrait
             ? (surfaceRole == .detail ? 420 : 610)
             : (surfaceRole == .detail ? 760 : 680)
-        return base + accessibilityExtra
+        // Grow the layout instead of offsetting it so the sections below move with the hero.
+        let detailExtra = surfaceRole == .detail ? detailContentTopInset : 0
+        return base + accessibilityExtra + detailExtra
     }
 
 }
@@ -637,7 +640,10 @@ private struct PlozziOSHeroStage<Foreground: View>: View {
                     }
                     foreground()
                         .padding(.horizontal, PlozziOSPageLayout.horizontalInset(for: style))
-                        .padding(.top, showsBackdrop ? 12 : 80)
+                        .padding(
+                            .top,
+                            showsBackdrop ? 12 : 80 + PlozziOSHeroMetrics.detailContentTopInset
+                        )
                         .padding(.bottom, 8)
                         .frame(maxWidth: .infinity)
                         .background(palette.backgroundBase)
