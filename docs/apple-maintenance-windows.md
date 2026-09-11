@@ -533,6 +533,60 @@ newly created or adopted directory. The old adapter rejects that extra field.
 Once operational controls are installed, the updated old adapter also rejects
 all `apply` calls, including otherwise valid existing-owner units.
 
+### Legacy suspension permissions: separate preparation prerequisite
+
+The operational commands deliberately require the existing `SUSPENDED` marker
+to be a physical, effective-UID-owned regular file with **no group/world
+permission bits** (normally `0600`). They read it as private evidence through
+the unchanged frozen validator. A normal legacy layout with
+`smart-disk-maintenance/` mode `0755` and `SUSPENDED` mode `0644` therefore
+refuses with **`SUSPENDED is group/world accessible`**, even if its interlock
+root is `0700` and all three locks are `0600`. Read-only group/world access is
+enough to refuse; group/world write access is not required.
+
+This gate applies to `resolve-record`, `stage-rollout`, `install-prepared`,
+`activation-inputs`, and the separately approved activation operation. None
+normalizes permissions, rewrites or replaces the marker to pass validation, or
+interprets refusal as readiness. The outer `0755` directory is not itself a
+private-directory requirement of these marker checks: fixtures with that
+directory and a private `0600` marker exercise the complete guarded lifecycle.
+The interlock root, registry, locks, approval/evidence files and output/journal
+parents retain their own existing private-permission requirements.
+
+If the marker is nonprivate, **permission preparation is a separate,
+explicitly approved operator operation**, not part of installation or activation.
+No permission-preparation command or automatic migration is provided here.
+Before such work, obtain approval for the exact marker path, owner, device/inode,
+bytes and old/new modes; preserve that observation and the outcome durably.
+Keep suspension continuously present and its bytes/identity intact. Do not
+remove/recreate it, recursively normalize the directory, touch lease records,
+alter schedules, or loosen approval/evidence permissions. Coordinate any
+authorized preparation outside active or queued shipping under the same
+three authentic exclusive lock files. The existing `administrative_locks()`
+helper deliberately refuses the nonprivate marker; it is not a permission
+repair interface. If safe coordination is unavailable, retain the refusal.
+This documentation does not authorize a live permission change.
+
+Perform separately authorized permission preparation **before** creating a
+fresh rollout stage or activation snapshot/approval; do not repair a running
+transaction in place. A private marker is only one prerequisite, never evidence
+of owner retirement or permission to activate. Retained records, missing
+rollout/window inputs, incomplete writer coverage and active/queued owners
+still refuse independently. Failed real activation keeps its genuine frozen
+lane record; tightening a marker later does not release that record or make
+the failed transaction replayable.
+
+Six focused fixtures cover all five refusal paths and the permitted
+`0755`/`0600` lifecycle. Refusal checks preserve marker bytes, inode, owner,
+mode and modification/change timestamps, outer-directory mode and private
+lock modes; no successful receipt or policy publication is produced:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest \
+  tools.tests.test_apple_build_operations tools.tests.test_apple_build_activation \
+  -k legacy_public -v
+```
+
 ### Exact missing-owner provenance
 
 Operators supply, not generate through this tool, these private documents.

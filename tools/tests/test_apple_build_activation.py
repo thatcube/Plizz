@@ -63,6 +63,27 @@ class ActivationTests(unittest.TestCase):
             self.assertEqual(self.x.apply()["removed"], 3)
         self.assertTrue(self.x.keep.exists())
 
+    def test_legacy_public_directory_with_private_marker_supports_guarded_lifecycle(self):
+        self.x.marker.parent.chmod(0o755)
+        self.test_actual_wrapper_upgrades_and_cleanly_finalizes_before_apply()
+        self.assertEqual(self.x.marker.parent.stat().st_mode & 0o777, 0o755)
+
+    def test_legacy_public_marker_refuses_activation_snapshot_without_normalization(self):
+        original = self.x.use_legacy_marker_permissions()
+        with self.assertRaisesRegex(lease.LeaseError, "SUSPENDED is group/world accessible"):
+            self.x.activation_request()
+        self.x.assert_legacy_marker_unchanged(original)
+        self.assertEqual(lease.scan_records(), [])
+        self.assertFalse((lease.paths()["root"] / activation.RECEIPT_NAME).exists())
+        self.assertFalse((lease.paths()["root"] / activation.ARCHIVE_NAME).exists())
+
+    def test_legacy_public_marker_refuses_real_activation_without_normalization(self):
+        original = self.x.use_legacy_marker_permissions()
+        self.assert_refused(message="SUSPENDED is group/world accessible")
+        self.x.assert_legacy_marker_unchanged(original)
+        self.assertFalse((lease.paths()["root"] / activation.RECEIPT_NAME).exists())
+        self.assertFalse((lease.paths()["root"] / activation.ARCHIVE_NAME).exists())
+
     def test_missing_activation_approval(self):
         Path(self.approval["path"]).unlink()
         self.assert_refused(message="No such file")

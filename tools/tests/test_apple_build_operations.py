@@ -207,6 +207,21 @@ class OperationalTests(unittest.TestCase):
                                  self.f.home / ("stage-journal-" + str(uuid.uuid4()) + ".jsonl"),
                                  now=self.now)
 
+    def use_legacy_marker_permissions(self):
+        self.marker.parent.chmod(0o755)
+        self.marker.chmod(0o644)
+        return self.marker.stat()
+
+    def assert_legacy_marker_unchanged(self, original):
+        current = self.marker.stat()
+        for field in ("st_dev", "st_ino", "st_uid", "st_mode", "st_size", "st_mtime_ns", "st_ctime_ns"):
+            self.assertEqual(getattr(current, field), getattr(original, field), field)
+        self.assertEqual(self.marker.read_bytes(), self.marker_bytes)
+        self.assertEqual(self.marker.parent.stat().st_mode & 0o777, 0o755)
+        self.assertEqual(lease.paths()["root"].stat().st_mode & 0o777, 0o700)
+        for name in ("policy_lock", "lock", "registry_lock"):
+            self.assertEqual(lease.paths()[name].stat().st_mode & 0o777, 0o600)
+
     def install(self):
         self.stage()
         stage = policy.document(self.stage_path.read_bytes())
@@ -542,6 +557,31 @@ class OperationalTests(unittest.TestCase):
         with self.assertRaises(OSError):
             self.stage()
 
+    def test_legacy_public_marker_refuses_staging_without_normalization(self):
+        original = self.use_legacy_marker_permissions()
+        with self.assertRaisesRegex(lease.LeaseError, "SUSPENDED is group/world accessible"):
+            self.stage()
+        self.assert_legacy_marker_unchanged(original)
+        self.assertFalse(self.stage_path.exists())
+        for name in (lease.ROLLOUT_NAME, policy.POLICY_NAME, ops.CONTROLS_NAME):
+            self.assertFalse((lease.paths()["root"] / name).exists())
+        journal, = self.f.home.glob("stage-journal-*.jsonl")
+        self.assertEqual(self.events(journal)[-1]["event"], "stopped")
+
+    def test_legacy_public_marker_refuses_installation_without_normalization(self):
+        self.stage()
+        stage = policy.document(self.stage_path.read_bytes())
+        approval = self.approval(stage, "install-suspended-rollout", "install-approval.json")
+        original = self.use_legacy_marker_permissions()
+        journal = self.f.home / "legacy-install.jsonl"
+        with self.assertRaisesRegex(lease.LeaseError, "SUSPENDED is group/world accessible"):
+            ops.install_prepared(self.stage_path, approval, journal, now=self.now)
+        self.assert_legacy_marker_unchanged(original)
+        for name in (lease.ROLLOUT_NAME, policy.POLICY_NAME, ops.CONTROLS_NAME):
+            self.assertFalse((lease.paths()["root"] / name).exists())
+        self.assertEqual(self.events(journal)[-1]["event"], "stopped")
+        self.assertEqual(self.events(journal)[-1]["published"], [])
+
     def test_install_compare_and_swap_and_fsync_partial_publication(self):
         self.stage()
         stage = policy.document(self.stage_path.read_bytes())
@@ -698,6 +738,18 @@ class OperationalTests(unittest.TestCase):
         self.assertEqual(len(lease.scan_records()), 1)  # No ignore-list or schema change.
         self.assertEqual(self.marker.read_bytes(), self.marker_bytes)
         self.assertEqual(self.events(self.f.home / "resolution.jsonl")[-1]["event"], "resolved")
+
+    def test_legacy_public_marker_refuses_resolution_without_normalization(self):
+        path, record = self.retained_record()
+        request = self.resolution_request(path, record)
+        raw = path.read_bytes()
+        original = self.use_legacy_marker_permissions()
+        with self.assertRaisesRegex(lease.LeaseError, "SUSPENDED is group/world accessible"):
+            self.resolve(request)
+        self.assert_legacy_marker_unchanged(original)
+        self.assertEqual(path.read_bytes(), raw)
+        self.assertFalse((lease.paths()["root"] / "resolutions-v2").exists())
+        self.assertEqual(self.events(self.f.home / "resolution.jsonl")[-1]["event"], "stopped")
 
     def test_resolution_then_rollout_then_unit_full_lifecycle(self):
         path, record = self.retained_record()
