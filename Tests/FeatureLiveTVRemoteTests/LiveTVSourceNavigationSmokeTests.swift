@@ -11,7 +11,7 @@ final class LiveTVSourceNavigationSmokeTests: XCTestCase {
         XCTAssertFalse(app.staticTexts["No guide? No problem."].exists)
         assertNoSourcesOrNetwork(in: app)
 
-        guard select(app.buttons.containing(.staticText, identifier: "Add an IPTV playlist").firstMatch, in: app) else { return }
+        guard select(app.buttons["live-tv-setup-playlist"], in: app) else { return }
         XCTAssertTrue(app.textFields["live-tv-playlist-url"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.textFields["Name (optional)"].exists)
         XCUIRemote.shared.press(.menu)
@@ -26,7 +26,7 @@ final class LiveTVSourceNavigationSmokeTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Add your channels"].waitForExistence(timeout: 10))
 
         assertNoPublicChannelOffer(in: app)
-        guard select(app.buttons.containing(.staticText, identifier: "Use a media server").firstMatch, in: app) else { return }
+        guard select(app.buttons["live-tv-setup-server"], in: app) else { return }
         XCTAssertTrue(app.staticTexts["No connected Live TV servers"].waitForExistence(timeout: 5))
         assertNoPublicChannelOffer(in: app)
         XCUIRemote.shared.press(.menu)
@@ -87,6 +87,74 @@ final class LiveTVSourceNavigationSmokeTests: XCTestCase {
         XCUIRemote.shared.press(.menu)
         XCTAssertTrue(app.buttons["fixture-sources"].waitForExistence(timeout: 5))
         assertNoSourcesOrNetwork(in: app)
+    }
+
+    @MainActor
+    func testSetupCardsHaveEqualSizesAndAllActionsAreReachable() {
+        let app = launchFixture(arguments: ["--setup-cards"])
+        defer { app.terminate() }
+        let cards = ["playlist", "server", "library"].map { app.buttons["live-tv-setup-\($0)"] }
+        for card in cards { XCTAssertTrue(card.waitForExistence(timeout: 5)) }
+        let sizes = cards.map { card in
+            let scale = card.hasFocus ? 1.025 : 1.0
+            return CGSize(width: card.frame.width / scale, height: card.frame.height / scale)
+        }
+        for size in sizes.dropFirst() {
+            XCTAssertEqual(size.width, sizes[0].width, accuracy: 2)
+            XCTAssertEqual(size.height, sizes[0].height, accuracy: 2)
+        }
+        XCTAssertLessThan(cards[0].frame.maxX, cards[1].frame.minX)
+        XCTAssertLessThan(cards[1].frame.maxX, cards[2].frame.minX)
+        capture("live-setup-three-cards", in: app)
+        for action in ["playlist", "server", "library"] {
+            guard select(app.buttons["live-tv-setup-\(action)"], in: app) else { return }
+            XCTAssertEqual(app.staticTexts["fixture-setup-action"].label, action)
+        }
+        assertNoSourcesOrNetwork(in: app)
+    }
+
+    @MainActor
+    func testSetupCardsStackAtNarrowWidthsAndAccessibilitySizes() {
+        for arguments in [["--setup-compact"], ["--setup-accessibility"]] {
+            let app = launchFixture(arguments: ["--setup-cards"] + arguments)
+            let playlist = app.buttons["live-tv-setup-playlist"]
+            let server = app.buttons["live-tv-setup-server"]
+            XCTAssertTrue(playlist.waitForExistence(timeout: 5))
+            XCTAssertTrue(server.exists)
+            XCTAssertLessThan(playlist.frame.maxY, server.frame.minY)
+            XCTAssertEqual(playlist.frame.midX, server.frame.midX, accuracy: 2)
+            capture(arguments[0], in: app)
+            guard select(app.buttons["live-tv-setup-library"], in: app) else {
+                app.terminate()
+                return
+            }
+            XCTAssertEqual(app.staticTexts["fixture-setup-action"].label, "library")
+            assertNoSourcesOrNetwork(in: app)
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testSetupCardsMirrorInRightToLeftAndRemainReadableInLightTheme() {
+        let app = launchFixture(arguments: ["--setup-cards", "--rtl", "--light"])
+        defer { app.terminate() }
+        let playlist = app.buttons["live-tv-setup-playlist"]
+        let library = app.buttons["live-tv-setup-library"]
+        XCTAssertTrue(playlist.waitForExistence(timeout: 5))
+        XCTAssertTrue(library.exists)
+        XCTAssertGreaterThan(playlist.frame.minX, library.frame.maxX)
+        capture("live-setup-light-rtl", in: app)
+        guard select(library, in: app) else { return }
+        XCTAssertEqual(app.staticTexts["fixture-setup-action"].label, "library")
+        assertNoSourcesOrNetwork(in: app)
+    }
+
+    @MainActor
+    private func capture(_ name: String, in app: XCUIApplication) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     @MainActor

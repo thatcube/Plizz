@@ -1,4 +1,5 @@
 import CoreModels
+import CoreUI
 import Foundation
 import FeatureSettings
 import SwiftUI
@@ -14,7 +15,9 @@ struct SourceOnboardingFixture: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            if usesSettings {
+            if ProcessInfo.processInfo.arguments.contains("--setup-cards") {
+                SetupCardsFixture()
+            } else if usesSettings {
                 LiveTVSettingsView(
                     store: SourceSmokeViewSettings(),
                     preferencesStore: SourceSmokePreferences()
@@ -49,6 +52,29 @@ struct SourceOnboardingFixture: View {
                     .accessibilityIdentifier("fixture-source-metrics")
                     .allowsHitTesting(false)
             }
+        }
+    }
+}
+
+private struct SetupCardsFixture: View {
+    @State private var selectedAction = "none"
+    private let arguments = ProcessInfo.processInfo.arguments
+
+    var body: some View {
+        LiveTVSetupWelcome(
+            addPlaylist: { selectedAction = "playlist" },
+            useServer: { selectedAction = "server" },
+            createChannel: { selectedAction = "library" }
+        )
+        .frame(width: arguments.contains("--setup-compact") ? 720 : nil)
+        .environment(\.layoutDirection, arguments.contains("--rtl") ? .rightToLeft : .leftToRight)
+        .environment(\.themePalette, arguments.contains("--light") ? .light : .dark)
+        .environment(\.colorScheme, arguments.contains("--light") ? .light : .dark)
+        .dynamicTypeSize(arguments.contains("--setup-accessibility") ? .accessibility3 : .large)
+        .overlay(alignment: .bottomTrailing) {
+            Text(verbatim: selectedAction)
+                .accessibilityIdentifier("fixture-setup-action")
+                .allowsHitTesting(false)
         }
     }
 }

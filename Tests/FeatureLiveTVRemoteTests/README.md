@@ -62,6 +62,9 @@ does not regenerate the shipping app project or install the app on an Apple TV.
   return, inspect the no-server state, and navigate a
   typed Sources destination into its child editor and back. They assert zero
   configured sources, writes, and HTTP(S) requests, and no free-channel offers.
+- Setup-card coverage checks matching dimensions, all three remote actions,
+  stacked narrow/accessibility layouts, and right-to-left Light appearance.
+  Screenshot attachments preserve each layout for visual review.
 - The actual Live TV Settings split view embeds source management directly.
   Smokes enter its playlist editor without a Manage sources intermediary, toggle
   a saved fixture source, and edit it directly. All stores remain isolated; the

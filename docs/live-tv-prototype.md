@@ -56,6 +56,9 @@ The entry route, live host and UI are compiled out of Release builds.
 An empty configuration opens source setup; it does not contact a public feed or
 play an unsolicited channel. Add your own M3U playlist or use an authorized
 connected server. Plozz does not provide or offer a public channel catalog.
+Setup uses matching source cards with an icon, description and explicit action.
+Cards share their width and height in a row, and stack when space or larger text
+requires it. Authorized library-channel creation uses the same card treatment.
 Enabled sources are combined;
 adding one does not replace another. Channels become available before guide
 loading finishes. There is one unified
