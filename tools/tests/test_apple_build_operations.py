@@ -213,12 +213,52 @@ class OperationalTests(unittest.TestCase):
         approval = self.approval(stage, "install-suspended-rollout", "install-approval.json")
         return ops.install_prepared(self.stage_path, approval, self.f.home / "install.jsonl", now=self.now)
 
+    def activation_request(self):
+        import apple_build_activation as activation
+        identity = str(uuid.uuid4())
+        request = activation.activation_inputs(
+            self.stage_path, self.campaign_path, self.unit_id, identity,
+            clock=lambda: self.now, opened=self.opened,
+        )
+        path = self.f.home / f"activation-{identity}.json"
+        self.f.write_json(path, request)
+        approval = self.approval(request, "activate-installed-window", f"activation-approval-{identity}.json")
+        journal = self.f.home / f"activation-{identity}.jsonl"
+        return path, approval, journal
+
+    def activation_command(self, request, approval, journal, *, fault=""):
+        import apple_build_activation as activation
+        driver = self.f.home / "activation-fixture-driver.py"
+        if not driver.exists():
+            shutil.copyfile(ROOT / "tools/tests/apple_activation_fixture_driver.py", driver)
+        status = journal.with_suffix(".worker")
+        return [
+            "/bin/bash", str(self.f.repo / "tools/with-apple-build-lease.sh"),
+            activation.ACTIVATION_OWNER, "--", sys.executable, "-B", str(driver),
+            "--bundle", str(self.f.repo), "--request", str(request),
+            "--approval", approval["path"], "--journal", str(journal),
+            "--status", str(status), "--fault", fault,
+        ], status
+
+    def run_activation(self, request=None, approval=None, journal=None, *, fault=""):
+        if request is None:
+            request, approval, journal = self.activation_request()
+        command, status = self.activation_command(request, approval, journal, fault=fault)
+        result = subprocess.run(command, env=self.f.env, text=True, capture_output=True, timeout=40)
+        if result.returncode == 0:
+            deadline = time.monotonic() + 5
+            while lease.scan_records() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertEqual(lease.scan_records(), [], "frozen activation finalizer did not finish")
+        return result, journal, status
+
     @contextlib.contextmanager
     def exclusive(self):
-        # Explicit synthetic activation. No production CLI has a resume command.
-        # Keep real descriptors and a real v1 registry record for the whole lane.
-        with policy.policy_update_lock():
-            self.marker.unlink()
+        # Exercise the approved operation and actual frozen activation wrapper;
+        # only the test's inactive teardown below reinstates its fixture marker.
+        if self.marker.exists():
+            activated, _, _ = self.run_activation()
+            self.assertEqual(activated.returncode, 0, activated.stderr)
         with contextlib.ExitStack() as stack:
             p = lease.paths()
             fds = {}

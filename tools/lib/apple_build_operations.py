@@ -2,7 +2,7 @@
 """Additive v2 operations; frozen v1 leases are never reinterpreted or ignored.
 
 Evidence is an explicitly reviewed same-UID administrative trust boundary, not
-a signature service. No command generates approvals or removes SUSPENDED.
+a signature service. Only separately approved activation can remove SUSPENDED.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ OPERATIONS_FILES = (
     *policy.PROTOCOL_FILES, "tools/apple-build-cleanup.py",
     "tools/lib/apple_build_cleanup.py", "tools/lib/apple_maintenance_policy.py",
     "tools/lib/apple-build-guard.sh", "tools/apple-build-operations.py",
-    "tools/lib/apple_build_operations.py",
+    "tools/lib/apple_build_operations.py", "tools/lib/apple_build_activation.py",
 )
 
 
@@ -821,12 +821,33 @@ def install_prepared(stage_path: Path, approval_ref: dict, journal_path: Path, *
         journal.close()
 
 
+def validate_owner_coverage(package: dict, manifest: dict, *, now: dt.datetime) -> None:
+    roots = {root["identity"]["path"] for item in package["cohorts"]
+             if item["name"] not in {"global-cleanup-entrypoints", "manual-xcode-writers-disabled-or-wrapped"}
+             for root in item["roots"]}
+    for target in manifest["targets"]:
+        owner = target["worktree"]["path"]
+        if target.get("ownership") == "retired-v2":
+            _, history = retirement(target["release_record"], now=now, check_targets=False)
+            owner = history["repository"]["path"]
+        if owner not in roots:
+            lease.fail("original owner/repository is outside the approved writer coverage")
+    index = cleanup.TargetIndex([Path(t["path"]) for t in manifest["targets"]])
+    evidence_outside(package, index)
+    approval = policy.document(policy.reference(package["approval"]))
+    evidence_outside(approval, index)
+    for ref in approval["attestations"]:
+        evidence_outside(policy.document(policy.reference(ref)), index)
+
+
 class OperationalGuard(cleanup.RuntimeGuard):
     def __init__(self, manifest: dict, pinned, window_id: str, clock, campaign_path: Path, unit_id: str):
         self.campaign_path, self.unit_id = campaign_path, unit_id
         self.campaign_reference = cleanup.reference_for(campaign_path)
         self.controls_reference = cleanup.reference_for(lease.paths()["root"] / CONTROLS_NAME)
         super().__init__(manifest, pinned, window_id, clock)
+        import apple_build_activation as activation
+        self.activation_reference = activation.binding(lease.paths()["root"] / activation.RECEIPT_NAME)
         target_index = cleanup.TargetIndex([Path(t["path"]) for t in manifest["targets"]])
         evidence_outside(self.controls_reference, target_index)
         evidence_outside(self.campaign_reference, target_index)
@@ -839,23 +860,7 @@ class OperationalGuard(cleanup.RuntimeGuard):
     def validate_scope(self, package: dict) -> None:
         # Reuse v1's bundle/evidence isolation without pretending missing owners
         # are registered writers. Their real repository anchors require coverage.
-        roots = {root["identity"]["path"] for item in package["cohorts"]
-                 if item["name"] not in {"global-cleanup-entrypoints", "manual-xcode-writers-disabled-or-wrapped"}
-                 for root in item["roots"]}
-        for target in self.manifest["targets"]:
-            owner = target["worktree"]["path"]
-            if target.get("ownership") == "retired-v2":
-                _, history = retirement(target["release_record"], now=self.clock(), check_targets=False)
-                owner = history["repository"]["path"]
-            if owner not in roots:
-                lease.fail("original owner/repository is outside the approved writer coverage")
-        # Evidence must survive all targets, including nested attestation evidence.
-        index = cleanup.TargetIndex([Path(t["path"]) for t in self.manifest["targets"]])
-        evidence_outside(package, index)
-        approval = policy.document(policy.reference(package["approval"]))
-        evidence_outside(approval, index)
-        for ref in approval["attestations"]:
-            evidence_outside(policy.document(policy.reference(ref)), index)
+        validate_owner_coverage(package, self.manifest, now=self.clock())
 
     def validate_owner(self, target: dict) -> None:
         if target.get("ownership") != "retired-v2":
@@ -875,6 +880,11 @@ class OperationalGuard(cleanup.RuntimeGuard):
         controls = policy.document(policy.reference(self.controls_reference))
         package = policy.document(policy.read_bytes(lease.paths()["root"] / policy.POLICY_NAME, private=True))
         validate_controls(controls, package, self.manifest, now=self.clock())
+        import apple_build_activation as activation
+        activation.validate_receipt(
+            self.activation_reference, self.pinned.path, self.campaign_path,
+            self.unit_id, self.window_id, now=self.clock(),
+        )
         self.deadline_check()
 
 
@@ -951,6 +961,14 @@ def main() -> int:
     command.add_argument("--unit-id", required=True)
     command.add_argument("--window-id", required=True)
     command.add_argument("--journal", type=Path, required=True)
+    command = commands.add_parser("activation-inputs")
+    for name in ("stage", "campaign", "output"):
+        command.add_argument("--" + name, type=Path, required=True)
+    command.add_argument("--unit-id", required=True)
+    command.add_argument("--activation-id", required=True)
+    command = commands.add_parser("activate-installed-window")
+    for name in ("request", "approval", "journal"):
+        command.add_argument("--" + name, type=Path, required=True)
     args = parser.parse_args()
     try:
         now = cleanup.now_utc()
@@ -974,6 +992,21 @@ def main() -> int:
             result = stage_rollout(args.window, args.manifest, args.controls, args.output, args.journal, now=now)
         elif args.command == "install-prepared":
             result = install_prepared(args.stage, cleanup.reference_for(args.approval), args.journal, now=now)
+        elif args.command == "activation-inputs":
+            import apple_build_activation as activation
+            document = activation.activation_inputs(
+                args.stage, args.campaign, args.unit_id, args.activation_id,
+            )
+            manifest = policy.document(activation.bound_bytes(document["manifest"]))
+            controls = policy.document(activation.bound_bytes(document["installed"][CONTROLS_NAME]))
+            artifact_outside(args.output, manifest, controls)
+            cleanup.write_private_new(args.output, policy.canonical(document) + b"\n")
+            result = {"request": str(args.output), "activation": "not-authorized"}
+        elif args.command == "activate-installed-window":
+            import apple_build_activation as activation
+            result = activation.activate(
+                args.request, cleanup.reference_for(args.approval), args.journal,
+            )
         else:
             result = apply_unit(args.campaign, args.unit_id, args.window_id, args.journal)
         print(policy.canonical(result).decode())

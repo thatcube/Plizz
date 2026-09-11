@@ -1,6 +1,7 @@
 # Attested Apple maintenance windows
 
-These tools do not authorize or activate storage reclamation. The policy tool
+The original v1 policy tool and cleanup adapter do not authorize or activate
+storage reclamation. The policy tool
 does not delete resources; the separate cleanup adapter's explicit `apply`
 command requires an already authorized window and inherited exclusive lease.
 Neither tool removes `SUSPENDED`, writes `rollout-policy-v1`, resolves lease
@@ -11,7 +12,9 @@ An additive operational implementation is now available at
 `tools/apple-build-operations.py`. Unlike the two original v1 tools, it can
 reconcile **one explicitly released retained lease record**, represent an
 affirmatively retired missing owner, and prepare/install reviewed policy files
-**while suspension remains in place**. It never removes `SUSPENDED`. See
+**while suspension remains in place**. A separate `activate-installed-window`
+operation can transition suspension only with new affirmative approval, a
+dedicated real frozen-v1 lane, and a durable activation receipt. See
 [Operational lifecycle (v2)](#operational-lifecycle-v2) below. None of these
 capabilities installs itself, authorizes production deletion, or reports disk
 recovery from a code change.
@@ -517,8 +520,8 @@ bounded compiler-only scanner, descriptor-relative remover, durable journal,
 full per-unlink v1 authentication, process/open-inode guards, and companion
 validator. The four frozen protocol files and their hashes above are unchanged.
 There is **no ignore list, force mode, PID-based auto-release, automatic
-partitioning, sweep, automatic resume, installation side effect, or suspension
-removal command**.
+partitioning, sweep, automatic resume, or installation side effect**. The narrow
+activation operation below is never combined with installation or cleanup.
 
 The v1 companion's manifest **envelope** remains exactly
 `{"schema":1,"scope":"apple-owner-released-build-outputs-only","targets":[...]}`.
@@ -597,8 +600,10 @@ Every schema-2 approval has exactly:
 ```
 
 Purposes are `retire-missing-owner`, `bounded-campaign`, `resolve-exact-record`,
-`operational-rollout`, and `install-suspended-rollout`. The install approval
-binds the entire staged document, which has no embedded approval field.
+`operational-rollout`, `install-suspended-rollout`, and
+`activate-installed-window`. The install approval binds the entire staged
+document, and activation approval binds the entire activation-input snapshot;
+neither payload contains its approval.
 Canonical JSON is the existing `apple_maintenance_policy.canonical` encoding.
 Changing targets, provenance, scope, bytes, or approval invalidates that review.
 
@@ -733,7 +738,8 @@ cleanup routes and full-lane writer protection, not just an idle process scan.
 
 The approved global cohort must fingerprint every path in
 `apple_build_operations.OPERATIONS_FILES` in the **actual executing bundle**,
-plus every additional cleanup route. This includes both new Python files, the
+plus every additional cleanup route. This includes the operations CLI,
+`apple_build_operations.py`, `apple_build_activation.py`, the
 scanner/remover, process guard, companion library and all four frozen clients.
 Every non-library global route must occur exactly once in `entrypoints`, with
 `path`, `sha256`, and `enforcement`. The only `operational-v2` entrypoint is the
@@ -775,11 +781,123 @@ policies published or an exact `.operations-*` candidate retained. The journal
 names published files and preserves originals; suspension remains. Do not erase
 that evidence or blindly retry a partially published stage.
 
-**Production activation still requires separate reviewed authorization** for
-the installed writer/route rollout and suspension transition under the
-conflicting policy lock, outside shipping. No command in this implementation
-performs that transition. The tests activate only their private temporary HOME
-under that lock, then acquire a real frozen-v1 exclusive lane.
+### Separately approved installed-window activation
+
+Activation is an explicit second transaction, **outside active or queued
+shipping**, after successful suspended installation. It does not install
+anything, change schedules or writer code, stop processes, obtain owner
+agreement, or infer release from inactivity. It has no generic resume/force
+mode. These commands describe later separately authorized operation; they do
+not authorize running them on the current machine.
+
+First capture current, unsigned inputs for exactly one installed unit/window:
+
+```bash
+python3 -B /reviewed/bundle/tools/apple-build-operations.py activation-inputs \
+  --stage /private/staged-rollout.json --campaign /private/campaign.json \
+  --unit-id '<explicit-unit-UUID>' --activation-id '<new-transaction-UUID>' \
+  --output /private/activation-request.json
+```
+
+This takes all three administrative locks exclusively/nonblocking and requires
+an empty registry and the actual suspension marker. It repeats full readiness
+validation but writes only the explicitly requested new snapshot. Its result is
+`activation:"not-authorized"`: it is not an approval, receipt or claim of future
+readiness. The tool never creates an approval document.
+
+The snapshot binds current host and all three lock identities; the exact
+staged document; installed rollout, companion and operational controls; the
+selected manifest and campaign; the exact original suspension marker; and the
+expected prior activation receipt (or `absent`). Every file binding has exactly
+`{"identity":{"path":...,"device":...,"inode":...},"sha256":...}`. Replaced
+identical-byte files, hard links, symlinks, host/lock drift or changed bytes
+refuse. `observed_at`, the exact installed `window_id`/`expires_at`, `unit_id`,
+`activation_id` and `schema:2` complete the request. The snapshot's raw references
+are not substituted for fresh runtime checks.
+
+A **new affirmative human approval** must bind the canonical entire request
+with purpose `activate-installed-window`, be issued at/after `observed_at`
+inside that window, and carry independently preserved approval evidence.
+Installation approval, general cleanup permission and an owner hold do not
+constitute activation approval. Then invoke the operation through the actual
+frozen wrapper, using this exact dedicated owner label:
+
+```bash
+/bin/bash /reviewed/bundle/tools/with-apple-build-lease.sh \
+  maintenance/activate-installed-window-v2 -- \
+  python3 -B /reviewed/bundle/tools/apple-build-operations.py activate-installed-window \
+    --request /private/activation-request.json \
+    --approval /private/activation-approval.json \
+    --journal /private/activation.jsonl
+```
+
+The command refuses without authentic inherited v1 shared capabilities and the
+original dedicated wrapper requester. It takes `policy.lock` EX/NB, upgrades
+that **same inherited coordination descriptor** to EX/NB, and takes
+`registry.lock` EX/NB. A second kernel reader, existing policy-lock holder,
+unexpected inherited maintenance-policy capability or any other record refuses.
+The only allowed registry record is the exact authenticated active activation
+lane itself; **zero other active, pending, retained or unknown records** are
+allowed. This is a genuine v1 lane, not an invented record or ignore list.
+
+Before transition, the command preserves original request/approval, their
+evidence, stage, installed policy files, manifest/campaign, suspension bytes,
+previous receipt and actual activation record under
+`apple-build-interlock-v1/activations-v2/<activation-id>/`. It preallocates and
+fsyncs a suspension-restoration candidate, fsyncs the archive's parent entries,
+publishes a pending receipt with compare-and-swap, and durably journals intent.
+An existing transaction directory is never reused or modified as a new attempt.
+
+It then revalidates full unit eligibility, all campaign reference closures,
+missing-owner absence, current owner/writer/registry coverage, protected roots,
+executing-bundle/legacy-route fingerprints, approvals/evidence, actual open
+target paths/inodes, process activity, deadline and lock identities. Slow
+probes and fsyncs are followed by renewed checks. Operation-specific approval
+evidence is checked **after** the final slow requester census; the suspension
+file is pinned so final no-follow metadata checks catch last-moment mutation.
+Only then is the exact marker unlinked relative to its verified parent FD.
+
+After fsyncing that directory, the same validations repeat with suspension
+required absent. A durable commit event and an active
+`activation-receipt-v2.json` are published; active-receipt candidate synchronization
+is followed by fresh approval/readiness checks before publication. Successful
+output is `state:"activated"` with
+`lane_finalization:"required-before-cleanup"`. **The enclosing frozen wrapper
+must also return successfully and cleanly finalize its own lane.** Do not infer
+successful whole-operation completion from child stdout alone.
+
+`apply-unit` requires the exact active receipt, its archive and commit journal,
+unchanged live request/approval and evidence, matching current file
+identities/bytes, exact unit/window/campaign, unexpired deadline, and no failure
+fence. These checks repeat per unlink. Marker absence alone never authorizes
+v2 cleanup. The activation lane must no longer be in the registry; its receipt
+alone cannot authorize cleanup while that genuine v1 record remains.
+
+### Interrupted or uncertain activation
+
+Any normal failure or cancellation returns failure, records
+`activation-stopped`, and creates an archive `FAILED` fence when possible.
+An incomplete/partial failure-fence entry also invalidates a receipt. If marker
+transition was attempted, rollback uses the pre-fsynced candidate and an atomic
+**no-overwrite** link publication: a concurrent replacement marker is preserved,
+never removed or overwritten. A restored marker has a new identity and
+invalidates the previous activation request.
+
+Rollback I/O failures are recorded explicitly as uncertain, not activated.
+The genuine frozen activation record remains after any failed command, worker
+crash or interrupted parent wrapper. Even a crash after active-receipt
+publication cannot bypass that v1 registry fence; old and new exclusive
+maintenance refuse it. The command never finalizes/clears that failure record,
+signals an owner, or fabricates a clean release.
+
+There is no automatic retry. Preserve the archive and partial journal. Actual
+owner relinquishment plus separately reviewed exact-record reconciliation is
+required for a retained lane. If suspension restoration itself failed, do not
+clear that record: it is still the crash barrier. Repair the storage/permission
+failure and obtain separately reviewed exact recovery while retaining the fence.
+After a safely resolved failure, a new current snapshot, new transaction ID and
+new human activation approval are required. Uncertain prior state cannot be
+made active by deleting a receipt, failure fence or retained record manually.
 
 Once separately authorized and active, the operator explicitly acquires a v1
 exclusive lease through the frozen shell client and invokes only:
@@ -805,13 +923,15 @@ lane's actual owner can end its lease.
 ```bash
 export GIT_CONFIG_PARAMETERS="'safe.bareRepository=all'"
 PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest \
+  tools.tests.test_apple_build_activation \
   tools.tests.test_apple_build_operations \
+  tools.tests.test_apple_build_operations_review \
   tools.tests.test_apple_build_cleanup \
   tools.tests.test_apple_maintenance_policy
 PYTHONDONTWRITEBYTECODE=1 bash tools/tests/test-apple-build-interlock.sh
 ```
 
-No Xcode/Swift build, package resolve, installation or device deployment is
+No Xcode/Swift build, package resolve, production installation or device deployment is
 needed for these maintenance-only changes. Fixtures use actual temporary Git
 repositories and historical registered worktrees, then really remove the owned
 synthetic worktrees. They do not create/adopt fake replacement owners. All
@@ -820,13 +940,22 @@ memory only** because ctime/birthtime cannot legitimately be backdated; there
 is no operational flag for lowering retention. Host-wide build activity and
 lsof observations are supplied by fixture seams, never used as fake production
 success. Other checks, real kernel locks, frozen lease authentication,
-publications, journals, fsyncs and unlinks run normally.
+publications, journals, fsyncs and unlinks run normally. Synthetic activation
+now invokes the guarded operation through the **actual frozen shell wrapper**;
+tests no longer manually remove the fixture marker to enable deletion.
+Crash fixtures terminate only their owned worker or interrupt its exact parent
+wrapper before transition, after transition and after receipt publication.
+They verify retained real lease fences, nonblocking upgrades and refusal on
+policy/registry/coordination contention, no-overwrite rollback, I/O failure,
+independent activation-evidence withdrawal and refusal to replay an attempt.
 
 The scale fixture nominates **328 tiny compiler files in 41 stores**, preserves
 one log per store, and executes **three independently approved units/windows**.
 It removes exactly **369 entries** (files plus compiler-only directories), with
-**785 real companion checks**. Observed runs took **87.081–103.103 seconds**,
-excluding fixture construction. This deliberately measures the actual per-unlink
+**785 real companion checks**. The full guarded-activation lifecycle took
+**144.348 seconds**, excluding fixture construction (the earlier
+pre-activation version measured 87.081–103.103 seconds).
+This deliberately measures the actual per-unlink
 validation path rather than replacing the guard with a no-op.
 
 It is not a 155,017-file throughput claim. The existing repeated full evidence,
@@ -837,3 +966,8 @@ operational; it does not remove per-unlink safety costs or promise completion
 inside a two-hour window. Start with a separately approved small unit and stop
 on its deadline; never infer authorization for another unit from elapsed time,
 free-space pressure, or an incomplete previous attempt.
+
+The combined activation, operations, independent-review regression, cleanup and
+companion suites passed **172 tests** in **388.720 seconds**. This includes
+45 focused activation tests. The unchanged frozen whole-lane shell suite also
+passed. These are synthetic results, not a production rollout or activation.
