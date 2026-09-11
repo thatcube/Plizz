@@ -22,6 +22,10 @@ public struct PlaybackSettings: Codable, Equatable, Sendable {
     /// re-establish context. `.five` by default; `.off` restores exact resume.
     public var resumeRewindInterval: ResumeRewindInterval
 
+    /// iOS only. Keep video audio playing on lock/app background without PiP.
+    /// Opt-in so existing profiles retain pause-on-lock behavior.
+    public var backgroundAudio: Bool
+
     /// Whether finishing/resuming/marking a title converges your watch state on
     /// **every** server that holds it (the default), or only the server you
     /// actually watched on. ON (default) preserves today's cross-server fan-out;
@@ -127,7 +131,8 @@ public struct PlaybackSettings: Codable, Equatable, Sendable {
         rememberAudioTrackPerSeries: Bool = true,
         rememberSubtitleTrackPerSeries: Bool = true,
         fadeOnDynamicRangeChange: Bool = true,
-        fadeOnFrameRateChange: Bool = true
+        fadeOnFrameRateChange: Bool = true,
+        backgroundAudio: Bool = false
     ) {
         self.skipIntros = skipIntros
         self.skipBackwardInterval = skipBackwardInterval
@@ -143,6 +148,7 @@ public struct PlaybackSettings: Codable, Equatable, Sendable {
         self.rememberSubtitleTrackPerSeries = rememberSubtitleTrackPerSeries
         self.fadeOnDynamicRangeChange = fadeOnDynamicRangeChange
         self.fadeOnFrameRateChange = fadeOnFrameRateChange
+        self.backgroundAudio = backgroundAudio
     }
 
     public static let `default` = PlaybackSettings()
@@ -161,6 +167,7 @@ public extension PlaybackSettings {
         case skipBackwardInterval
         case skipForwardInterval
         case resumeRewindInterval
+        case backgroundAudio
         case syncWatchAcrossServers
         case seekWithoutPausing
         case autoPlayNextEpisode
@@ -209,6 +216,7 @@ public extension PlaybackSettings {
         self.resumeRewindInterval =
             (try? container.decodeIfPresent(ResumeRewindInterval.self, forKey: .resumeRewindInterval))
             .flatMap { $0 } ?? defaults.resumeRewindInterval
+        self.backgroundAudio = try container.decodeIfPresent(Bool.self, forKey: .backgroundAudio) ?? false
         self.syncWatchAcrossServers =
             (try? container.decodeIfPresent(Bool.self, forKey: .syncWatchAcrossServers))
             .flatMap { $0 } ?? defaults.syncWatchAcrossServers
@@ -262,6 +270,7 @@ public extension PlaybackSettings {
         try container.encode(skipBackwardInterval, forKey: .skipBackwardInterval)
         try container.encode(skipForwardInterval, forKey: .skipForwardInterval)
         try container.encode(resumeRewindInterval, forKey: .resumeRewindInterval)
+        try container.encode(backgroundAudio, forKey: .backgroundAudio)
         try container.encode(syncWatchAcrossServers, forKey: .syncWatchAcrossServers)
         try container.encode(seekWithoutPausing, forKey: .seekWithoutPausing)
         try container.encode(autoPlayNextEpisode, forKey: .autoPlayNextEpisode)

@@ -1,6 +1,8 @@
 #if canImport(AVFoundation)
 import XCTest
 import CoreModels
+import CoreUI
+import MediaPlayer
 @testable import FeaturePlayback
 #if canImport(UIKit)
 import UIKit
@@ -8,6 +10,95 @@ import UIKit
 
 @MainActor
 final class PlayerViewModelEOFTests: XCTestCase {
+    func testNowPlayingFollowsPauseSpeedAndEndsBeforeTransportDrain() async {
+        let publisher = VideoNowPlayingPublisherSpy()
+        let (viewModel, engine, _) = makeViewModel(nowPlayingPublisher: publisher)
+        await viewModel.load()
+        XCTAssertTrue(publisher.isActive)
+        XCTAssertEqual(publisher.info[MPMediaItemPropertyTitle] as? String, "Movie")
+        engine.preventsDisplaySleep = true
+        viewModel.setPlaybackSpeed(1.5)
+        XCTAssertEqual(publisher.info[MPNowPlayingInfoPropertyPlaybackRate] as? Double, 1.5)
+        engine.maximumPlaybackSpeed = 2
+        viewModel.setPlaybackSpeed(4)
+        XCTAssertEqual(viewModel.controls.playbackSpeed, 2)
+        XCTAssertEqual(publisher.info[MPNowPlayingInfoPropertyPlaybackRate] as? Double, 2)
+        publisher.command?(.pause)
+        XCTAssertTrue(engine.isPaused)
+        XCTAssertEqual(publisher.info[MPNowPlayingInfoPropertyPlaybackRate] as? Double, 0)
+
+        let drain = PreCommitYieldGate()
+        engine.drainGate = drain
+        let stop = Task { await viewModel.stop() }
+        await waitForGate(drain, entries: 1)
+        XCTAssertFalse(publisher.isActive)
+        XCTAssertTrue(publisher.info.isEmpty)
+        drain.releaseNext()
+        await stop.value
+    }
+
+    func testNaturalEndClearsNowPlayingBeforeShellDismisses() async {
+        let publisher = VideoNowPlayingPublisherSpy()
+        let (viewModel, engine, _) = makeViewModel(nowPlayingPublisher: publisher)
+        await viewModel.load()
+        engine.onEnded?()
+        XCTAssertTrue(viewModel.shouldDismiss)
+        XCTAssertFalse(publisher.isActive)
+        await viewModel.stop()
+    }
+
+    func testBackgroundAudioPreferenceReachesEngineAndPreservesPlatformDefault() async {
+        let publisher = VideoNowPlayingPublisherSpy()
+        let (viewModel, engine, _) = makeViewModel(
+            playbackSettings: .init(backgroundAudio: true), nowPlayingPublisher: publisher
+        )
+        await viewModel.load()
+        XCTAssertTrue(engine.backgroundAudioEnabled)
+        viewModel.didEnterBackground()
+        #if os(iOS)
+        XCTAssertFalse(engine.isPaused)
+        XCTAssertTrue(publisher.transport.canPlay)
+        #else
+        XCTAssertTrue(engine.isPaused, "tvOS never opts into audio-only background video")
+        XCTAssertFalse(publisher.transport.canPlay)
+        #endif
+        await viewModel.stop()
+    }
+
+    func testDefaultBackgroundPauseCannotBeUndoneBySystemPlay() async {
+        let publisher = VideoNowPlayingPublisherSpy()
+        let (viewModel, engine, _) = makeViewModel(nowPlayingPublisher: publisher)
+        await viewModel.load()
+        XCTAssertFalse(engine.backgroundAudioEnabled)
+        viewModel.didEnterBackground()
+        publisher.command?(.play)
+        XCTAssertTrue(engine.isPaused)
+        XCTAssertFalse(publisher.transport.canPlay)
+        await viewModel.resumeAfterBackground()
+        publisher.command?(.play)
+        XCTAssertFalse(engine.isPaused)
+        await viewModel.stop()
+    }
+
+    #if os(iOS)
+    func testSystemResumeRebuildsThePausedBackgroundPipelineWhenEnabled() async {
+        let publisher = VideoNowPlayingPublisherSpy()
+        let (viewModel, engine, _) = makeViewModel(
+            playbackSettings: .init(backgroundAudio: true), nowPlayingPublisher: publisher
+        )
+        await viewModel.load()
+        viewModel.didEnterBackground()
+        publisher.command?(.pause)
+        XCTAssertTrue(engine.isPaused)
+        XCTAssertFalse(publisher.transport.canSeek, "A torn-down pipeline cannot accept a seek")
+        publisher.command?(.play)
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(engine.reloadAfterForegroundCount, 1)
+        XCTAssertFalse(engine.isPaused)
+        await viewModel.stop()
+    }
+    #endif
+
     func testStopAfterNaturalEndStillWritesFinalFurthestPosition() async {
         let item = MediaItem(id: "movie", title: "Movie", kind: .movie, runtime: 120)
         let request = PlaybackRequest(
@@ -921,7 +1012,10 @@ final class PlayerViewModelEOFTests: XCTestCase {
         return false
     }
 
-    private func makeViewModel() -> (
+    private func makeViewModel(
+        playbackSettings: PlaybackSettings = .default,
+        nowPlayingPublisher: (any NowPlayingPublishing)? = nil
+    ) -> (
         PlayerViewModel,
         SpyVideoEngine,
         RecordingPlaybackProvider
@@ -936,7 +1030,9 @@ final class PlayerViewModelEOFTests: XCTestCase {
         let viewModel = PlayerViewModel(
             provider: provider,
             itemID: item.id,
-            engineFactory: EngineFactory(makeNative: { _ in engine })
+            playbackSettings: playbackSettings,
+            engineFactory: EngineFactory(makeNative: { _ in engine }),
+            nowPlayingPublisher: nowPlayingPublisher
         )
         return (viewModel, engine, provider)
     }
@@ -1108,6 +1204,9 @@ private actor NeighborResolverGate {
 
 @MainActor
 private final class SpyVideoEngine: VideoEngine {
+    var maximumPlaybackSpeed = 4.0
+    var backgroundAudioEnabled = false
+    func setBackgroundAudioEnabled(_ enabled: Bool) { backgroundAudioEnabled = enabled }
     let displayName = "spy"
     var status: VideoEngineStatus = .idle
     var isPaused = false

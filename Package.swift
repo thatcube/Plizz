@@ -888,11 +888,11 @@ let package = Package(
         ),
         .testTarget(
             name: "FeatureMusicTests",
-            dependencies: ["FeatureMusic", "CoreModels"]
+            dependencies: ["FeatureMusic", "CoreModels", "CoreUI"]
         ),
         .testTarget(
             name: "FeaturePlaybackTests",
-            dependencies: ["FeaturePlayback", "CoreModels"]
+            dependencies: ["FeaturePlayback", "CoreModels", "CoreUI"]
         ),
         .testTarget(
             name: "ProviderShareTests",

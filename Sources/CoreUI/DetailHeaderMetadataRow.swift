@@ -1,8 +1,7 @@
 import SwiftUI
 import CoreModels
 
-/// One line at every width. Detailed formats yield to an explicit disclosure,
-/// never a smaller font or a second row.
+/// The default stays on one line; opting into more than two ratings allows wrapping.
 public struct DetailHeaderMetadataRow: View {
     private let ratings: [ExternalRating]
     private let badges: [MediaBadge]
@@ -35,26 +34,39 @@ public struct DetailHeaderMetadataRow: View {
                 HStack(spacing: 12) {
                     ForEach(ratings) { RatingBadge(rating: $0) }
                     if !badges.isEmpty {
-                        Button { showsDetails = true } label: {
-                            Label("Formats", systemImage: "info.circle")
-                                .font(.subheadline.weight(.medium))
-                        }
+                        formatsDisclosure
                     }
                 }
                 .fixedSize(horizontal: true, vertical: true)
 
-                Button { showsDetails = true } label: {
-                    Text(detailsTitle)
-                        .font(.subheadline.weight(.medium))
-                }
-                .fixedSize(horizontal: true, vertical: true)
+                if ratings.count > 2 {
+                    WrappingHStackLayout(
+                        alignment: .center,
+                        spacing: 12,
+                        lineSpacing: 8,
+                        balancesLastRow: true
+                    ) {
+                        ForEach(ratings) { RatingBadge(rating: $0) }
+                        if !badges.isEmpty {
+                            formatsDisclosure
+                        }
+                    }
+                } else {
+                    ViewThatFits(in: .horizontal) {
+                        Button { showsDetails = true } label: {
+                            Text(detailsTitle)
+                                .font(.subheadline.weight(.medium))
+                        }
+                        .fixedSize(horizontal: true, vertical: true)
 
-                Button { showsDetails = true } label: {
-                    Image(systemName: "info.circle")
-                        .font(.body)
-                        .frame(width: 44, height: 44)
+                        Button { showsDetails = true } label: {
+                            Image(systemName: "info.circle")
+                                .font(.body)
+                                .frame(width: 44, height: 44)
+                        }
+                        .accessibilityLabel(Text(detailsTitle))
+                    }
                 }
-                .accessibilityLabel(Text(detailsTitle))
             }
             .lineLimit(1)
             .buttonStyle(.plain)
@@ -91,6 +103,13 @@ public struct DetailHeaderMetadataRow: View {
                     }
                 }
             }
+        }
+    }
+
+    private var formatsDisclosure: some View {
+        Button { showsDetails = true } label: {
+            Label("Formats", systemImage: "info.circle")
+                .font(.subheadline.weight(.medium))
         }
     }
 

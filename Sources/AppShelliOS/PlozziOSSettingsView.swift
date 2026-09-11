@@ -2023,13 +2023,18 @@ private struct PlozziOSDetailPageSettingsView: View {
         List {
             SettingsSectionGroup("Header ratings") {
                 Toggle("Show ratings in header", isOn: $detailPage.settings.showsHeaderRatings)
+                Picker("Maximum ratings shown", selection: $detailPage.settings.maxHeaderRatings) {
+                    ForEach(Array(DetailPageSettings.headerRatingCountRange), id: \.self) { count in
+                        Text(count, format: .number).tag(count)
+                    }
+                }
                 NavigationLink {
                     PlozziOSDetailRatingPriorityView(model: detailPage)
                 } label: {
                     Text("Rating sources & order")
                 }
             } footer: {
-                Text("The compact detail header shows up to two available ratings in your preferred order. Your spoiler settings still apply. Other scores remain in the full information section.")
+                Text("This limits how many scores appear in the header, not how many sources you can enable. Missing scores are skipped in your source order. More than two scores can wrap onto extra lines. Spoiler settings still apply.")
             }
             SettingsSectionGroup("Behind the hero") {
                 Picker(
@@ -2095,9 +2100,10 @@ private struct PlozziOSDetailRatingPriorityView: View {
                     model.settings.ratingSourceOrder = order
                 }
             } footer: {
-                Text("Enable the sources you want, then tap Edit to arrange them. The first two with scores for the title are shown. AniList is used only for anime.")
+                Text("Enable as many sources as you want, then tap Edit to set their priority. Not every title has every score. The header shows the first available enabled sources, up to your chosen maximum. AniList is used only for anime.")
             }
         }
+        .toggleStyle(SettingsTouchSwitchToggleStyle())
         .settingsPageSurface()
         .navigationTitle("Rating sources & order")
         .toolbar { EditButton() }
@@ -2141,6 +2147,14 @@ private struct PlozziOSPlaybackSettingsView: View {
             }
 
             SettingsSectionGroup("Playback") {
+                Toggle(isOn: $model.settings.backgroundAudio) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Background Audio")
+                        Text("Keep video audio playing when you lock your device or leave Plozz.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Toggle("Seek without pausing", isOn: $model.settings.seekWithoutPausing)
                 // Autoplay first: whether the next episode starts at all, then
                 // whether the card announces it. Independent switches.

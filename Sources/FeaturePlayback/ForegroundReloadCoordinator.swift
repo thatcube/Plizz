@@ -107,6 +107,7 @@ final class ForegroundReloadCoordinator {
 
         pendingForegroundReloadGeneration = nil
         let recoveringEngine = host.reloadEngine
+        guard recoveringEngine.needsBackgroundReload else { return }
         let recoveringEngineToken = host.reloadEngineToken
         isRecovering = true
         defer {

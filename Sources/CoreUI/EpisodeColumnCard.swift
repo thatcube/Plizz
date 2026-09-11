@@ -227,16 +227,7 @@ public struct EpisodeColumnCard: View, Equatable {
     /// vertical poster as a last resort — a cropped poster still identifies the
     /// show, and a blank card does not.
     private var placeholderArtworkReferences: [ArtworkReference] {
-        // Only the explicitly series-scoped local selection. Going through
-        // `artworkReferences(for: .seriesPoster)` would append that placement's
-        // legacy ladder, which ends in the episode's own `posterURL`.
-        let localSeriesArt = item.artworkSelections
-            .first(where: { $0.placement == .seriesPoster })?
-            .references ?? []
-        let remote = [item.fallbackArtworkURL, item.seriesPosterURL]
-            .compactMap { $0.map(ArtworkReference.remote) }
-        var seen = Set<ArtworkReference>()
-        return (remote + localSeriesArt).filter { seen.insert($0).inserted }
+        item.seriesArtworkReferences()
     }
 
     /// Last-resort series art from the metadata router. Asks only for a

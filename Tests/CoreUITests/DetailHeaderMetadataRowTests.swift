@@ -87,5 +87,40 @@ final class DetailHeaderMetadataRowTests: XCTestCase {
         let plainText = size(of: Text("4K · DV · HDR10 · Atmos").font(.subheadline), width: 393)
         XCTAssertGreaterThan(actual.height, plainText.height, "Render the badge components, not text substitutions.")
     }
+
+    func testExtraRatingsWrapInsteadOfDisappearingBehindTheDetailsButton() {
+        let extraRatings = ratings + [
+            .init(source: .imdb, value: 8.6, scale: .outOfTen),
+            .init(source: .tmdb, value: 8.3, scale: .outOfTen),
+            .init(source: .metacritic, value: 84, scale: .percent)
+        ]
+        for width in [CGFloat(180), 250] {
+            for textSize in [DynamicTypeSize.large, .xxxLarge] {
+                let expected = size(of: WrappingHStackLayout(
+                    alignment: .center, spacing: 12, lineSpacing: 8, balancesLastRow: true
+                ) {
+                    ForEach(extraRatings) { RatingBadge(rating: $0) }
+                    Label("Formats", systemImage: "info.circle").font(.subheadline.weight(.medium))
+                }.lineLimit(1), width: width, textSize: textSize)
+                let actual = size(
+                    of: DetailHeaderMetadataRow(ratings: extraRatings, badges: badges),
+                    width: width, textSize: textSize
+                )
+                let singleRating = size(of: RatingBadge(rating: extraRatings[0]), width: width, textSize: textSize)
+                XCTAssertGreaterThan(actual.height, singleRating.height)
+                XCTAssertEqual(actual.height, expected.height, accuracy: 1)
+                XCTAssertLessThanOrEqual(actual.width, width + 0.5)
+            }
+        }
+    }
+
+    func testExtraRatingsRemainInlineWhenTheyFit() {
+        let extraRatings = ratings + [.init(source: .imdb, value: 8.6, scale: .outOfTen)]
+        let expected = size(of: HStack(spacing: 12) {
+            ForEach(extraRatings) { RatingBadge(rating: $0) }
+        }.fixedSize(), width: 1_000)
+        let actual = size(of: DetailHeaderMetadataRow(ratings: extraRatings, badges: []), width: 1_000)
+        XCTAssertEqual(actual.height, expected.height, accuracy: 1)
+    }
 }
 #endif

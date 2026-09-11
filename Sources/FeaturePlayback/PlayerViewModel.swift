@@ -4,6 +4,7 @@ import AVFoundation
 import Observation
 import CoreModels
 import CoreNetworking
+import CoreUI
 import TraktService
 import MetadataKit
 #if canImport(UIKit)
@@ -45,7 +46,12 @@ public final class PlayerViewModel {
         case failed(AppError)
     }
 
-    public private(set) var phase: Phase = .loading
+    public private(set) var phase: Phase = .loading {
+        didSet {
+            if case .failed = phase { nowPlaying?.end() }
+            else { nowPlaying?.refresh() }
+        }
+    }
 
     /// A fully-resolved, engine-routed playback ready to be adopted verbatim —
     /// no `playbackInfo` re-resolve needed. Produced by the next-episode prefetch
@@ -304,6 +310,9 @@ public final class PlayerViewModel {
     public private(set) var diagnosticsToken = UUID()
 
     private var request: PlaybackRequest?
+    @ObservationIgnored private var nowPlaying: VideoNowPlayingCoordinator?
+    @ObservationIgnored private var systemResumeTask: Task<Void, Never>?
+    @ObservationIgnored private var isInBackground = false
     /// Owns manual + automatic remote-subtitle acquisition (search / download /
     /// post-download poll). Set at the end of `init` (needs `self` as its host).
     private var subtitleAcquisition: RemoteSubtitleAcquisition!
@@ -464,7 +473,8 @@ public final class PlayerViewModel {
         onPlaybackStarted: @escaping @Sendable () -> Void = {},
         onPlaybackCheckpoint: @escaping @Sendable (_ position: TimeInterval, _ watchedPercent: Double) -> Void = { _, _ in },
         checkpointInterval: TimeInterval = 60,
-        adoptedResolved: PrefetchedPlayback? = nil
+        adoptedResolved: PrefetchedPlayback? = nil,
+        nowPlayingPublisher: (any NowPlayingPublishing)? = nil
     ) {
         self.provider = provider
         self.offlinePlaybackResolver = offlinePlaybackResolver
@@ -552,6 +562,9 @@ public final class PlayerViewModel {
             engineFactory: engineFactory,
             adopted: adoptedResolved,
             initialStyle: style
+        )
+        self.nowPlaying = VideoNowPlayingCoordinator(
+            host: self, publisher: nowPlayingPublisher ?? NowPlayingSession()
         )
         configureEngineCallbacks()
 
@@ -690,6 +703,7 @@ public final class PlayerViewModel {
     private func handlePlaybackEnded() {
         PlaybackTrace.note("handlePlaybackEnded curr=\(String(format: "%.2f", engine.currentTime)) furthest=\(String(format: "%.2f", engine.furthestObservedPosition)) dur=\(String(format: "%.2f", engine.duration)) hasNext=\(nextEpisode != nil) autoPlay=\(playbackSettings.autoPlayNextEpisode) isSeeking=\(controls.isSeeking) isScrubbing=\(controls.isScrubbing) intendsPlayback=\(intendsPlayback)")
         didReachNaturalEnd = true
+        nowPlaying?.end()
         if let next = nextEpisode, playbackSettings.autoPlayNextEpisode {
             pendingNextEpisode = next
         } else {
@@ -714,6 +728,7 @@ public final class PlayerViewModel {
         nextEpisode = next
         controls.infoCard.hasPreviousEpisode = prev != nil
         controls.infoCard.hasNextEpisode = next != nil
+        nowPlaying?.refresh()
         nextEpisodeCoordinator.updateUpNextCard()
         // Eagerly prefetch the next episode's resolved stream when the provider's
         // `playbackInfo` is idempotent (Plex, SMB share) — safe to resolve the
@@ -1214,6 +1229,12 @@ public final class PlayerViewModel {
         // error still triggers the fallback chain instead of spinning forever.
         engineHandoff.armPlaybackWatchdog(startPosition: startPosition)
         let loadStart = Date()
+        engine.setBackgroundAudioEnabled(playbackSettings.backgroundAudio)
+        let titles = Self.titleLines(for: request.item)
+        nowPlaying?.begin(
+            item: request.item, title: titles.primary, subtitle: titles.secondary,
+            position: startPosition
+        )
         await engine.load(request: request, startPosition: startPosition)
         guard dynamicRangeLoadGeneration == rangeLoadGeneration, !didStop else {
             return
@@ -1222,6 +1243,16 @@ public final class PlayerViewModel {
             applyEngineProbedSourceFacts(facts)
         }
         HandoffDiagnostics.emit("engine.load returned engine=\(engineKind.rawValue) took=\(HandoffDiagnostics.ms(loadStart))")
+        // Apply the actual supported speed before reporting ready/Now Playing,
+        // not after an awaited provider report. System elapsed time extrapolates
+        // from this rate, so advertising a rate the engine clamps would drift.
+        controls.engineCapabilities = engine.capabilities
+        if engine.capabilities.contains(.playbackSpeed) {
+            controls.playbackSpeed = min(controls.playbackSpeed, engine.maximumPlaybackSpeed)
+            engine.setPlaybackSpeed(controls.playbackSpeed)
+        } else {
+            controls.playbackSpeed = 1.0
+        }
         // A background transition or user transport command can arrive while
         // load() is suspended. Reconcile that current intent before publishing
         // ready or reporting start so the engine and provider agree.
@@ -1263,15 +1294,6 @@ public final class PlayerViewModel {
         // engine has already applied the user's default subtitle selection).
         subtitleController.loadTrackOptions()
 
-        // Reflect what the new engine supports + apply persisted/initial tunable
-        // state through it, so the options menu opens with accurate rows and the
-        // user's last playback speed is honoured from frame 1.
-        controls.engineCapabilities = engine.capabilities
-        if engine.capabilities.contains(.playbackSpeed) {
-            engine.setPlaybackSpeed(controls.playbackSpeed)
-        } else {
-            controls.playbackSpeed = 1.0
-        }
         // Delays + dialog enhance reset on every load: they're per-stream and
         // carrying a previous file's −500ms offset onto a fresh one is awful.
         controls.audioDelaySeconds = 0
@@ -1406,7 +1428,8 @@ public final class PlayerViewModel {
         // PiP window the instant it became useful and stopped an AirPlay stream
         // the moment the phone was put down. The checkpoint above still runs, so
         // resume position stays correct either way.
-        if pictureInPictureEngine?.continuesPlaybackInBackground == true {
+        if (playbackSettings.backgroundAudio && phase == .ready)
+            || pictureInPictureEngine?.continuesPlaybackInBackground == true {
             return
         }
         #endif
@@ -1424,8 +1447,10 @@ public final class PlayerViewModel {
     /// this transition, so a later `.active` phase must rebuild rather than call
     /// `play()` on the empty player shell.
     public func didEnterBackground() {
+        isInBackground = true
         suspendForBackground()
         foregroundReload.markEnteredBackground()
+        nowPlaying?.refresh()
     }
 
     /// Restores an engine after a real background round-trip while preserving the
@@ -1434,7 +1459,9 @@ public final class PlayerViewModel {
     /// engine seam at their existing position and session URL. Driven by
     /// ``ForegroundReloadCoordinator``.
     public func resumeAfterBackground() async {
+        isInBackground = false
         await foregroundReload.resume()
+        nowPlaying?.refresh()
     }
 
     // MARK: - Transport
@@ -1444,21 +1471,24 @@ public final class PlayerViewModel {
     /// coalescing / resume-confirm semantics.
     public func requestSeek(to seconds: TimeInterval) {
         seekCoordinator.requestSeek(to: seconds)
+        nowPlaying?.refresh()
     }
 
     /// Legacy direct-seek path retained for callers (e.g. resume on load) that
     /// want a one-shot await. New transport input goes through `requestSeek`.
     public func seek(to seconds: TimeInterval) async {
         await seekCoordinator.seek(to: seconds)
+        nowPlaying?.refresh()
     }
 
     // MARK: Live tunables (engine fan-out)
 
     public func setPlaybackSpeed(_ rate: Double) {
-        let clamped = max(0.25, min(4.0, rate))
+        let clamped = max(0.25, min(engine.maximumPlaybackSpeed, rate))
         controls.playbackSpeed = clamped
         engine.setPlaybackSpeed(clamped)
         preferencesStore.savePlaybackSpeed(clamped)
+        nowPlaying?.refresh()
     }
 
     public func setAudioDelay(_ seconds: TimeInterval) {
@@ -1518,6 +1548,7 @@ public final class PlayerViewModel {
     }
 
     public func setPaused(_ paused: Bool) {
+        guard !didStop, !didReachNaturalEnd else { return }
         // This is the one funnel for genuine play/pause intent — record it before
         // anything else so every resume/transport decision has a truthful signal
         // that the engine's transient post-seek pause can't corrupt.
@@ -1533,6 +1564,13 @@ public final class PlayerViewModel {
         }
         controls.isPaused = paused
         progressReporter.reportStateChange(paused: paused)
+        if !paused { nowPlaying?.activate() }
+        nowPlaying?.refresh()
+        #if os(iOS)
+        if paused, isInBackground {
+            foregroundReload.markEnteredBackground()
+        }
+        #endif
     }
 
     /// Guards against a double teardown: `PlayerView` may call `stop()` itself on
@@ -1563,6 +1601,9 @@ public final class PlayerViewModel {
         // shows happening on iOS.
         PlaybackTrace.note("stop() teardown curr=\(String(format: "%.2f", engine.currentTime)) shouldDismiss=\(shouldDismiss) pendingNext=\(pendingNextEpisode != nil) isSeeking=\(controls.isSeeking)")
         didStop = true
+        nowPlaying?.end()
+        systemResumeTask?.cancel()
+        systemResumeTask = nil
         dynamicRangeLoadGeneration &+= 1
         engine.onProbedSourceFactsChanged = nil
         prefetchTask?.cancel()
@@ -2080,10 +2121,62 @@ extension PlayerViewModel: ForegroundReloadCoordinatorHost {
     func reloadReconcilePaused(_ paused: Bool) {
         controls.isPaused = paused
         controls.intendsPause = paused
+        nowPlaying?.refresh()
     }
 
     func reloadFail(_ error: AppError) {
         phase = .failed(error)
+    }
+}
+
+// MARK: - VideoNowPlayingHost
+
+extension PlayerViewModel: VideoNowPlayingHost {
+    var nowPlayingPlayer: AVPlayer? { engine.nowPlayingPlayer }
+    var nowPlayingTime: TimeInterval { engine.currentTime }
+    var nowPlayingDuration: TimeInterval { engine.duration }
+    var nowPlayingSpeed: Double { controls.playbackSpeed }
+    var nowPlayingPaused: Bool { !intendsPlayback }
+    var nowPlayingAdvancing: Bool { engine.preventsDisplaySleep }
+    var nowPlayingReady: Bool {
+        phase == .ready && !didStop && !isRecoveringAfterForeground
+            && (!isInBackground || !engine.needsBackgroundReload)
+    }
+    var nowPlayingSeeking: Bool { controls.isSeeking || controls.isScrubbing }
+    var nowPlayingPendingSeek: TimeInterval? { controls.pendingSeekTarget }
+    var nowPlayingPrevious: MediaItem? { previousEpisode }
+    var nowPlayingNext: MediaItem? { nextEpisode }
+    var nowPlayingBackwardInterval: TimeInterval { playbackSettings.skipBackwardInterval.seconds }
+    var nowPlayingForwardInterval: TimeInterval { playbackSettings.skipForwardInterval.seconds }
+    var nowPlayingCanPlay: Bool {
+        #if os(iOS)
+        return !isInBackground || playbackSettings.backgroundAudio
+            || pictureInPictureEngine?.continuesPlaybackInBackground == true
+        #else
+        return !isInBackground
+        #endif
+    }
+
+    func nowPlayingSetPaused(_ paused: Bool) {
+        setPaused(paused)
+        #if os(iOS)
+        if !paused, isInBackground, systemResumeTask == nil {
+            systemResumeTask = Task { [weak self] in
+                guard let self else { return }
+                await foregroundReload.resume()
+                systemResumeTask = nil
+                nowPlaying?.refresh()
+            }
+        }
+        #endif
+    }
+
+    func nowPlayingSeek(to seconds: TimeInterval) { requestSeek(to: seconds) }
+    func nowPlayingPlayEpisode(_ item: MediaItem) { playEpisode(item) }
+    func nowPlayingStop() {
+        nowPlaying?.end()
+        setPaused(true)
+        shouldDismiss = true
     }
 }
 

@@ -4,9 +4,13 @@ import Observation
 /// The compact detail header is a preview; complete ratings remain in title information.
 public struct DetailPageSettings: Codable, Equatable, Sendable {
     public var showsHeaderRatings: Bool
+    public var maxHeaderRatings: Int {
+        didSet { maxHeaderRatings = Self.boundedRatingCount(maxHeaderRatings) }
+    }
     public var ratingSourceOrder: [RatingSource]
     public var enabledRatingSources: Set<RatingSource>
 
+    public static let headerRatingCountRange = 1...RatingSource.allCases.count
     public static let defaultRatingOrder: [RatingSource] = [
         .rottenTomatoesAudience, .rottenTomatoes, .imdb, .anilist, .tmdb,
         .metacritic, .letterboxd, .community, .critic
@@ -15,17 +19,39 @@ public struct DetailPageSettings: Codable, Equatable, Sendable {
 
     public init(
         showsHeaderRatings: Bool = true,
+        maxHeaderRatings: Int = 2,
         ratingSourceOrder: [RatingSource] = defaultRatingOrder,
         enabledRatingSources: Set<RatingSource> = Set(RatingSource.allCases)
     ) {
         self.showsHeaderRatings = showsHeaderRatings
+        self.maxHeaderRatings = Self.boundedRatingCount(maxHeaderRatings)
         self.ratingSourceOrder = ratingSourceOrder
         self.enabledRatingSources = enabledRatingSources
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case showsHeaderRatings, maxHeaderRatings, ratingSourceOrder, enabledRatingSources
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            showsHeaderRatings: try values.decodeIfPresent(Bool.self, forKey: .showsHeaderRatings) ?? true,
+            maxHeaderRatings: try values.decodeIfPresent(Int.self, forKey: .maxHeaderRatings) ?? 2,
+            ratingSourceOrder: try values.decodeIfPresent([RatingSource].self, forKey: .ratingSourceOrder)
+                ?? Self.defaultRatingOrder,
+            enabledRatingSources: try values.decodeIfPresent(Set<RatingSource>.self, forKey: .enabledRatingSources)
+                ?? Set(RatingSource.allCases)
+        )
     }
 
     public var orderedSources: [RatingSource] {
         var seen: Set<RatingSource> = []
         return (ratingSourceOrder + Self.defaultRatingOrder).filter { seen.insert($0).inserted }
+    }
+
+    private static func boundedRatingCount(_ value: Int) -> Int {
+        min(max(value, headerRatingCountRange.lowerBound), headerRatingCountRange.upperBound)
     }
 
     public func headerRatings(
@@ -38,7 +64,7 @@ public struct DetailPageSettings: Codable, Equatable, Sendable {
             guard enabledRatingSources.contains(source),
                   !source.isAnimeOnly || isAnime else { return nil }
             return available.first { $0.source == source }
-        }.prefix(2))
+        }.prefix(maxHeaderRatings))
     }
 }
 
@@ -62,6 +88,7 @@ public final class DetailPageSettingsStore: DetailPageSettingsStoring, @unchecke
         guard let values = defaults.dictionary(forKey: key) else { return .default }
         return DetailPageSettings(
             showsHeaderRatings: values["showsHeaderRatings"] as? Bool ?? true,
+            maxHeaderRatings: values["maxHeaderRatings"] as? Int ?? 2,
             ratingSourceOrder: (values["ratingSourceOrder"] as? [String])?
                 .compactMap(RatingSource.init(rawValue:)) ?? DetailPageSettings.defaultRatingOrder,
             enabledRatingSources: (values["enabledRatingSources"] as? [String])
@@ -73,6 +100,7 @@ public final class DetailPageSettingsStore: DetailPageSettingsStoring, @unchecke
     public func save(_ settings: DetailPageSettings) {
         defaults.set([
             "showsHeaderRatings": settings.showsHeaderRatings,
+            "maxHeaderRatings": settings.maxHeaderRatings,
             "ratingSourceOrder": settings.orderedSources.map(\.rawValue),
             "enabledRatingSources": settings.enabledRatingSources.map(\.rawValue).sorted()
         ], forKey: key)
