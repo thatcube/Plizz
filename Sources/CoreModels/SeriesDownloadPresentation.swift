@@ -7,6 +7,11 @@ public struct SeriesDownloadPresentation: Equatable, Sendable {
 
     public var isVisible: Bool { hasLibraryDownloads || canRequestSeasons }
 
+    /// Request-only shows need a primary action, not just the toolbar's season manager.
+    public func showsHeroRequest(hasPlayAction: Bool) -> Bool {
+        canRequestSeasons && !hasLibraryDownloads && !hasPlayAction
+    }
+
     public init(
         item: MediaItem,
         children: [MediaItem],

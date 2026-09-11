@@ -14,15 +14,18 @@ public struct WrappingHStackLayout: Layout {
     public var alignment: RowAlignment
     public var spacing: CGFloat
     public var lineSpacing: CGFloat
+    public var balancesLastRow: Bool
 
     public init(
         alignment: RowAlignment = .leading,
         spacing: CGFloat = 12,
-        lineSpacing: CGFloat = 12
+        lineSpacing: CGFloat = 12,
+        balancesLastRow: Bool = false
     ) {
         self.alignment = alignment
         self.spacing = spacing
         self.lineSpacing = lineSpacing
+        self.balancesLastRow = balancesLastRow
     }
 
     public func sizeThatFits(
@@ -131,6 +134,29 @@ public struct WrappingHStackLayout: Layout {
                     width: width,
                     height: height
                 )
+            )
+        }
+        guard balancesLastRow, rows.count > 1 else { return rows }
+        let last = rows[rows.count - 1]
+        let previous = rows[rows.count - 2]
+        // Prefer 2+2 to 3+1 when an intact item can move without adding a row.
+        if last.sizes.count == 1, previous.sizes.count > 2,
+           let moved = previous.sizes.last,
+           moved.width + spacing + last.width <= maxWidth {
+            let remaining = Array(previous.sizes.dropLast())
+            rows[rows.count - 2] = Row(
+                startIndex: previous.startIndex,
+                endIndex: previous.endIndex - 1,
+                sizes: remaining,
+                width: previous.width - spacing - moved.width,
+                height: remaining.map(\.height).max() ?? 0
+            )
+            rows[rows.count - 1] = Row(
+                startIndex: previous.endIndex - 1,
+                endIndex: last.endIndex,
+                sizes: [moved] + last.sizes,
+                width: moved.width + spacing + last.width,
+                height: max(moved.height, last.height)
             )
         }
         return rows

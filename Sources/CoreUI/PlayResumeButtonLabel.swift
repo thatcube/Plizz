@@ -237,7 +237,17 @@ public struct PlayResumeButtonLabel: View {
         }
     }
 
+    @ViewBuilder
     private var resolvedContent: some View {
+        if wrapsText {
+            resolvedStack
+        } else {
+            // Let the action row select a fitting candidate before any text is shortened.
+            resolvedStack.fixedSize(horizontal: true, vertical: false)
+        }
+    }
+
+    private var resolvedStack: some View {
         HStack(spacing: spacing) {
             Image(systemName: "play.fill")
             if let resumeProgress {

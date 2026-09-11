@@ -339,14 +339,28 @@ private struct PlozziOSCanonicalItemDetailView: View {
                     )
                 }
 
-                if let detail = viewModel.state.value,
-                   seriesDownloadPresentation(for: detail).isVisible {
-                    Button {
-                        presentsSeriesDownloads = true
-                    } label: {
-                        Image(systemName: "arrow.down.circle")
+                if let detail = viewModel.state.value {
+                    if seriesDownloadPresentation(for: detail).isVisible {
+                        Button {
+                            presentsSeriesDownloads = true
+                        } label: {
+                            Image(systemName: "arrow.down.circle")
+                        }
+                        .accessibilityLabel("Manage Seasons")
+                    } else if let downloadItem = detailPlayableItem(for: detail.item) {
+                        let options = detailPlaybackOptions(for: detail.item)
+                        PlozziOSDetailDownloadButton(
+                            downloadItem: downloadItem,
+                            selectedSource: options.sources.first {
+                                $0.accountID == options.selectedSourceAccountID
+                            },
+                            selectedVersion: options.versions.first {
+                                $0.id == options.selectedVersionID
+                            }
+                        )
+                        // Recreate download state when the selected server, item or version changes.
+                        .id("\(downloadItem.sourceAccountID ?? "")|\(downloadItem.id)|\(downloadItem.selectedVersionID ?? "")")
                     }
-                    .accessibilityLabel("Manage Seasons")
                 }
             }
         }
@@ -433,6 +447,8 @@ private struct PlozziOSCanonicalItemDetailView: View {
         let heroStyle: HeroArtworkStyle = horizontalSizeClass == .compact
             ? .compactPortrait
             : .landscape
+        let headerPresentation = HeroPresentation(item: heroTarget, artworkStyle: heroStyle, surface: .detail)
+        let rootPresentation = HeroPresentation(item: detail.item, artworkStyle: heroStyle, surface: .detail)
         let trailerPauseThreshold = PlozziOSHeroMetrics.height(
             style: heroStyle,
             surfaceRole: .detail,
@@ -445,7 +461,6 @@ private struct PlozziOSCanonicalItemDetailView: View {
                     backdropItem: detail.item,
                     playableItem: playableHeroTarget,
                     showsPlayPlaceholder: showsPlayPlaceholder,
-                    downloadItem: playableHeroTarget,
                     sources: options.sources,
                     scheduleLine: isDiscoveryItem
                         ? (
@@ -477,7 +492,10 @@ private struct PlozziOSCanonicalItemDetailView: View {
                     },
                     trailerItem: viewModel.trailers.first,
                     onPlayTrailer: { play($0, fromBeginning: true) },
-                    heroRequest: heroRequest(for: detail.item),
+                    heroRequest: heroRequest(
+                        for: detail,
+                        hasPlayAction: playableHeroTarget != nil || showsPlayPlaceholder
+                    ),
                     // An episode's own page can be reached from Continue Watching
                     // or Search, where Back leaves the show entirely — so offer a
                     // way over to it.
@@ -552,7 +570,10 @@ private struct PlozziOSCanonicalItemDetailView: View {
                             $0.id == options.selectedVersionID
                         } ?? MediaVersion.synthesized(from: heroTarget),
                     externalAvailability: detail.externalAvailability,
-                    spoilerSettings: appModel.settings.spoilers.settings
+                    spoilerSettings: appModel.settings.spoilers.settings,
+                    overviewAlreadyShown: heroStyle == .compactPortrait
+                        ? HeroContentPolicy.detailDescription(focused: headerPresentation, root: rootPresentation)
+                        : nil
                 )
             }
             // No trailing padding here. The information band is the last thing in
@@ -631,8 +652,22 @@ private struct PlozziOSCanonicalItemDetailView: View {
         presentsEpisodeAsSubject && item.kind == .episode
     }
 
-    /// Series requests live in the download sheet; movie requests stay in the hero.
-    private func heroRequest(for item: MediaItem) -> PlozziOSHeroRequest? {
+    /// Request-only series expose their season picker in the hero as well as the toolbar.
+    private func heroRequest(
+        for detail: ItemDetailViewModel.Detail,
+        hasPlayAction: Bool
+    ) -> PlozziOSHeroRequest? {
+        let item = detail.item
+        if seriesDownloadPresentation(for: detail).showsHeroRequest(hasPlayAction: hasPlayAction) {
+            return PlozziOSHeroRequest(
+                cta: .request,
+                isRequesting: isRequesting,
+                actingName: appModel.activeSeerrRequestActingName,
+                onRequest: { beginRequest($0) },
+                seasonAvailability: currentSeasonRequestAvailability(for: detail),
+                onOpenSeasonRequests: { presentsSeriesDownloads = true }
+            )
+        }
         guard isDiscoveryItem, item.kind == .movie else { return nil }
         let availability = requestStatusOverride ?? item.availability
         return PlozziOSHeroRequest(
@@ -1447,13 +1482,12 @@ private struct PlozziOSRequestPresentation: ViewModifier {
             } message: {
                 error.map { Text($0) } ?? Text(verbatim: "")
             }
-            .confirmationDialog(
+            .alert(
                 "Request as Administrator?",
                 isPresented: Binding(
                     get: { isEnabled && confirmationItem != nil },
                     set: { if isEnabled && !$0 { clearConfirmation() } }
-                ),
-                titleVisibility: .visible
+                )
             ) {
                 Button("Request as Administrator") {
                     guard let item = confirmationItem,

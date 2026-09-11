@@ -1,6 +1,9 @@
 #if canImport(SwiftUI)
 import SwiftUI
 import CoreModels
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// How much to shrink the badges, for surfaces that show them somewhere tighter
 /// than the detail hero they were drawn for.
@@ -40,6 +43,36 @@ public struct MediaBadgeRow: View {
                 }
             }
         }
+    }
+}
+
+/// Compact capability marks that grow with the subheadline metadata beside them.
+public struct MetadataMediaBadgeChip: View {
+    private let badge: MediaBadge
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.mediaBadgeScale) private var containerScale
+
+    public init(badge: MediaBadge) {
+        self.badge = badge
+    }
+
+    public var body: some View {
+        MediaBadgeChip(badge: badge)
+            .environment(\.mediaBadgeScale, containerScale * 0.75 * textScale)
+    }
+
+    private var textScale: CGFloat {
+        #if canImport(UIKit)
+        let traits = UITraitCollection(
+            preferredContentSizeCategory: dynamicTypeSize.plozzContentSizeCategory
+        )
+        let standardTraits = UITraitCollection(preferredContentSizeCategory: .large)
+        // Match the actual text style, including its accessibility-size curve.
+        return UIFont.preferredFont(forTextStyle: .subheadline, compatibleWith: traits).pointSize
+            / UIFont.preferredFont(forTextStyle: .subheadline, compatibleWith: standardTraits).pointSize
+        #else
+        return 1
+        #endif
     }
 }
 
@@ -204,7 +237,7 @@ public struct MediaBadgeChip: View {
                         Text(badge.dolbyFormatWord.uppercased())
                             .font(dolbyFormatFont)
                             .foregroundStyle(palette.primaryText)
-                            .tracking(0.4)
+                            .tracking(0.4 * scale)
                             .lineLimit(1)
                             .minimumScaleFactor(0.75)
                     }
@@ -277,7 +310,7 @@ public struct MediaBadgeChip: View {
             .font(font ?? textFont)
             .foregroundStyle(textColor)
             .textCase(.uppercase)
-            .tracking(0.5)
+            .tracking(0.5 * scale)
             .lineLimit(1)
             .minimumScaleFactor(0.75)
             .padding(.horizontal, hPadding ?? self.hPadding)
@@ -290,17 +323,17 @@ public struct MediaBadgeChip: View {
     /// a bold gradient logo rather than flat text.
     private func hdrLabel(_ text: String) -> some View {
         let parts = Self.splitHDR(text)
-        return HStack(alignment: .firstTextBaseline, spacing: 1) {
+        return HStack(alignment: .firstTextBaseline, spacing: scale) {
             Text(parts.head)
                 .font(hdrHeadFont)
             if let suffix = parts.suffix {
                 Text(suffix)
                     .font(hdrSuffixFont)
-                    .baselineOffset(1)
+                    .baselineOffset(scale)
             }
         }
         .foregroundStyle(hdrGradient)
-        .tracking(0.5)
+        .tracking(0.5 * scale)
         .lineLimit(1)
         .minimumScaleFactor(0.75)
         .padding(.horizontal, hdrHPadding)
@@ -317,7 +350,7 @@ public struct MediaBadgeChip: View {
             .font(hdrHeadFont)
             .textCase(.uppercase)
             .foregroundStyle(sdrBrushedGradient)
-            .tracking(0.5)
+            .tracking(0.5 * scale)
             .lineLimit(1)
             .minimumScaleFactor(0.75)
             .padding(.horizontal, hdrHPadding)
@@ -362,10 +395,10 @@ public struct MediaBadgeChip: View {
     private func dtsLabel(_ text: String) -> some View {
         let parts = Self.splitDTS(text)
         let isX = parts.suffix?.uppercased() == "X"
-        return HStack(alignment: isX ? .center : .firstTextBaseline, spacing: isX ? 1 : 0) {
+        return HStack(alignment: isX ? .center : .firstTextBaseline, spacing: isX ? scale : 0) {
             Text(parts.head)
                 .font(dtsHeadFont)
-                .tracking(-0.5)
+                .tracking(-0.5 * scale)
                 .foregroundStyle(palette.primaryText)
             if isX {
                 Text("X")

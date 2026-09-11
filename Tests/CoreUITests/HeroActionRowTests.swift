@@ -92,7 +92,9 @@ final class HeroActionRowTests: XCTestCase {
         .font(.system(size: 34, weight: .semibold))
         let wide = size(of: content)
         let narrow = size(of: content, width: 236)
-        XCTAssertLessThanOrEqual(narrow.width, 236)
+        // UIKit rounds fitted extents up to physical pixels on 3x iPhones.
+        let pixel = 1 / max(1, UIHostingController(rootView: content).view.traitCollection.displayScale)
+        XCTAssertLessThanOrEqual(narrow.width, 236 + pixel)
         XCTAssertGreaterThan(narrow.height, wide.height * 2)
     }
 

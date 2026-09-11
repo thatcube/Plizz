@@ -26,6 +26,8 @@ final class SeriesDownloadPresentationTests: XCTestCase {
         XCTAssertTrue(presentation.isVisible)
         XCTAssertTrue(presentation.hasLibraryDownloads)
         XCTAssertTrue(presentation.canRequestSeasons)
+        XCTAssertFalse(presentation.showsHeroRequest(hasPlayAction: false))
+        XCTAssertFalse(presentation.showsHeroRequest(hasPlayAction: true))
     }
 
     func testUnownedShowCanOpenRequestOnlySheet() {
@@ -36,6 +38,8 @@ final class SeriesDownloadPresentationTests: XCTestCase {
             XCTAssertTrue(presentation.isVisible)
             XCTAssertFalse(presentation.hasLibraryDownloads, "Discovery metadata is not downloadable media.")
             XCTAssertTrue(presentation.canRequestSeasons)
+            XCTAssertTrue(presentation.showsHeroRequest(hasPlayAction: false))
+            XCTAssertFalse(presentation.showsHeroRequest(hasPlayAction: true))
         }
     }
 
@@ -46,6 +50,8 @@ final class SeriesDownloadPresentationTests: XCTestCase {
         XCTAssertTrue(presentation.isVisible)
         XCTAssertTrue(presentation.canRequestSeasons)
         XCTAssertFalse(presentation.hasLibraryDownloads)
+        XCTAssertTrue(presentation.showsHeroRequest(hasPlayAction: false))
+        XCTAssertFalse(presentation.showsHeroRequest(hasPlayAction: true))
     }
 
     func testMissingConnectionOrMetadataCannotOfferRequests() {
@@ -58,6 +64,7 @@ final class SeriesDownloadPresentationTests: XCTestCase {
             )
             XCTAssertFalse(presentation.canRequestSeasons)
             XCTAssertFalse(presentation.isVisible)
+            XCTAssertFalse(presentation.showsHeroRequest(hasPlayAction: false))
         }
     }
 
@@ -69,6 +76,7 @@ final class SeriesDownloadPresentationTests: XCTestCase {
             XCTAssertFalse(presentation.isVisible)
             XCTAssertFalse(presentation.hasLibraryDownloads)
             XCTAssertFalse(presentation.canRequestSeasons)
+            XCTAssertFalse(presentation.showsHeroRequest(hasPlayAction: false))
         }
     }
 
@@ -79,6 +87,32 @@ final class SeriesDownloadPresentationTests: XCTestCase {
         )
         XCTAssertTrue(presentation.hasLibraryDownloads)
         XCTAssertTrue(presentation.isVisible)
+    }
+
+    func testPlayableOrDownloadableShowsKeepRequestsInTheSeasonManager() {
+        for children in [[season], [MediaItem(id: "episode", title: "Episode", kind: .episode)]] {
+            let presentation = SeriesDownloadPresentation(
+                item: item(), children: children, isDiscoveryItem: false, seerConnected: true
+            )
+            XCTAssertTrue(presentation.canRequestSeasons)
+            XCTAssertFalse(presentation.showsHeroRequest(hasPlayAction: false))
+            XCTAssertFalse(presentation.showsHeroRequest(hasPlayAction: true))
+        }
+    }
+
+    func testRequestOnlyShowsRetainHeroAccessForEveryRequestStatus() {
+        for status in [
+            MediaAvailabilityStatus.unknown, .pending, .processing, .deleted,
+            .available, .partiallyAvailable
+        ] {
+            var show = item()
+            show.availability = status
+            let presentation = SeriesDownloadPresentation(
+                item: show, children: [], isDiscoveryItem: true, seerConnected: true
+            )
+            XCTAssertTrue(presentation.showsHeroRequest(hasPlayAction: false),
+                          "Server status alone does not provide a playable episode.")
+        }
     }
 
     func testBulkDownloadLabelsDescribeTheirActualActions() {

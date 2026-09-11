@@ -1,6 +1,49 @@
 #if canImport(SwiftUI)
 import SwiftUI
 
+private struct InlineOverviewMore: View {
+    @Environment(\.themePalette) private var palette
+    let font: Font
+
+    var body: some View {
+        Text("More")
+            .font(font.weight(.semibold))
+            .foregroundStyle(palette.primaryText)
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .padding(.leading, 12)
+    }
+}
+
+private struct InlineOverviewTailMask: View {
+    let moreWidth: CGFloat
+    let lineCount: Int
+
+    var body: some View {
+        GeometryReader { geometry in
+            let lineHeight = geometry.size.height / CGFloat(max(lineCount, 1))
+            VStack(spacing: 0) {
+                Rectangle().fill(.white)
+                    .frame(height: max(0, geometry.size.height - lineHeight))
+                HStack(spacing: 0) {
+                    Rectangle().fill(.white)
+                    LinearGradient(
+                        stops: [
+                            .init(color: .white, location: 0),
+                            .init(color: .clear, location: min(1, 10 / max(1, moreWidth))),
+                            .init(color: .clear, location: 1)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: min(moreWidth, geometry.size.width))
+                }
+                .frame(height: lineHeight)
+            }
+        }
+    }
+}
+
 #if os(tvOS) && canImport(UIKit)
 /// Makes the presenting sheet's own host transparent, so the card floats over
 /// the page (dimmed) instead of on an opaque full-screen plate.
@@ -42,6 +85,13 @@ private struct ExpandableCardHeightKey: PreferenceKey {
     }
 }
 
+private struct ExpandableMoreSizeKey: PreferenceKey {
+    static let defaultValue: CGSize = .zero
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        value = nextValue()
+    }
+}
+
 /// A block of prose capped to a few lines, with an inline **MORE** that opens the
 /// full text in a centred card.
 ///
@@ -56,12 +106,19 @@ private struct ExpandableCardHeightKey: PreferenceKey {
 /// genuinely taller. A character-count heuristic gets this wrong at both ends —
 /// it offers MORE for text that already fits, and hides it for text that doesn't.
 public struct ExpandableOverviewText: View {
+    /// Cards keep the existing biography treatment; inline previews add no padding or surface.
+    public enum Style: Sendable {
+        case card
+        case inline
+    }
+
     private let text: String
     /// Heading for the expanded card, e.g. the person's or title's name.
     private let title: String  // l10n:content — a person or media title from the provider, never copy
     private let lineLimit: Int
     private let font: Font
     private let alignment: TextAlignment
+    private let style: Style
 
     @Environment(\.themePalette) private var palette
 
@@ -69,19 +126,22 @@ public struct ExpandableOverviewText: View {
     @State private var fullHeight: CGFloat = 0
     @State private var cardHeight: CGFloat = 0
     @State private var isExpanded = false
+    @State private var inlineMoreSize: CGSize = .zero
 
     public init(
         text: String,
         title: String,  // l10n:content — a person or media title from the provider, never copy
         lineLimit: Int,
         font: Font,
-        alignment: TextAlignment = .leading
+        alignment: TextAlignment = .leading,
+        style: Style = .card
     ) {
         self.text = text
         self.title = title
         self.lineLimit = lineLimit
         self.font = font
         self.alignment = alignment
+        self.style = style
     }
 
     private var isTruncated: Bool {
@@ -89,55 +149,58 @@ public struct ExpandableOverviewText: View {
     }
 
     public var body: some View {
-        Group {
+        preview
+            // Avoid the tvOS sheet-relayout watchdog on pages containing media rails.
+            #if os(tvOS)
+            .fullScreenCover(isPresented: $isExpanded) { expandedCard }
+            #else
+            .sheet(isPresented: $isExpanded) { expandedCard }
+            #endif
+            .onChange(of: text) { _, _ in isExpanded = false }
+    }
+
+    @ViewBuilder
+    private var preview: some View {
+        if style == .inline {
             if isTruncated {
-                Button { isExpanded = true } label: {
-                    // The padding belongs to the *label*: PlozzCardButtonStyle
-                    // supplies the glass surface but no inset, so without this
-                    // the surface hugs the glyphs and reads as a different
-                    // control from the About card it is meant to match.
-                    clipped.padding(Self.cardPadding)
-                }
-                .buttonStyle(
-                    PlozzCardButtonStyle(
-                        cornerRadius: Self.cardCornerRadius,
-                        focusedScale: PlozzTheme.Metrics.readOnlyFocusedCardScale
-                    )
-                )
-                // `fullScreenCover` on tvOS, NOT `sheet`.
-                //
-                // A sheet is presented by `UISheetPresentationController`, which
-                // lays the PRESENTING hierarchy out synchronously as part of its
-                // transition. Behind this button that hierarchy is a person or
-                // title page full of `MediaRowView` rails, so opening the card
-                // rebuilt every card in every row inside one layout pass and blew
-                // the 10-second scene-update watchdog — the device kills the app
-                // with `0x8BADF00D`, which is the freeze. A full-screen cover
-                // does not run that layout dance, and a sheet was never the right
-                // idiom on tvOS anyway: this already draws its own dimmed
-                // backdrop and card.
-                #if os(tvOS)
-                .fullScreenCover(isPresented: $isExpanded) { expandedCard }
-                #else
-                .sheet(isPresented: $isExpanded) { expandedCard }
-                #endif
+                Button { isExpanded = true } label: { clipped }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(palette.primaryText.opacity(0.92))
             } else {
-                // Nothing to open, so no button — a focusable control that does
-                // nothing reads as broken (the cast tiles spent a release like
-                // that). Padded identically so the text sits in the same place
-                // whether or not it happens to overflow.
+                clipped
+                    .foregroundStyle(palette.primaryText.opacity(0.92))
+            }
+        } else if isTruncated {
+            Button { isExpanded = true } label: {
+                // Card styling supplies the surface; the label owns its inset.
                 clipped.padding(Self.cardPadding)
             }
+            .buttonStyle(
+                PlozzCardButtonStyle(
+                    cornerRadius: Self.cardCornerRadius,
+                    focusedScale: PlozzTheme.Metrics.readOnlyFocusedCardScale
+                )
+            )
+        } else {
+            clipped.padding(Self.cardPadding)
         }
     }
 
     private var clipped: some View {
         ZStack(alignment: .bottomTrailing) {
-            Text(verbatim: text)
+            overviewText
                 .font(font)
                 .multilineTextAlignment(alignment)
                 .lineLimit(lineLimit)
+                .fixedSize(horizontal: false, vertical: style == .inline)
                 .frame(maxWidth: .infinity, alignment: alignment == .center ? .center : .leading)
+                .mask {
+                    if style == .inline && isTruncated {
+                        InlineOverviewTailMask(moreWidth: inlineMoreSize.width, lineCount: lineLimit)
+                    } else {
+                        Rectangle().fill(.white)
+                    }
+                }
                 // Measure the visible (line-limited) height…
                 .background {
                     GeometryReader { limited in
@@ -149,7 +212,7 @@ public struct ExpandableOverviewText: View {
                 }
                 // …and the height the same text wants unconstrained.
                 .background(alignment: .top) {
-                    Text(verbatim: text)
+                    overviewText
                         .font(font)
                         .multilineTextAlignment(alignment)
                         .fixedSize(horizontal: false, vertical: true)
@@ -166,28 +229,50 @@ public struct ExpandableOverviewText: View {
                 }
 
             if isTruncated {
-                // Fade the tail of the last line out so no glyphs sit behind
-                // MORE, then draw MORE on that same line.
-                LinearGradient(
-                    stops: [
-                        .init(color: .clear, location: 0.0),
-                        .init(color: .black, location: 0.45),
-                        .init(color: .black, location: 1.0)
-                    ],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-                .frame(width: Self.fadeWidth, height: Self.fadeHeight)
-                .blendMode(.destinationOut)
+                if style == .inline {
+                    InlineOverviewMore(font: font)
+                        .background {
+                            GeometryReader { geometry in
+                                Color.clear.preference(key: ExpandableMoreSizeKey.self, value: geometry.size)
+                            }
+                        }
+                } else {
+                    LinearGradient(
+                        stops: [
+                            .init(color: .clear, location: 0.0),
+                            .init(color: .black, location: 0.45),
+                            .init(color: .black, location: 1.0)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: Self.fadeWidth, height: Self.fadeHeight)
+                    .blendMode(.destinationOut)
 
-                Text("MORE")
-                    .font(Self.moreLabelFont)
-                    .plozzForeground(.secondary)
+                    Text("MORE")
+                        .font(Self.moreLabelFont)
+                        .plozzForeground(.secondary)
+                }
             }
         }
         .compositingGroup()
         .onPreferenceChange(ExpandableVisibleHeightKey.self) { visibleHeight = $0 }
         .onPreferenceChange(ExpandableFullHeightKey.self) { fullHeight = $0 }
+        .onPreferenceChange(ExpandableMoreSizeKey.self) { inlineMoreSize = $0 }
+    }
+
+    private var overviewText: Text {
+        if style == .inline {
+            #if os(tvOS)
+            Text(verbatim: text.overviewPlainText)
+            #else
+            Text(text.overviewMarkdownWithLegibleLinks(
+                textColor: palette.primaryText, accent: palette.accent
+            ))
+            #endif
+        } else {
+            Text(verbatim: text)
+        }
     }
 
     @ViewBuilder
@@ -250,7 +335,7 @@ public struct ExpandableOverviewText: View {
         #else
         NavigationStack {
             ScrollView {
-                Text(verbatim: text)
+                overviewText
                     .font(font)
                     .foregroundStyle(palette.primaryText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -259,7 +344,15 @@ public struct ExpandableOverviewText: View {
             }
             .background(palette.settingsBackground)
             .navigationTitle(title)
+            .toolbar {
+                if style == .inline {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { isExpanded = false }
+                    }
+                }
+            }
         }
+
         #endif
     }
 

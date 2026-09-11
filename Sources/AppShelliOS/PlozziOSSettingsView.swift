@@ -639,7 +639,8 @@ private struct PlozziOSSettingsSplitView: View {
         case .detailPage:
             PlozziOSDetailPageSettingsView(
                 heroBackground: appModel.settings.heroBackground,
-                themeMusic: appModel.settings.themeMusic
+                themeMusic: appModel.settings.themeMusic,
+                detailPage: appModel.settings.detailPage
             )
         case .playback:
             PlozziOSPlaybackSettingsView(
@@ -912,7 +913,8 @@ private struct PlozziOSSettingsCompactMenu: View {
                 NavigationLink {
                     PlozziOSDetailPageSettingsView(
                         heroBackground: appModel.settings.heroBackground,
-                        themeMusic: appModel.settings.themeMusic
+                        themeMusic: appModel.settings.themeMusic,
+                        detailPage: appModel.settings.detailPage
                     )
                 } label: {
                     Label("Detail Page", systemImage: "rectangle.portrait.on.rectangle.portrait")
@@ -1793,6 +1795,7 @@ private struct PlozziOSHomeSettingsView: View {
                 Toggle("Show hero", isOn: $hero.settings.isEnabled)
                 if hero.settings.isEnabled {
                     Toggle("Hide watched titles", isOn: $hero.settings.hideWatched)
+                    Toggle("Show ratings", isOn: $hero.settings.showsRatings)
                     Toggle("Auto-advance", isOn: $hero.settings.autoAdvance)
                     Toggle(
                         "Play trailer behind the hero",
@@ -2014,9 +2017,25 @@ private struct PlozziOSLibraryHomeSettingsView: View {
 private struct PlozziOSDetailPageSettingsView: View {
     @Bindable var heroBackground: HeroBackgroundSettingsModel
     @Bindable var themeMusic: ThemeMusicSettingsModel
+    @Bindable var detailPage: DetailPageSettingsModel
 
     var body: some View {
         List {
+            SettingsSectionGroup("Header ratings") {
+                Toggle("Show ratings in header", isOn: $detailPage.settings.showsHeaderRatings)
+                Picker("Maximum ratings shown", selection: $detailPage.settings.maxHeaderRatings) {
+                    ForEach(Array(DetailPageSettings.headerRatingCountRange), id: \.self) { count in
+                        Text(count, format: .number).tag(count)
+                    }
+                }
+                NavigationLink {
+                    PlozziOSDetailRatingPriorityView(model: detailPage)
+                } label: {
+                    Text("Rating sources & order")
+                }
+            } footer: {
+                Text("This limits how many scores appear in the header, not how many sources you can enable. Missing scores are skipped in your source order. More than two scores can wrap onto extra lines. Spoiler settings still apply.")
+            }
             SettingsSectionGroup("Behind the hero") {
                 Picker(
                     "Background",
@@ -2048,6 +2067,46 @@ private struct PlozziOSDetailPageSettingsView: View {
         }
         .settingsPageSurface()
         .navigationTitle("Detail Page")
+    }
+}
+
+private struct PlozziOSDetailRatingPriorityView: View {
+    @Bindable var model: DetailPageSettingsModel
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(model.settings.orderedSources, id: \.self) { source in
+                    Toggle(isOn: Binding(
+                        get: { model.settings.enabledRatingSources.contains(source) },
+                        set: { enabled in
+                            if enabled {
+                                model.settings.enabledRatingSources.insert(source)
+                            } else {
+                                model.settings.enabledRatingSources.remove(source)
+                            }
+                        }
+                    )) {
+                        switch source {
+                        case .community: Text("Community")
+                        case .critic: Text("Critics")
+                        default: Text(verbatim: source.displayName)
+                        }
+                    }
+                }
+                .onMove { offsets, destination in
+                    var order = model.settings.orderedSources
+                    order.move(fromOffsets: offsets, toOffset: destination)
+                    model.settings.ratingSourceOrder = order
+                }
+            } footer: {
+                Text("Enable as many sources as you want, then tap Edit to set their priority. Not every title has every score. The header shows the first available enabled sources, up to your chosen maximum. AniList is used only for anime.")
+            }
+        }
+        .toggleStyle(SettingsTouchSwitchToggleStyle())
+        .settingsPageSurface()
+        .navigationTitle("Rating sources & order")
+        .toolbar { EditButton() }
     }
 }
 

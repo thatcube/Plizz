@@ -1037,7 +1037,7 @@ struct HomeHeroView: View {
                         .contentTransition(.opacity)
                 }
 
-                if !spoilerSettings.shouldHideRatings(for: item),
+                if settings.shouldShowRatings(for: item, spoilerSettings: spoilerSettings),
                    !item.ratings.isEmpty {
                     RatingsBadgeRow(ratings: item.ratings)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1227,7 +1227,7 @@ struct HomeHeroView: View {
         return HeroForegroundModelBuilder.model(
             item: item,
             overviewVisible: !hideText,
-            ratingsVisible: !spoilerSettings.shouldHideRatings(for: item),
+            ratingsVisible: settings.shouldShowRatings(for: item, spoilerSettings: spoilerSettings),
             maskedTitle: masked,
             pillInputs: foregroundPillInputs(for: item),
             selectedIndex: selectedIndex,
