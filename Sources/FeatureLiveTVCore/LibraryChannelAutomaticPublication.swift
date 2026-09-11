@@ -13,7 +13,8 @@ enum LibraryChannelAutomaticPublication {
     static func prepare(
         groups: [LibraryChannelAutomaticPlanner.Group], profileID: String,
         previous: [LibraryChannelDefinition], snapshots: [UUID: LibraryChannelSnapshot],
-        schedules: [UUID: LibraryChannelSchedule], blockedSourceIDs: Set<UUID>, now: Date
+        schedules: [UUID: LibraryChannelSchedule], blockedSourceIDs: Set<UUID>, now: Date,
+        unavailableAccountIDs: Set<String> = []
     ) throws -> LibraryChannelPublication {
         let seconds = now.timeIntervalSince1970
         guard seconds.isFinite, seconds >= 0, seconds < 253_402_300_798 else {
@@ -29,7 +30,10 @@ enum LibraryChannelAutomaticPublication {
                       definition.revisions[1].epochSeconds <= epoch - 86_400 {
                     definition.revisions.removeFirst()
                 }
-                if let key = definition.automaticKey, !keys.contains(key) {
+                let awaitsSource = definition.revisions.contains { revision in
+                    revision.recipe.libraries.contains { unavailableAccountIDs.contains($0.accountID) }
+                }
+                if let key = definition.automaticKey, !keys.contains(key), !awaitsSource {
                     next.schedules[definition.id] = nil
                     continue
                 }

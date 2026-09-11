@@ -235,7 +235,9 @@ public final class LibraryChannelService {
         notifyStoredChange(replacing: previous)
     }
 
-    public func refreshAutomaticChannels(at now: Date = Date()) async throws -> LibraryChannelAutomaticGenerationSummary {
+    public func refreshAutomaticChannels(
+        at now: Date = Date(), unavailableAccountIDs: Set<String> = []
+    ) async throws -> LibraryChannelAutomaticGenerationSummary {
         let stamp = generation
         let automaticStamp = automaticGeneration
         try check(stamp)
@@ -249,16 +251,40 @@ public final class LibraryChannelService {
         let cachedSnapshots = snapshots
         let cachedSchedules = schedules
         let catalogTask = Task.detached(priority: .utility) {
-            try await LibraryChannelAutomaticCatalog.fetch(contexts: providerContexts) {
-                try await self.checkAutomatic(stamp: stamp, automaticStamp: automaticStamp)
+            var catalog = LibraryChannelAutomaticCatalog()
+            var failures: [LibraryChannelSourceFailure] = []
+            for context in providerContexts.sorted(by: { $0.accountID < $1.accountID }) {
+                do {
+                    let source = try await LibraryChannelAutomaticCatalog.fetch(contexts: [context]) {
+                        try await self.checkAutomatic(stamp: stamp, automaticStamp: automaticStamp)
+                    }
+                    catalog.entries += source.entries
+                    catalog.libraries += source.libraries
+                    catalog.accessibleLibraries.formUnion(source.accessibleLibraries)
+                    catalog.skippedItemCount += source.skippedItemCount
+                    catalog.queriedItemCount += source.queriedItemCount
+                    guard catalog.queriedItemCount <= LibraryChannelPortableState.maximumItems else {
+                        throw LibraryChannelError.catalogTooLarge
+                    }
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch let error as LibraryChannelError {
+                    throw error
+                } catch {
+                    try await self.checkAutomatic(stamp: stamp, automaticStamp: automaticStamp)
+                    failures.append(LibraryChannelSourceFailure(
+                        accountID: context.accountID, serverName: context.provider.session.server.name, error: error))
+                }
             }
+            return (catalog, failures)
         }
-        let catalog = try await withTaskCancellationHandler {
+        let (catalog, sourceFailures) = try await withTaskCancellationHandler {
             try await catalogTask.value
         } onCancel: {
             catalogTask.cancel()
         }
         try checkAutomatic(stamp: stamp, automaticStamp: automaticStamp)
+        let missingAccounts = unavailableAccountIDs.union(sourceFailures.map(\.accountID))
         let formerlyAccessible = discoveredLibraries ?? Set(providerContexts.flatMap { context in
             context.allowedLibraryIDs.map { LibraryChannelLibrary(accountID: context.accountID, libraryID: $0) }
         })
@@ -280,7 +306,8 @@ public final class LibraryChannelService {
         let publicationTask = Task.detached(priority: .utility) {
             try LibraryChannelAutomaticPublication.prepare(
                 groups: groups, profileID: profileID, previous: previous, snapshots: cachedSnapshots,
-                schedules: cachedSchedules, blockedSourceIDs: blockedSources, now: now
+                schedules: cachedSchedules, blockedSourceIDs: blockedSources, now: now,
+                unavailableAccountIDs: missingAccounts
             )
         }
         let publication = try await withTaskCancellationHandler {
@@ -300,7 +327,8 @@ public final class LibraryChannelService {
         issue = definitions.flatMap(\.revisions).contains { snapshots[$0.snapshotID] == nil } ? .snapshotUnavailable : nil
         return LibraryChannelAutomaticGenerationSummary(
             channelCount: definitions.filter { $0.isAutomatic && $0.isEnabled && isSourceAllowed($0.sourceID) }.count,
-            eligibleItemCount: catalog.entries.count, skippedItemCount: catalog.skippedItemCount
+            eligibleItemCount: catalog.entries.count, skippedItemCount: catalog.skippedItemCount,
+            unavailableSources: sourceFailures
         )
     }
 

@@ -104,6 +104,36 @@ final class LiveTVAutomaticChannelsRuntimeTests: XCTestCase {
         XCTAssertGreaterThan(runtime.automaticChannelCount, 0)
     }
 
+    func testOneUnreachableSavedJellyfinDoesNotBlockTheWorkingJellyfinLineup() async throws {
+        let offline = AutomaticRuntimeProvider(kind: .jellyfin)
+        await offline.requests.setUnavailable(true)
+        let fixture = try Fixture(secondary: offline)
+        defer { fixture.close() }
+        let runtime = fixture.runtime()
+        await runtime.refresh(accounts: fixture.accounts)
+        await runtime.setAutomaticChannelsEnabled(true)
+        await runtime.refresh(accounts: fixture.accounts)
+
+        XCTAssertNil(runtime.issue)
+        XCTAssertNil(runtime.automaticChannelsIssue)
+        XCTAssertGreaterThan(runtime.automaticChannelCount, 0)
+        XCTAssertEqual(runtime.automaticUnavailableSources.map(\.accountID), ["offline"])
+        XCTAssertEqual(runtime.automaticUnavailableSources.first?.reason, .unreachable)
+        let state = try runtime.service.portableState()
+        XCTAssertTrue(state.snapshots.flatMap(\.items).allSatisfy { $0.library.accountID == "catalog" })
+        let ids = runtime.service.definitions.map(\.id)
+
+        await offline.requests.setUnavailable(false)
+        runtime.retry()
+        await runtime.refresh(accounts: fixture.accounts)
+        XCTAssertTrue(runtime.automaticUnavailableSources.isEmpty)
+        XCTAssertNil(runtime.automaticChannelsIssue)
+        XCTAssertTrue(Set(ids).isSubset(of: runtime.service.definitions.map(\.id)))
+        XCTAssertTrue(try runtime.service.portableState().snapshots.flatMap(\.items).contains {
+            $0.library.accountID == "offline"
+        })
+    }
+
     func testUnchangedAutomaticRefreshPreservesHeldPlaybackAuthority() async throws {
         let fixture = try Fixture()
         defer { fixture.close() }
@@ -199,7 +229,7 @@ final class LiveTVAutomaticChannelsRuntimeTests: XCTestCase {
         let snapshots = LibraryChannelSnapshotStore(databaseURL: nil)
         let settings: LiveTVAutomaticChannelsStore
 
-        init(kind: ProviderKind = .jellyfin) throws {
+        init(kind: ProviderKind = .jellyfin, secondary: AutomaticRuntimeProvider? = nil) throws {
             defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
             profileStore = ProfileStore(defaults: defaults)
             profiles = ProfilesModel(store: profileStore)
@@ -208,10 +238,17 @@ final class LiveTVAutomaticChannelsRuntimeTests: XCTestCase {
             try accountStore.add(Account(
                 id: "catalog", server: provider.session.server, userID: "user",
                 userName: "User", deviceID: accountStore.deviceID()), token: "fixture-token")
-            accountStore.setActiveAccountIDs(["catalog"])
+            if let secondary {
+                try accountStore.add(Account(
+                    id: "offline", server: secondary.session.server, userID: "offline-user",
+                    userName: "Offline user", deviceID: accountStore.deviceID()), token: "fixture-token")
+            }
+            accountStore.setActiveAccountIDs(secondary == nil ? ["catalog"] : ["catalog", "offline"])
             let registry = ProviderRegistry()
             let provider = provider
-            registry.register(kind) { _ in provider }
+            registry.register(kind) { context in
+                context.accountID == "offline" ? (secondary ?? provider) : provider
+            }
             accounts = AccountsProvidersModel(
                 accountStore: accountStore, registry: registry, profilesModel: profiles)
             accounts.tokenResolver = { accountStore.token(for: $0) }
@@ -238,7 +275,7 @@ private actor AutomaticRuntimeRequests {
     func setUnavailable(_ value: Bool) { unavailable = value }
     func record() throws {
         count += 1
-        if unavailable { throw AppError.notFound }
+        if unavailable { throw AppError.serverUnreachable }
     }
 }
 

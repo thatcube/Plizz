@@ -326,7 +326,15 @@ Imported generated definitions do not opt a new device into library discovery.
 
 Preparation and failures are visible in Plozz-channel management. An empty or
 unavailable library does not turn an unrelated IPTV station into a failed
-library channel. Catalogue changes trigger coalesced refreshes; foreground
+library channel. A failed saved server does not block channels from other
+reachable servers. Management names the failed connections and distinguishes
+connectivity, rejected access and invalid responses; it does not tell an
+already signed-in user to add the same account again. Saved groups belonging
+to temporarily unavailable servers are retained, but cannot play without
+current library authority. Media-share libraries are not yet supported by
+the automatic channel generator.
+
+Catalogue changes trigger coalesced refreshes; foreground
 periodic refreshes provide a fallback. Refreshes wait while playback holds live
 identities. Published programme slots remain frozen, with changed catalogues
 applied in future schedule revisions rather than rerolling the current show.

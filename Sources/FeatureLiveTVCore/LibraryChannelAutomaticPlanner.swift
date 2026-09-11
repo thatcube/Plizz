@@ -6,11 +6,47 @@ public struct LibraryChannelAutomaticGenerationSummary: Equatable, Sendable {
     public let channelCount: Int
     public let eligibleItemCount: Int
     public let skippedItemCount: Int
+    public let unavailableSources: [LibraryChannelSourceFailure]
 
-    public init(channelCount: Int = 0, eligibleItemCount: Int = 0, skippedItemCount: Int = 0) {
+    public init(
+        channelCount: Int = 0, eligibleItemCount: Int = 0, skippedItemCount: Int = 0,
+        unavailableSources: [LibraryChannelSourceFailure] = []
+    ) {
         self.channelCount = channelCount
         self.eligibleItemCount = eligibleItemCount
         self.skippedItemCount = skippedItemCount
+        self.unavailableSources = unavailableSources
+    }
+}
+
+public struct LibraryChannelSourceFailure: Equatable, Identifiable, Sendable {
+    public enum Reason: String, Sendable {
+        case unreachable, authorization, invalidResponse, unknown
+
+        public var message: LocalizedStringResource {
+            switch self {
+            case .unreachable: "This server couldn't be reached. Check its address and connection, then retry."
+            case .authorization: "This server rejected library access. Check the account's sign-in and permissions."
+            case .invalidResponse: "This server's library response couldn't be read. Retry when the server is ready."
+            case .unknown: "This server's libraries couldn't be loaded. Retry to include them."
+            }
+        }
+    }
+
+    public let accountID: String
+    public let serverName: String
+    public let reason: Reason
+    public var id: String { accountID }
+
+    public init(accountID: String, serverName: String, error: Error) {
+        self.accountID = accountID
+        self.serverName = serverName
+        switch error {
+        case AppError.serverUnreachable, is URLError: reason = .unreachable
+        case AppError.unauthorized, AppError.invalidCredentials: reason = .authorization
+        case AppError.decoding, AppError.invalidResponse: reason = .invalidResponse
+        default: reason = .unknown
+        }
     }
 }
 
@@ -24,6 +60,7 @@ struct LibraryChannelAutomaticCatalog: Sendable {
     }
     var entries: [Entry] = []
     var skippedItemCount = 0
+    var queriedItemCount = 0
     var libraries: [LibraryChannelLibraryChoice] = []
     var accessibleLibraries: Set<LibraryChannelLibrary> = []
 
@@ -91,6 +128,7 @@ struct LibraryChannelAutomaticCatalog: Sendable {
                             throw LibraryChannelError.catalogTooLarge
                         }
                         queriedCount += response.items.count
+                        catalog.queriedItemCount = queriedCount
                         for var media in response.items {
                             try Task.checkCancellation()
                             guard media.kind == kind, media.libraryID == library.id else {

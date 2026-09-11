@@ -68,6 +68,44 @@ final class LibraryChannelAutomaticTests: XCTestCase {
         XCTAssertTrue(try service.portableState().snapshots.flatMap(\.items).allSatisfy { $0.kind != .series })
     }
 
+    func testCatalogueFailureOnOneAccountKeepsHealthyChannelsAndReportsTheFailedAccount() async throws {
+        let (service, _, _) = try await service(items: [movie("healthy")])
+        let other = LibraryCatalogFixture(items: [movie("other")])
+        let healthy = LibraryCatalogFixture(items: [movie("healthy")])
+        service.setContexts([
+            LibraryChannelProviderContext(
+                accountID: "account", authorizationID: "auth", provider: healthy, allowedLibraryIDs: ["library"]),
+            LibraryChannelProviderContext(
+                accountID: "offline", authorizationID: "auth", provider: other, allowedLibraryIDs: ["library"])
+        ])
+        await other.beforeNextPage { throw AppError.serverUnreachable }
+        let result = try await service.refreshAutomaticChannels(at: now)
+
+        XCTAssertEqual(result.eligibleItemCount, 1)
+        XCTAssertEqual(result.unavailableSources.map(\.accountID), ["offline"])
+        XCTAssertEqual(result.unavailableSources.first?.reason, .unreachable)
+        XCTAssertEqual(try currentItems("v1/movies", service: service).map(\.itemID), ["healthy"])
+        XCTAssertEqual(service.channels.count, 1)
+    }
+
+    func testUnavailableSourceRetainsItsSavedGroupsUntilDiscoveryRecovers() async throws {
+        let (service, _, _) = try await service(items: [movie("saved")])
+        _ = try await service.refreshAutomaticChannels(at: now)
+        let before = service.definitions
+        let held = try service.playbackContext(catalogID: before[0].catalogID)
+        service.setContexts([])
+        let result = try await service.refreshAutomaticChannels(at: now, unavailableAccountIDs: ["account"])
+
+        XCTAssertEqual(result.eligibleItemCount, 0)
+        XCTAssertEqual(service.definitions, before, "A failed connection is not deletion of its channel definitions")
+        XCTAssertTrue(service.channels.isEmpty)
+        XCTAssertNil(held.authorizationID)
+        XCTAssertFalse(try service.portableState().snapshots.isEmpty)
+
+        _ = try await service.refreshAutomaticChannels(at: now)
+        XCTAssertTrue(service.definitions.isEmpty, "An explicitly removed source can retire its generated channels")
+    }
+
     func testActualMetadataProducesDiverseThemesWithoutInventingKidsOrDirectors() throws {
         var entries: [LibraryChannelAutomaticCatalog.Entry] = []
         for index in 0..<80 {

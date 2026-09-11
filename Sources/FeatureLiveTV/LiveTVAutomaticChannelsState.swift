@@ -1,6 +1,7 @@
 #if DEBUG
 import CoreModels
 import CoreUI
+import FeatureLiveTVCore
 import Observation
 import SwiftUI
 
@@ -10,6 +11,7 @@ public struct LiveTVAutomaticChannelsState {
     public let issue: LibraryChannelError?
     public let channelCount: Int
     public let skippedItemCount: Int
+    public let unavailableSources: [LibraryChannelSourceFailure]
     public let setEnabled: @MainActor (Bool) async -> Void
     public let retry: @MainActor () -> Void
 
@@ -17,7 +19,8 @@ public struct LiveTVAutomaticChannelsState {
         enabled: Bool, isWorking: Bool, issue: LibraryChannelError?,
         channelCount: Int, skippedItemCount: Int,
         setEnabled: @escaping @MainActor (Bool) async -> Void,
-        retry: @escaping @MainActor () -> Void
+        retry: @escaping @MainActor () -> Void,
+        unavailableSources: [LibraryChannelSourceFailure] = []
     ) {
         self.enabled = enabled
         self.isWorking = isWorking
@@ -26,6 +29,7 @@ public struct LiveTVAutomaticChannelsState {
         self.skippedItemCount = skippedItemCount
         self.setEnabled = setEnabled
         self.retry = retry
+        self.unavailableSources = unavailableSources
     }
 
     var needsEmptyState: Bool { enabled || isWorking || issue != nil }
@@ -62,7 +66,7 @@ enum LiveTVAutomaticChannelsStatus: Equatable {
         case .empty, .failed(.emptyCatalog):
             "No eligible movies or episodes are available yet. Plozz channels need an authorized Plex, Jellyfin or Emby library with playable titles and known durations."
         case .failed(.sourceUnavailable):
-            "Connect a Plex, Jellyfin or Emby account with library access for this profile, then retry. An IPTV playlist does not need a media server."
+            "Your saved server libraries couldn't be loaded. Check the connection details below and retry. You don't need to add the same account again."
         case .failed(.catalogChanged):
             "Your library changed while the lineup was being prepared. Retry to use the latest movies and episodes."
         case .failed(let issue):
@@ -155,6 +159,19 @@ struct LiveTVAutomaticChannelsStatusView: View {
             if state.skippedItemCount > 0 {
                 Text("\(state.skippedItemCount) library items couldn't be scheduled because their duration or metadata is unavailable.")
                     .settingsRowSecondary()
+            }
+            if !state.unavailableSources.isEmpty {
+                Text(state.channelCount > 0
+                    ? "Channels from available libraries are ready. Some servers still need attention."
+                    : "These saved connections couldn't load their libraries.")
+                    .settingsRowSecondary()
+                ForEach(state.unavailableSources) { source in
+                    VStack(alignment: .leading, spacing: PlozzTheme.Spacing.xSmall) {
+                        Text(source.serverName).font(.headline)
+                        Text(source.reason.message).settingsRowSecondary()
+                    }
+                    .accessibilityElement(children: .combine)
+                }
             }
         }
     }

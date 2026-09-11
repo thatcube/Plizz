@@ -324,7 +324,8 @@ private extension LiveTVLibraryRuntime {
             channelCount: automaticChannelCount,
             skippedItemCount: automaticSkippedItemCount,
             setEnabled: setAutomaticChannelsEnabled,
-            retry: retry
+            retry: retry,
+            unavailableSources: automaticUnavailableSources
         )
     }
 }

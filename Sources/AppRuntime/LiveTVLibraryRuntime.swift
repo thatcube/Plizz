@@ -46,6 +46,7 @@ public final class LiveTVLibraryRuntime {
     public private(set) var automaticChannelsEnabled = false
     public private(set) var isPreparingAutomaticChannels = false
     public private(set) var automaticChannelsIssue: LibraryChannelError?
+    public private(set) var automaticUnavailableSources: [LibraryChannelSourceFailure] = []
     public private(set) var automaticSkippedItemCount = 0
     public var automaticChannelCount: Int {
         service.channels.filter { channel in
@@ -138,6 +139,7 @@ public final class LiveTVLibraryRuntime {
                 refreshID = UUID()
                 isPreparingAutomaticChannels = false
                 automaticSkippedItemCount = 0
+                automaticUnavailableSources = []
                 try service.setAutomaticChannelsEnabled(false)
             }
             retry()
@@ -190,6 +192,7 @@ public final class LiveTVLibraryRuntime {
         isPreparingAutomaticChannels = false
         loadIssue = nil
         automaticChannelsIssue = nil
+        automaticUnavailableSources = []
         unavailableAccountIDs = []
         authority.accounts = accounts
         if !retainsAuthorization {
@@ -221,6 +224,7 @@ public final class LiveTVLibraryRuntime {
                 accounts: accounts, requiredAccountIDs: requiredAccounts, stamp: stamp, expected: expected)
             try check(stamp, accounts: accounts, expected: expected)
             unavailableAccountIDs = discovery.unavailableAccountIDs
+            automaticUnavailableSources = discovery.failures
             authority.expectedAccounts = expected
             service.updateContexts(discovery.contexts)
             try await service.load()
@@ -237,15 +241,22 @@ public final class LiveTVLibraryRuntime {
                     }
                 }
                 do {
-                    guard unavailableAccountIDs.isEmpty else { throw LibraryChannelError.sourceUnavailable }
-                    let summary = try await service.refreshAutomaticChannels()
+                    let summary = try await service.refreshAutomaticChannels(
+                        unavailableAccountIDs: unavailableAccountIDs)
                     try check(stamp, accounts: accounts, expected: expected)
                     authority.automaticSourceIDs = Set(service.definitions.filter(\.isAutomatic).map(\.sourceID))
                     automaticSkippedItemCount = summary.skippedItemCount
-                    if summary.channelCount == 0 {
-                        automaticChannelsIssue = .emptyCatalog
-                        PlozzLog.app.info("Automatic Plozz channels found no eligible library media")
+                    automaticUnavailableSources = discovery.failures + summary.unavailableSources
+                    unavailableAccountIDs.formUnion(summary.unavailableSources.map(\.accountID))
+                    for failure in summary.unavailableSources {
+                        PlozzLog.app.error("Automatic library catalog failed: \(failure.reason.rawValue)")
                     }
+                    if automaticChannelCount == 0 {
+                        automaticChannelsIssue = automaticUnavailableSources.isEmpty ? .emptyCatalog : .sourceUnavailable
+                        PlozzLog.app.info("Automatic Plozz channels have no currently available library media")
+                    }
+                    PlozzLog.app.info(
+                        "Automatic Plozz channels prepared channels=\(automaticChannelCount) items=\(summary.eligibleItemCount) unavailableSources=\(automaticUnavailableSources.count)")
                     lastAutomaticRefresh = Date()
                 } catch is CancellationError {
                     throw CancellationError()
@@ -273,11 +284,15 @@ public final class LiveTVLibraryRuntime {
     private func discoverContexts(
         accounts: AccountsProvidersModel?, requiredAccountIDs: Set<String>?,
         stamp: UUID, expected: String
-    ) async throws -> (contexts: [LibraryChannelProviderContext], unavailableAccountIDs: Set<String>) {
+    ) async throws -> (
+        contexts: [LibraryChannelProviderContext], unavailableAccountIDs: Set<String>,
+        failures: [LibraryChannelSourceFailure]
+    ) {
         try check(stamp, accounts: accounts, expected: expected)
-        if requiredAccountIDs?.isEmpty == true { return ([], []) }
+        if requiredAccountIDs?.isEmpty == true { return ([], [], []) }
         var contexts: [LibraryChannelProviderContext] = []
         var unavailable: Set<String> = []
+        var failures: [LibraryChannelSourceFailure] = []
         for resolved in accounts?.resolvedActiveAccounts ?? [] {
             guard requiredAccountIDs?.contains(resolved.account.id) ?? true else { continue }
             guard let provider = resolved.provider as? any LibraryChannelCatalogProviding,
@@ -293,10 +308,13 @@ public final class LiveTVLibraryRuntime {
             } catch {
                 try check(stamp, accounts: accounts, expected: expected)
                 unavailable.insert(resolved.account.id)
-                PlozzLog.app.error("Live TV library discovery failed for an authorized source")
+                let failure = LibraryChannelSourceFailure(
+                    accountID: resolved.account.id, serverName: resolved.account.server.name, error: error)
+                failures.append(failure)
+                PlozzLog.app.error("Live TV library discovery failed for an authorized source: \(failure.reason.rawValue)")
             }
         }
-        return (contexts, unavailable)
+        return (contexts, unavailable, failures)
     }
 
     static func requiredDiscoveryAccountIDs(definitions: [LibraryChannelDefinition]) -> Set<String> {
