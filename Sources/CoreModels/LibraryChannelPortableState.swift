@@ -74,7 +74,8 @@ public enum LibraryChannelImportMerger {
                 continue
             }
             let local = merged[index]
-            guard local.sourceID == remote.sourceID, local.profileID == remote.profileID else {
+            guard local.sourceID == remote.sourceID, local.profileID == remote.profileID,
+                  local.automaticKey == remote.automaticKey else {
                 throw LibraryChannelError.publicationConflict
             }
             let oldSchedule = try LibraryChannelSchedule(definition: local, snapshots: snapshots)

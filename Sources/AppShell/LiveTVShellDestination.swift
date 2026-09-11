@@ -109,6 +109,7 @@ struct LiveTVShellDestination: View {
             libraryService: library.service,
             libraryHistory: library.history,
             libraryIssue: library.issue,
+            automaticChannels: library.automaticChannelsPresentation,
             reloadLibrary: library.retry,
             prepareLibraryChannels: library.prepareForEditing,
             libraryIsAuthorized: { [weak library] in library?.authorizationID != nil },
@@ -232,9 +233,14 @@ private struct LiveTVShellSourcesContent: View {
             }
         }
         .navigationDestination(isPresented: $managesChannels) {
-            LiveTVSourcesLibraryView(runtime: runtime, library: library) {
+            if runtime.isCurrent {
                 LibraryChannelManagementView(
-                    service: library.service, history: library.history, prepareLibraries: library.prepareForEditing)
+                    service: library.service, history: library.history, prepareLibraries: library.prepareForEditing,
+                    automaticChannels: library.automaticChannelsPresentation)
+            } else {
+                ContentUnavailableView(
+                    "Profile access changed", systemImage: "lock",
+                    description: Text("Reopen Sources to continue."))
             }
         }
         .navigationDestination(isPresented: $scansChannels) {
@@ -252,6 +258,20 @@ private struct LiveTVShellSourcesContent: View {
             scansChannels = false
             scanOfferSourceID = nil
         }
+    }
+}
+
+private extension LiveTVLibraryRuntime {
+    var automaticChannelsPresentation: LiveTVAutomaticChannelsState {
+        LiveTVAutomaticChannelsState(
+            enabled: automaticChannelsEnabled,
+            isWorking: isPreparingAutomaticChannels,
+            issue: automaticChannelsIssue,
+            channelCount: automaticChannelCount,
+            skippedItemCount: automaticSkippedItemCount,
+            setEnabled: setAutomaticChannelsEnabled,
+            retry: retry
+        )
     }
 }
 #endif

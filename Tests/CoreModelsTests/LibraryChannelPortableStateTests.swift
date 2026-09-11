@@ -155,4 +155,26 @@ final class LibraryChannelPortableStateTests: XCTestCase {
         ))
         XCTAssertEqual(try merge([local], [remote], snapshots: [old, future])[0].revisions, local.revisions)
     }
+
+    func testAutomaticOriginSurvivesPortableMergeAndCannotBecomeCustom() throws {
+        let snapshot = try snapshot("movie")
+        let key = "v1/movies"
+        let automatic = LibraryChannelDefinition(
+            id: LibraryChannelAutomaticIdentity.channelID(profileID: "profile", key: key),
+            sourceID: LibraryChannelAutomaticIdentity.sourceID(profileID: "profile", key: key),
+            profileID: "profile", revisions: definition(snapshot).revisions, automaticKey: key
+        )
+        var disabled = automatic
+        disabled.isEnabled = false
+        let state = try LibraryChannelPortableState(definitions: [disabled], snapshots: [snapshot])
+        let decoded = try JSONDecoder().decode(LibraryChannelPortableState.self, from: JSONEncoder().encode(state))
+        XCTAssertEqual(try merge([automatic], decoded.definitions, snapshots: decoded.snapshots), [disabled])
+        let stripped = LibraryChannelDefinition(
+            id: automatic.id, sourceID: automatic.sourceID, profileID: automatic.profileID,
+            revisions: automatic.revisions
+        )
+        XCTAssertThrowsError(try merge([automatic], [stripped], snapshots: [snapshot])) {
+            XCTAssertEqual($0 as? LibraryChannelError, .publicationConflict)
+        }
+    }
 }

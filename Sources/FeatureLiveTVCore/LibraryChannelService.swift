@@ -76,6 +76,31 @@ public struct LibraryChannelPlaybackContext: Sendable {
 @MainActor
 @Observable
 public final class LibraryChannelService {
+    private struct ContextIdentity: Equatable {
+        let authorizationID: String
+        let allowedLibraryIDs: Set<String>
+        let provider: ProviderKind
+        let serverProvider: ProviderKind
+        let serverID: String
+        let baseURL: URL
+        let userID: String
+        let deviceID: String
+        let accessToken: String
+
+        init(_ context: LibraryChannelProviderContext) {
+            let session = context.provider.session
+            authorizationID = context.authorizationID
+            allowedLibraryIDs = context.allowedLibraryIDs
+            provider = context.provider.kind
+            serverProvider = session.server.provider
+            serverID = session.server.id
+            baseURL = session.server.baseURL
+            userID = session.userID
+            deviceID = session.deviceID
+            accessToken = session.accessToken
+        }
+    }
+
     public let profileID: String
     public private(set) var definitions: [LibraryChannelDefinition] = []
     public private(set) var libraryChoices: [LibraryChannelLibraryChoice] = []
@@ -85,8 +110,11 @@ public final class LibraryChannelService {
     @ObservationIgnored private let store: any LibraryChannelDefinitionStoring
     @ObservationIgnored private let snapshotStore: any LibraryChannelSnapshotStoring
     @ObservationIgnored private var contexts: [String: LibraryChannelProviderContext] = [:]
+    @ObservationIgnored private var contextIdentities: [String: ContextIdentity] = [:]
     @ObservationIgnored private var snapshots: [UUID: LibraryChannelSnapshot] = [:]
     @ObservationIgnored private var schedules: [UUID: LibraryChannelSchedule] = [:]
+    @ObservationIgnored private var automaticGeneration = UUID()
+    @ObservationIgnored private var discoveredLibraries: Set<LibraryChannelLibrary>?
     @ObservationIgnored private let isActive: @MainActor @Sendable () -> Bool
     @ObservationIgnored private let isSourceAllowed: @MainActor @Sendable (UUID) -> Bool
     public static let retainedHistory: TimeInterval = 24 * 60 * 60
@@ -107,7 +135,19 @@ public final class LibraryChannelService {
     public func setContexts(_ values: [LibraryChannelProviderContext]) {
         generation = UUID()
         contexts = Dictionary(values.map { ($0.accountID, $0) }, uniquingKeysWith: { _, new in new })
+        contextIdentities = contexts.mapValues(ContextIdentity.init)
+        discoveredLibraries = nil
         libraryChoices = []
+    }
+
+    /// Routine discovery must not revoke a held tune when only provider instances or display metadata changed.
+    /// Explicit setContexts always invalidates, even for equal values.
+    public func updateContexts(_ values: [LibraryChannelProviderContext]) {
+        let identities = Dictionary(
+            values.map { ($0.accountID, ContextIdentity($0)) }, uniquingKeysWith: { _, new in new }
+        )
+        guard identities != contextIdentities else { return }
+        setContexts(values)
     }
 
     public func load() async throws {
@@ -130,11 +170,23 @@ public final class LibraryChannelService {
             else { unavailable = true }
             try check(stamp)
         }
-        var schedules: [UUID: LibraryChannelSchedule] = [:]
-        for definition in loaded {
-            if definition.revisions.allSatisfy({ cached[$0.snapshotID] != nil }) {
-                schedules[definition.id] = try LibraryChannelSchedule(definition: definition, snapshots: cached)
+        let loadedDefinitions = loaded
+        let cachedSnapshots = cached
+        let scheduleTask = Task.detached(priority: .utility) {
+            var result: [UUID: LibraryChannelSchedule] = [:]
+            for definition in loadedDefinitions {
+                try Task.checkCancellation()
+                if definition.revisions.allSatisfy({ cachedSnapshots[$0.snapshotID] != nil }) {
+                    result[definition.id] = try LibraryChannelSchedule(definition: definition, snapshots: cachedSnapshots)
+                }
             }
+            try Task.checkCancellation()
+            return result
+        }
+        let schedules = try await withTaskCancellationHandler {
+            try await scheduleTask.value
+        } onCancel: {
+            scheduleTask.cancel()
         }
         try check(stamp)
         guard definitions == previous, try store.load() == stored else {
@@ -167,11 +219,98 @@ public final class LibraryChannelService {
         libraryChoices = choices
     }
 
+    /// Only the profile-level switch changes automatic enablement. Custom definitions are untouched.
+    public func setAutomaticChannelsEnabled(_ enabled: Bool) throws {
+        // Fence first-enable preparation even if cancellation or persistence prevents saving the switch.
+        automaticGeneration = UUID()
+        try check(generation)
+        guard isLoaded else { throw LibraryChannelError.storageFailed }
+        let previous = definitions
+        var updated = previous
+        for index in updated.indices where updated[index].isAutomatic {
+            updated[index].isEnabled = enabled
+        }
+        try persist(updated, replacing: previous)
+        definitions = updated
+        notifyStoredChange(replacing: previous)
+    }
+
+    public func refreshAutomaticChannels(at now: Date = Date()) async throws -> LibraryChannelAutomaticGenerationSummary {
+        let stamp = generation
+        let automaticStamp = automaticGeneration
+        try check(stamp)
+        guard now.timeIntervalSince1970.isFinite, now.timeIntervalSince1970 >= 0,
+              now.timeIntervalSince1970 < 253_402_300_798 else { throw LibraryChannelError.invalidSnapshot }
+        guard isLoaded else { throw LibraryChannelError.storageFailed }
+        let previous = definitions
+        guard try store.load() == previous else { throw LibraryChannelError.publicationConflict }
+        let providerContexts = Array(contexts.values)
+        let profileID = profileID
+        let cachedSnapshots = snapshots
+        let cachedSchedules = schedules
+        let catalogTask = Task.detached(priority: .utility) {
+            try await LibraryChannelAutomaticCatalog.fetch(contexts: providerContexts) {
+                try await self.checkAutomatic(stamp: stamp, automaticStamp: automaticStamp)
+            }
+        }
+        let catalog = try await withTaskCancellationHandler {
+            try await catalogTask.value
+        } onCancel: {
+            catalogTask.cancel()
+        }
+        try checkAutomatic(stamp: stamp, automaticStamp: automaticStamp)
+        let formerlyAccessible = discoveredLibraries ?? Set(providerContexts.flatMap { context in
+            context.allowedLibraryIDs.map { LibraryChannelLibrary(accountID: context.accountID, libraryID: $0) }
+        })
+        if !formerlyAccessible.subtracting(catalog.accessibleLibraries).isEmpty { generation = UUID() }
+        discoveredLibraries = catalog.accessibleLibraries
+        let publicationStamp = generation
+        let groupTask = Task.detached(priority: .utility) {
+            try LibraryChannelAutomaticPlanner.groups(catalog: catalog, profileID: profileID)
+        }
+        let groups = try await withTaskCancellationHandler {
+            try await groupTask.value
+        } onCancel: {
+            groupTask.cancel()
+        }
+        try checkAutomatic(stamp: publicationStamp, automaticStamp: automaticStamp)
+        let blockedSources = Set(groups.map {
+            LibraryChannelAutomaticIdentity.sourceID(profileID: profileID, key: $0.key)
+        }.filter { !isSourceAllowed($0) })
+        let publicationTask = Task.detached(priority: .utility) {
+            try LibraryChannelAutomaticPublication.prepare(
+                groups: groups, profileID: profileID, previous: previous, snapshots: cachedSnapshots,
+                schedules: cachedSchedules, blockedSourceIDs: blockedSources, now: now
+            )
+        }
+        let publication = try await withTaskCancellationHandler {
+            try await publicationTask.value
+        } onCancel: {
+            publicationTask.cancel()
+        }
+        try checkAutomatic(stamp: publicationStamp, automaticStamp: automaticStamp)
+        let requiredSources = Set(groups.map {
+            LibraryChannelAutomaticIdentity.sourceID(profileID: profileID, key: $0.key)
+        }).subtracting(blockedSources)
+        try await commit(
+            publication, replacing: previous, stamp: publicationStamp, automaticStamp: automaticStamp,
+            requiredSources: requiredSources
+        )
+        libraryChoices = catalog.libraries
+        issue = definitions.flatMap(\.revisions).contains { snapshots[$0.snapshotID] == nil } ? .snapshotUnavailable : nil
+        return LibraryChannelAutomaticGenerationSummary(
+            channelCount: definitions.filter { $0.isAutomatic && $0.isEnabled && isSourceAllowed($0.sourceID) }.count,
+            eligibleItemCount: catalog.entries.count, skippedItemCount: catalog.skippedItemCount
+        )
+    }
+
     public func preview(
         recipe: LibraryChannelRecipe, editingChannelID: UUID? = nil, at now: Date = Date()
     ) async throws -> LibraryChannelPreview {
         try recipe.validate()
         let stamp = generation
+        try check(stamp)
+        try checkManualChannel(editingChannelID)
         var items: [LibraryChannelItem] = []
         var invalidDurations = 0
         var seen: Set<String> = []
@@ -269,6 +408,7 @@ public final class LibraryChannelService {
     ) async throws -> LibraryChannelDefinition {
         try check(preview.authorizationGeneration)
         guard isLoaded else { throw LibraryChannelError.storageFailed }
+        try checkManualChannel(editingChannelID)
         let previous = definitions
         let stored = try store.load()
         guard stored == previous else { throw LibraryChannelError.publicationConflict }
@@ -300,37 +440,24 @@ public final class LibraryChannelService {
                 LibraryChannelRevision(snapshotID: preview.snapshot.id, recipe: preview.recipe, epochSeconds: epoch)
             ])
         }
-        guard let staging = snapshotStore as? any LibraryChannelSnapshotStaging else {
-            throw LibraryChannelError.storageFailed
-        }
-        let lease = try await staging.stage([preview.snapshot], profileID: profileID)
-        do {
-            try check(preview.authorizationGeneration)
-            // Portable sync can commit without updating this service's cached definitions.
-            guard definitions == previous, try store.load() == stored else {
-                throw LibraryChannelError.publicationConflict
-            }
-            if let index = updated.firstIndex(where: { $0.id == definition.id }) { updated[index] = definition }
-            else { updated.append(definition) }
-            var nextSnapshots = snapshots
-            nextSnapshots[preview.snapshot.id] = preview.snapshot
-            let schedule = try LibraryChannelSchedule(definition: definition, snapshots: nextSnapshots)
-            try persist(updated, replacing: stored)
-            snapshots = nextSnapshots
-            schedules[definition.id] = schedule
-            definitions = updated
-            notifyStoredChange(replacing: stored)
-        } catch {
-            await staging.release(lease)
-            throw error
-        }
-        await staging.release(lease)
-        try await retainReferencedSnapshots()
+        if let index = updated.firstIndex(where: { $0.id == definition.id }) { updated[index] = definition }
+        else { updated.append(definition) }
+        var nextSnapshots = snapshots
+        nextSnapshots[preview.snapshot.id] = preview.snapshot
+        var nextSchedules = schedules
+        nextSchedules[definition.id] = try LibraryChannelSchedule(definition: definition, snapshots: nextSnapshots)
+        try await commit(
+            LibraryChannelPublication(
+                definitions: updated, snapshots: nextSnapshots, schedules: nextSchedules, staged: [preview.snapshot]
+            ),
+            replacing: stored, stamp: preview.authorizationGeneration
+        )
         return definition
     }
 
     public func delete(channelID: UUID) async throws {
         try check(generation)
+        try checkManualChannel(channelID)
         let previous = definitions
         let updated = previous.filter { $0.id != channelID }
         try persist(updated, replacing: previous)
@@ -344,7 +471,8 @@ public final class LibraryChannelService {
 
     public func isAuthorized(_ item: LibraryChannelItem) -> Bool {
         guard isActive(), let context = contexts[item.library.accountID],
-              context.allowedLibraryIDs.contains(item.library.libraryID) else { return false }
+              context.allowedLibraryIDs.contains(item.library.libraryID),
+              discoveredLibraries?.contains(item.library) ?? true else { return false }
         return context.provider.session.server.id == item.serverID && context.provider.session.userID == item.userID
     }
 
@@ -384,6 +512,7 @@ public final class LibraryChannelService {
               let recipe = definition.revisions.last?.recipe,
               recipe.libraries.allSatisfy({
                   contexts[$0.accountID]?.allowedLibraryIDs.contains($0.libraryID) == true
+                      && (discoveredLibraries?.contains($0) ?? true)
               }) else { return nil }
         do {
             // A held schedule can outlive its durable authority, but a newer revision is not revocation.
@@ -414,7 +543,10 @@ public final class LibraryChannelService {
     public var channels: [LiveTVPrototypeChannel] {
         visibleDefinitions.filter(\.isEnabled).enumerated().compactMap { index, definition in
             guard let recipe = definition.revisions.last?.recipe,
-                  recipe.libraries.allSatisfy({ contexts[$0.accountID]?.allowedLibraryIDs.contains($0.libraryID) == true }),
+                  recipe.libraries.allSatisfy({
+                      contexts[$0.accountID]?.allowedLibraryIDs.contains($0.libraryID) == true
+                          && (discoveredLibraries?.contains($0) ?? true)
+                  }),
                   isActive() else { return nil }
             return LiveTVPrototypeChannel(
                 id: definition.catalogID, number: index + 1, name: recipe.name,
@@ -463,6 +595,53 @@ public final class LibraryChannelService {
     private func check(_ stamp: UUID) throws {
         try Task.checkCancellation()
         guard isActive(), stamp == generation else { throw LibraryChannelError.authorizationChanged }
+    }
+
+    private func checkManualChannel(_ channelID: UUID?) throws {
+        if let channelID, definitions.contains(where: { $0.id == channelID && $0.isAutomatic }) {
+            throw LibraryChannelError.invalidRecipe
+        }
+    }
+
+    private func checkAutomatic(stamp: UUID, automaticStamp: UUID) throws {
+        try check(stamp)
+        guard automaticStamp == automaticGeneration else { throw LibraryChannelError.authorizationChanged }
+    }
+
+    private func commit(
+        _ publication: LibraryChannelPublication, replacing previous: [LibraryChannelDefinition],
+        stamp: UUID, automaticStamp: UUID? = nil, requiredSources: Set<UUID> = []
+    ) async throws {
+        try check(stamp)
+        if let automaticStamp { try checkAutomatic(stamp: stamp, automaticStamp: automaticStamp) }
+        guard requiredSources.allSatisfy(isSourceAllowed) else { throw LibraryChannelError.authorizationChanged }
+        guard definitions == previous, try store.load() == previous else {
+            throw LibraryChannelError.publicationConflict
+        }
+        guard publication.definitions != previous || !publication.staged.isEmpty else { return }
+        guard let staging = snapshotStore as? any LibraryChannelSnapshotStaging else {
+            throw LibraryChannelError.storageFailed
+        }
+        let lease = try await staging.stage(publication.staged, profileID: profileID)
+        do {
+            try check(stamp)
+            if let automaticStamp { try checkAutomatic(stamp: stamp, automaticStamp: automaticStamp) }
+            guard requiredSources.allSatisfy(isSourceAllowed) else { throw LibraryChannelError.authorizationChanged }
+            // Portable sync can commit without updating this service's cached definitions.
+            guard definitions == previous, try store.load() == previous else {
+                throw LibraryChannelError.publicationConflict
+            }
+            try persist(publication.definitions, replacing: previous)
+            snapshots = publication.snapshots
+            schedules = publication.schedules
+            definitions = publication.definitions
+            notifyStoredChange(replacing: previous)
+        } catch {
+            await staging.release(lease)
+            throw error
+        }
+        await staging.release(lease)
+        try await retainReferencedSnapshots()
     }
 
     private func seriesMetadata(

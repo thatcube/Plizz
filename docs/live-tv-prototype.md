@@ -58,7 +58,8 @@ play an unsolicited channel. Add your own M3U playlist or use an authorized
 connected server. Plozz does not provide or offer a public channel catalog.
 Setup uses matching source cards with an icon, description and explicit action.
 Cards share their width and height in a row, and stack when space or larger text
-requires it. Authorized library-channel creation uses the same card treatment.
+requires it. Plozz channels uses the same card treatment for its automatic
+library-lineup enable flow; custom channel creation is secondary.
 Enabled sources are combined;
 adding one does not replace another. Channels become available before guide
 loading finishes. There is one unified
@@ -285,13 +286,52 @@ is no prior in-memory history to migrate on the first updated launch.
 
 ### Connected-server Live TV and standalone setup
 
-IPTV playlists and XMLTV guides do not require a media server. The library-channel
-runtime loads local definitions without querying unrelated connected servers.
-Automatic library discovery is limited to libraries referenced by enabled Plozz
-channels; opening their editor explicitly discovers the other available libraries.
+IPTV playlists and XMLTV guides do not require a media server. With automatic
+Plozz channels disabled, the library-channel runtime loads local definitions
+without querying unrelated connected servers. Discovery is limited to libraries
+referenced by enabled custom channels; opening their editor explicitly discovers
+the other available libraries. Enabling automatic Plozz channels opts into
+discovery of the profile's accessible supported libraries.
 A failure in an unused server is not reported as a broken channel in the IPTV
 guide. Failures affecting configured Plozz channels and saved schedules remain
 visible, and editor-only discovery errors stay in the editor.
+
+### Automatic Plozz channels
+
+Enable **Plozz channels** once to prepare a lineup from the accessible movie and
+TV libraries on Plex, Jellyfin and Emby. The automatic path does not ask for
+channel names, library selections or scheduling rules. **Create custom channel**
+remains available separately for users who want a particular recipe.
+
+The lineup is based on actual library metadata, not a fixed catalogue of empty
+presets. Broad movie and TV channels cover eligible content, with useful themed
+channels where enough matching content exists: genres, decades, animation,
+family-friendly ratings, studios/networks and directors. Animation alone is not
+evidence that a title is suitable for children. Missing metadata does not produce
+invented classifications or cause an otherwise playable title to disappear from
+the broad channels.
+
+Automatic selection favors a compact, varied lineup: up to 24 themed channels
+alongside the broad channels, skipping duplicate lineups and themes with too
+little distinct content. Existing catalogue and snapshot limits still apply;
+an oversized broad catalogue reports a preparation error instead of silently
+omitting part of the library. Metadata-poor libraries may therefore have fewer
+themed channels, but do not require manual recipes.
+
+The opt-in is stored per profile on this device and defaults to Off. Disabling
+it stops automatic discovery and removes generated channels from playback and
+the guide without deleting their saved identities or any custom channel/IPTV
+source. Re-enabling reuses the generated lineup rather than making duplicates.
+Imported generated definitions do not opt a new device into library discovery.
+
+Preparation and failures are visible in Plozz-channel management. An empty or
+unavailable library does not turn an unrelated IPTV station into a failed
+library channel. Catalogue changes trigger coalesced refreshes; foreground
+periodic refreshes provide a fallback. Refreshes wait while playback holds live
+identities. Published programme slots remain frozen, with changed catalogues
+applied in future schedule revisions rather than rerolling the current show.
+
+### Connected-server tuning
 
 Jellyfin, Emby and Plex adapters discover authorized channels, load native guide
 data, and open explicitly owned live-stream sessions. Plex tunes the selected

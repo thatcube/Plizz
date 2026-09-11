@@ -57,6 +57,28 @@ final class LiveTVSourceAccessTests: XCTestCase {
         XCTAssertTrue(LiveTVSourceManagementAccess(profiles: profiles).canManage)
     }
 
+    func testAutomaticChannelsUseTheSourceManagementPINGrantAndRevokeIt() async throws {
+        let (profiles, suite) = makeProfiles()
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+        let child = profiles.add(name: "Child", isKidsProfile: true)
+        profiles.select(child.id)
+        profiles.setParentalPIN(try XCTUnwrap(ParentalPIN.make(pin: "1234", iterations: 1)))
+        let access = LiveTVSourceManagementAccess(profiles: profiles)
+        let action = LiveTVAutomaticChannelsAction()
+        var changes: [Bool] = []
+        let state = LiveTVAutomaticChannelsState(
+            enabled: false, isWorking: false, issue: nil, channelCount: 0, skippedItemCount: 0,
+            setEnabled: { changes.append($0) }, retry: {})
+        await action.setEnabled(true, state: state, canManage: { access.canManage })
+        XCTAssertTrue(changes.isEmpty)
+        access.unlock("1234")
+        await action.setEnabled(true, state: state, canManage: { access.canManage })
+        XCTAssertEqual(changes, [true])
+        profiles.setParentalPIN(try XCTUnwrap(ParentalPIN.make(pin: "5678", iterations: 1)))
+        await action.setEnabled(true, state: state, canManage: { access.canManage })
+        XCTAssertEqual(changes, [true])
+    }
+
     private func makeProfiles() -> (ProfilesModel, String) {
         let suite = "LiveTVSourceAccessTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!

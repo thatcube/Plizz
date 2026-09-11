@@ -12,7 +12,7 @@ extension JellyfinProvider: LibraryChannelCatalogProviding, LibraryChannelPlayba
             userID: session.userID, parentID: libraryID,
             includeItemTypes: [kind == .movie ? "Movie" : (kind == .series ? "Series" : "Episode")],
             recursive: true, startIndex: page.startIndex, limit: page.limit, sort: page.sort,
-            fields: "Genres,OfficialRating,RunTimeTicks,MediaSources,SeriesId,ParentId"
+            fields: "Genres,OfficialRating,RunTimeTicks,MediaSources,SeriesId,ParentId,Studios,People"
         )
         guard let total = response.TotalRecordCount else { throw LibraryChannelError.invalidSnapshot }
         let items = response.Items.map { dto in

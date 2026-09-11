@@ -6,7 +6,7 @@ import XCTest
 
 @MainActor
 final class LibraryChannelEditorTests: XCTestCase {
-    private func editor() async throws -> LibraryChannelEditorModel {
+    private func editor(canManage: @escaping @MainActor () -> Bool = { true }) async throws -> LibraryChannelEditorModel {
         let service = LibraryChannelService(
             profileID: "profile", store: LibraryEditorDefinitions(),
             snapshotStore: LibraryChannelSnapshotStore(databaseURL: nil)
@@ -16,7 +16,7 @@ final class LibraryChannelEditorTests: XCTestCase {
             provider: LibraryEditorProvider(), allowedLibraryIDs: ["library"]
         )])
         try await service.load()
-        let model = LibraryChannelEditorModel(service: service, editingChannelID: nil)
+        let model = LibraryChannelEditorModel(service: service, editingChannelID: nil, canManage: canManage)
         model.recipe.name = "Movies"
         model.recipe.libraries = [.init(accountID: "account", libraryID: "library")]
         model.recipe.includesEpisodes = false
@@ -85,6 +85,29 @@ final class LibraryChannelEditorTests: XCTestCase {
         await model.load { throw LibraryChannelError.sourceUnavailable }
         XCTAssertEqual(model.issue, .sourceUnavailable)
         XCTAssertFalse(model.isWorking)
+    }
+
+    func testRevokedSourceManagementGrantPreventsCustomChannelPublication() async throws {
+        var allowed = true
+        let model = try await editor(canManage: { allowed })
+        await model.preview()
+        XCTAssertNotNil(model.currentPreview)
+        allowed = false
+        XCTAssertNil(model.currentPreview)
+        let saved = await model.save()
+        XCTAssertFalse(saved)
+        XCTAssertEqual(model.issue, .authorizationChanged)
+        XCTAssertTrue(model.service.definitions.isEmpty)
+    }
+
+    func testLockedEditorDoesNotDiscoverLibrariesOrPreview() async throws {
+        let model = try await editor(canManage: { false })
+        var discoveryCount = 0
+        await model.load { discoveryCount += 1 }
+        await model.preview()
+        XCTAssertEqual(discoveryCount, 0)
+        XCTAssertNil(model.currentPreview)
+        XCTAssertEqual(model.issue, .authorizationChanged)
     }
 }
 

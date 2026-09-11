@@ -1,7 +1,9 @@
 import CoreModels
 import CoreUI
 import Foundation
+import FeatureLiveTVCore
 import FeatureSettings
+import Observation
 import SwiftUI
 @testable import FeatureLiveTV
 
@@ -10,8 +12,11 @@ struct SourceOnboardingFixture: View {
     @State private var path: [Destination] = []
     @State private var profiles = ProfilesModel(store: SourceSmokeProfiles())
     @State private var sources = SourceSmokeStore()
+    @State private var automatic = AutomaticChannelsFixtureModel()
+    @State private var automaticLoadIssue: LibraryChannelError?
     private let usesTypedNavigation = ProcessInfo.processInfo.arguments.contains("--typed-sources")
     private let usesSettings = ProcessInfo.processInfo.arguments.contains("--source-settings")
+    private let usesAutomaticChannels = ProcessInfo.processInfo.arguments.contains("--automatic-channels")
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -22,7 +27,9 @@ struct SourceOnboardingFixture: View {
                     store: SourceSmokeViewSettings(),
                     preferencesStore: SourceSmokePreferences()
                 ) {
-                    AnyView(LiveTVSourcesView(store: sources, presentation: .settingsPane))
+                    AnyView(SourceSmokeSourcesPane(
+                        sources: sources, presentation: .settingsPane,
+                        automatic: usesAutomaticChannels ? automatic : nil))
                 }
             } else if usesTypedNavigation {
                 List {
@@ -31,12 +38,18 @@ struct SourceOnboardingFixture: View {
                 }
                 .navigationTitle("Source navigation fixture")
                 .navigationDestination(for: Destination.self) { _ in
-                    LiveTVSourcesView(store: sources)
+                    SourceSmokeSourcesPane(
+                        sources: sources, presentation: .page,
+                        automatic: usesAutomaticChannels ? automatic : nil)
                 }
             } else {
                 LiveTVPrototypeView(
                     sourceStore: sources, profileID: profiles.activeProfileID,
                     preferencesNamespace: profiles.activeNamespace,
+                    libraryService: usesAutomaticChannels ? automatic.service : nil,
+                    libraryHistory: usesAutomaticChannels ? automatic.history : nil,
+                    automaticChannels: usesAutomaticChannels ? automatic.presentation : nil,
+                    prepareLibraryChannels: {},
                     sourceApprovalContext: { [profiles] in LiveTVSourceApprovalContext(profiles: profiles) }
                 ) { _ in
                     Text("Unexpected playback")
@@ -45,6 +58,24 @@ struct SourceOnboardingFixture: View {
             }
         }
         .environment(profiles)
+        .task {
+            guard usesAutomaticChannels else { return }
+            do { try await automatic.service.load() }
+            catch { automaticLoadIssue = (error as? LibraryChannelError) ?? .storageFailed }
+        }
+        .overlay(alignment: .topTrailing) {
+            if usesAutomaticChannels {
+                VStack {
+                    Text(verbatim: "Enabled \(automatic.enabled) changes \(automatic.changes) retries \(automatic.retries)")
+                        .accessibilityIdentifier("fixture-automatic-metrics")
+                    if let automaticLoadIssue {
+                        Text(automaticLoadIssue.message).accessibilityIdentifier("fixture-automatic-load-error")
+                    }
+                }
+                .font(.caption2)
+                .allowsHitTesting(false)
+            }
+        }
         .overlay(alignment: .bottom) {
             TimelineView(.periodic(from: .now, by: 0.2)) { _ in
                 Text(verbatim: "Sources \(sources.sourceCount) writes \(sources.writeCount) requests \(SourceSmokeNetworkBlocker.requestCount)")
@@ -54,6 +85,64 @@ struct SourceOnboardingFixture: View {
             }
         }
     }
+}
+
+private struct SourceSmokeSourcesPane: View {
+    let sources: SourceSmokeStore
+    let presentation: LiveTVSourcesView.Presentation
+    let automatic: AutomaticChannelsFixtureModel?
+    @State private var managesChannels = false
+
+    var body: some View {
+        LiveTVSourcesView(
+            store: sources, presentation: presentation,
+            createChannel: automatic == nil ? nil : { managesChannels = true }
+        )
+        .navigationDestination(isPresented: $managesChannels) {
+            if let automatic {
+                LibraryChannelManagementView(
+                    service: automatic.service, history: automatic.history,
+                    prepareLibraries: {}, automaticChannels: automatic.presentation)
+            }
+        }
+    }
+}
+
+@MainActor
+@Observable
+private final class AutomaticChannelsFixtureModel {
+    var enabled = ProcessInfo.processInfo.arguments.contains("--automatic-enabled")
+    var isWorking = ProcessInfo.processInfo.arguments.contains("--automatic-working")
+    var issue: LibraryChannelError? = ProcessInfo.processInfo.arguments.contains("--automatic-failure")
+        ? .sourceUnavailable : nil
+    var changes = 0
+    var retries = 0
+    let service = LibraryChannelService(
+        profileID: "source-smoke", store: SourceSmokeDefinitions(),
+        snapshotStore: LibraryChannelSnapshotStore(databaseURL: nil))
+    let history = LibraryChannelHistorySettings(
+        defaults: UserDefaults(suiteName: "AutomaticChannelsFixture.\(UUID().uuidString)")!)
+
+    var presentation: LiveTVAutomaticChannelsState {
+        LiveTVAutomaticChannelsState(
+            enabled: enabled, isWorking: isWorking, issue: issue,
+            channelCount: 0, skippedItemCount: 0,
+            setEnabled: { [self] value in
+                enabled = value
+                isWorking = false
+                issue = nil
+                changes += 1
+            },
+            retry: { [self] in retries += 1 }
+        )
+    }
+}
+
+private final class SourceSmokeDefinitions: LibraryChannelDefinitionStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var definitions: [LibraryChannelDefinition] = []
+    func load() throws -> [LibraryChannelDefinition] { lock.withLock { definitions } }
+    func save(_ value: [LibraryChannelDefinition]) throws { lock.withLock { definitions = value } }
 }
 
 private struct SetupCardsFixture: View {
