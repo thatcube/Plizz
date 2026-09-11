@@ -497,10 +497,56 @@ verify with `python3 tools/generate_home_scrim.py --check` plus
 `python3 tools/test_generate_home_scrim.py`.
 
 The color dissolve is valid only over a known opaque page color. Keep the alpha
-mask on transparent or differently composed surfaces. `HeroBackdropDissolve`
-explicitly animates its start position: static endpoint screenshots alone missed
-an earlier snapping regression. Hosted coverage checks dark/light pixels,
+mask on transparent or differently composed surfaces. Keep the rectangular clip
+after the color fade: the previous alpha mask also clipped child-layer overdraw,
+whereas an overlay alone does not. Hosted coverage reproduces this distinction
+with a synthetic layer extending one point below its host. **That fixture is not
+a reproduction of the reported on-device seam:** the bottom-edge line remained
+during physical Apple TV Down/Up navigation with the clip in place. The original
+mask was restored; the color dissolve remains an unaccepted, opt-in experiment.
+
+`HeroBackdropDissolve` explicitly animates its start position: static endpoint
+screenshots alone missed an earlier snapping regression. Hosted coverage checks dark/light pixels,
 intermediate fade frames, reversal, and the cached texture's RTL behavior.
+
+#### Measure presentation separately from callbacks and startup
+
+`PlozzHomeRemoteTests` can drive a bounded, repeatable Down/Up sequence against
+the installed app without changing its saved settings. It requires the explicit
+runner opt-in `PLOZZ_HOME_REMOTE_CAPTURE=1` and checks the actual Home hero focus
+target, not merely whether the app is foreground. Reject profile-picker runs.
+
+For native animation metrics, launch the app with `PLZPERF_ANIMATIONS=1` and set
+`PLOZZ_HOME_ANIMATION_METRICS=1` on the runner. `HomeRecede` and `HomeReturn`
+animation signposts cover separate 1.2-second windows around the unchanged
+0.9/0.96-second movements. Read XCTest's **hitch time ratio**, not just the
+display-link FPS counter. On an Apple TV 4K (2nd generation), a same-build,
+12-sample comparison starting the driver 120 seconds after each launch request measured
+mean Down/Up hitch ratios of 159.9/285.9 ms/s with analytic shading versus
+0.0/10.2 ms/s with cached shading, both using the original alpha dissolve.
+Callback counters alone had obscured this difference. The frame-count metric
+returned zero on this toolchain; do not report it as a valid frame count.
+
+Those results do **not** establish startup performance. Keep early-launch and
+later-navigation measurements separate, record actual first-move timestamps and
+background curation activity, and reverse comparison order. Do not wait for
+background loading to finish in a test intended to cover startup. XCTest's
+quiescence waits can delay input even with no explicit settling delay; verify
+the actual navigation markers. A prestarted driver can wait for a unique
+`PLZPERF_LAUNCH_TOKEN` on the app's hero accessibility identifier, supplied as
+`PLOZZ_HOME_CAPTURE_LAUNCH_TOKEN` to the runner with
+`PLOZZ_HOME_CAPTURE_PHASE=startup`, but that handshake alone does not prove early
+input. This toolchain also returned no native metrics when the app process
+changed after the test session started. Empty metrics are an invalid capture,
+not zero hitches or a successful performance result.
+
+A subsequent manually driven startup pair did overlap background curation:
+first Down was at 10.9/10.4 seconds, before curation completed at 17.9/16.8
+seconds (original/cached, relative to Home's first diagnostic event, not process
+start). The first 20-second callback windows were similar: median smoothed FPS
+59 in both, reported hitches 2.66/2.55 per second. This establishes loading
+overlap, **not** a proven startup improvement or presented-frame equivalence.
+Keep that limitation separate from the native animation results above.
 
 ---
 

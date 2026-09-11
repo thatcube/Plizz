@@ -442,6 +442,16 @@ targets:
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
 
+  PlozzHomeRemoteTests:
+    type: bundle.ui-testing
+    platform: tvOS
+    sources:
+      - path: Tests/HomeRemoteTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.thatcube.Plozz.HomeRemoteTests
+        GENERATE_INFOPLIST_FILE: YES
+
   PlozzFocusTests:
     type: bundle.unit-test
     platform: tvOS
@@ -461,6 +471,15 @@ targets:
         product: CoreModels
 
 schemes:
+  PlozzHomeRemoteTests:
+    build:
+      targets:
+        PlozzHomeRemoteTests: [test]
+    test:
+      config: Debug
+      targets:
+        - PlozzHomeRemoteTests
+
   PlozzFocusTests:
     build:
       targets:

@@ -16,7 +16,11 @@ public struct HeroBackdropDissolve: ViewModifier, Animatable {
     @ViewBuilder
     public func body(content: Content) -> some View {
         if let background {
-            content.overlay(gradient(tone: background, keepsImage: false))
+            content
+                .overlay(gradient(tone: background, keepsImage: false))
+                // The old alpha mask also clipped video/UIView overdraw. Keep that
+                // boundary even though a color overlay alone would not clip it.
+                .clipped(antialiased: false)
         } else {
             content.mask(gradient(tone: .white, keepsImage: true))
         }

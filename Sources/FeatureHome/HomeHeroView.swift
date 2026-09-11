@@ -896,6 +896,12 @@ struct HomeHeroView: View {
     /// Constant identity for the single focusable action row. Never changes — so
     /// focus is retained across a page (item id changes).
     static let actionRowFocusID = "home-hero-action-row"
+    private static let actionRowAccessibilityID: String = {
+        guard let token = ProcessInfo.processInfo.environment["PLZPERF_LAUNCH_TOKEN"] else {
+            return actionRowFocusID
+        }
+        return "\(actionRowFocusID).\(token)"
+    }()
 
     /// Reserved focus-region size for the env-gated UIKit foreground path
     /// (``HeroForegroundConfig``). When the UIKit view draws the pill visuals, the
@@ -1529,6 +1535,7 @@ struct HomeHeroView: View {
                     }
                     .accessibilityElement(children: .ignore)
                     .accessibilityAddTraits(.isButton)
+                    .accessibilityIdentifier(Self.actionRowAccessibilityID)
                     .accessibilityLabel(accessibilityLabel(for: item))
                     .accessibilityAction { activateSelected() }
                     .modifier(HeroActionAccessibility(actions: a11yActions))
