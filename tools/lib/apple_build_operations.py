@@ -225,7 +225,8 @@ def retired_location(target: dict, history: dict) -> None:
         lease.fail("DerivedData attribution does not match the exact historical workspace")
 
 
-def collect_references(reference: dict, index: cleanup.ReferenceIndex, seen: set[str] | None = None) -> None:
+def collect_references(reference: dict, index: cleanup.ReferenceIndex, seen: set[str] | None = None,
+                       *, kind: str = "retirement") -> None:
     """Only schema-known JSON documents recurse; opaque affirmative evidence does not."""
     seen = seen if seen is not None else set()
     index.add(reference, "operational evidence")
@@ -233,12 +234,25 @@ def collect_references(reference: dict, index: cleanup.ReferenceIndex, seen: set
         return
     seen.add(reference["path"])
     value = policy.document(policy.reference(reference))
-    if set(value) == RETIREMENT_KEYS:
-        collect_references(value["historical_owner"], index, seen)
-        collect_references(value["approval"], index, seen)
-    if set(value) == HISTORY_KEYS:
+    keys = {
+        "retirement": RETIREMENT_KEYS, "history": HISTORY_KEYS,
+        "approval": {"schema", "purpose", "payload_sha256", "approved_by", "approved_at", "evidence"},
+        "release": cleanup.RELEASE_KEYS,
+    }
+    policy.exact(value, keys[kind], f"campaign {kind} evidence")
+    if kind == "release":
+        if type(value["schema"]) is not int or value["schema"] != 1 or value["scope"] != cleanup.SCOPE:
+            lease.fail("unknown campaign release evidence schema")
+    else:
+        v2(value["schema"])
+    if kind == "retirement":
+        collect_references(value["historical_owner"], index, seen, kind="history")
+        collect_references(value["approval"], index, seen, kind="approval")
+    if kind == "history":
         index.add(value["registry"], "historical registry")
-    for evidence in value.get("evidence", []):
+    if not isinstance(value["evidence"], list) or not value["evidence"]:
+        lease.fail("campaign provenance requires explicit evidence")
+    for evidence in value["evidence"]:
         index.add(evidence, "affirmative evidence")
 
 
@@ -345,6 +359,12 @@ def campaign(path: Path, unit_id: str, *, now: dt.datetime) -> Path:
     reviewed = policy.timestamp(value["reviewed_at"])
     approval = approved({k: v for k, v in value.items() if k != "approval"}, value["approval"],
                         purpose="bounded-campaign", earliest=reviewed, now=now)
+    references = cleanup.ReferenceIndex()
+    references.add(cleanup.reference_for(path), "campaign")
+    references.add(value["approval"], "campaign approval")
+    for ref in approval["evidence"]:
+        references.add(ref, "campaign approval evidence")
+    visited = set()
     roots, ids, manifests = [], set(), {}
     for unit in units:
         policy.exact(unit, {"id", "manifest"}, "campaign unit")
@@ -352,6 +372,7 @@ def campaign(path: Path, unit_id: str, *, now: dt.datetime) -> Path:
         if identity in ids:
             lease.fail("duplicate campaign unit")
         ids.add(identity)
+        references.add(unit["manifest"], "campaign unit")
         document = policy.document(policy.reference(unit["manifest"]))
         policy.exact(document, {"schema", "scope", "targets"}, "campaign unit envelope")
         if type(document["schema"]) is not int or document["schema"] != 1 or document["scope"] != cleanup.SCOPE:
@@ -362,13 +383,23 @@ def campaign(path: Path, unit_id: str, *, now: dt.datetime) -> Path:
         cleanup.require_target_limit(len(targets))
         if sum(cleanup.integer(t["tree"]["entries"], "entries", minimum=1) for t in targets) > cleanup.MAX_TREE_ENTRIES:
             lease.fail("campaign unit exceeds aggregate entry limit")
+        for target in targets:
+            retired = target.get("ownership") == "retired-v2"
+            policy.exact(target, cleanup.TARGET_KEYS | ({"ownership"} if retired else set()),
+                         "campaign target")
+            collect_references(target["release_record"], references, visited,
+                               kind="retirement" if retired else "release")
+            if not isinstance(target["release_evidence"], list) or not target["release_evidence"]:
+                lease.fail("campaign target requires release evidence")
+            for ref in target["release_evidence"]:
+                references.add(ref, "campaign target evidence")
         roots.extend(missing_path(t["path"]) for t in targets)
         manifests[identity] = Path(unit["manifest"]["path"])
     index = cleanup.TargetIndex(roots)
-    for protected in [path, *manifests.values(), Path(value["approval"]["path"]),
-                      *(Path(r["path"]) for r in approval["evidence"])]:
-        if index.contains(protected):
+    for reference in references.references.values():
+        if index.contains(Path(reference["path"])):
             lease.fail("campaign evidence overlaps targets")
+    references.validate()
     if unit_id not in manifests:
         lease.fail("unit was not explicitly reviewed in campaign")
     return manifests[unit_id]
@@ -539,6 +570,7 @@ def resolve_record(request_path: Path, journal_path: Path, *,
             check()
             archive_root = lease.paths()["root"] / "resolutions-v2"
             lease.ensure_secure_directory(archive_root, create=True)
+            lease.fsync_directory(lease.paths()["root"])
             archive = archive_root / record["lease_id"]
             archive.mkdir(mode=0o700)
             lease.fsync_directory(archive_root)
@@ -708,8 +740,13 @@ def install_prepared(stage_path: Path, approval_ref: dict, journal_path: Path, *
                 "schema", "host", "prepared_at", "window", "manifest", "controls", "suspension", "expected",
             }, "staged rollout")
             v2(stage["schema"])
-            approved(stage, approval_ref, purpose="install-suspended-rollout",
-                     earliest=policy.timestamp(stage["prepared_at"]), now=now)
+            install_approval = approved(
+                stage, approval_ref, purpose="install-suspended-rollout",
+                earliest=policy.timestamp(stage["prepared_at"]), now=now,
+            )
+            def check_install_approval():
+                policy.reference(approval_ref)
+                refs(install_approval["evidence"])
             if stage["host"] != policy.host_identity() or lease.scan_records():
                 lease.fail("host changed or retained lease blocks installation")
             p = lease.paths()
@@ -747,7 +784,7 @@ def install_prepared(stage_path: Path, approval_ref: dict, journal_path: Path, *
                 policy.reference(stage["window"])
                 policy.reference(stage["controls"])
                 policy.reference(stage["manifest"])
-                policy.reference(approval_ref)
+                check_install_approval()
                 policy.validate_package(package, manifest_path)
                 validate_controls(controls, package, manifest, now=cleanup.now_utc())
                 if file_state(p["root"] / name) != stage["expected"][name]:
@@ -759,7 +796,7 @@ def install_prepared(stage_path: Path, approval_ref: dict, journal_path: Path, *
                 policy.reference(stage["window"])
                 policy.reference(stage["controls"])
                 policy.reference(stage["manifest"])
-                policy.reference(approval_ref)
+                check_install_approval()
                 cleanup.require_no_build_activity()
                 policy.validate_package(package, manifest_path)
                 validate_controls(controls, package, manifest, now=cleanup.now_utc())
@@ -770,6 +807,7 @@ def install_prepared(stage_path: Path, approval_ref: dict, journal_path: Path, *
                 lease.fsync_directory(p["root"])
                 journal.append({"event": "published", "name": name, "sha256": policy.digest(data)})
             policy.reference(stage["suspension"])
+            check_install_approval()
             journal.append({"event": "installed-suspended", "published": published})
             return {"state": "installed-suspended", "activation": "not-authorized", "published": published}
     except BaseException as exc:

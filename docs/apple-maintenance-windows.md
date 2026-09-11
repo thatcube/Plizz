@@ -646,6 +646,10 @@ the outcome. Other records are unchanged and continue to block v1 maintenance.
 Archives are outside `leases/`; readers do not skip or reinterpret any retained
 record. No record is rewritten to fabricate `release_requested`.
 
+On the first reconciliation, the interlock directory is fsynced after creating
+`resolutions-v2`, before any live-record unlink. Syncing only the child archive
+would not durably publish the new archive root's directory entry.
+
 An archive-write failure retains the live record. Cancellation after archive
 creation retains both archive and live record. A post-unlink fsync failure may
 leave the live record absent; the original and durable intent remain and the
@@ -675,6 +679,12 @@ carving occurs. A campaign has exactly `schema:2`, `units`, `reviewed_at`, and
 The human reviews that exact list. Duplicate IDs, duplicate/overlapping targets
 across units, changed manifests, protected evidence overlaps, and an unlisted
 selected unit refuse.
+
+Isolation and freshness cover the **schema-known reference closure of every
+unit**, including nonselected units' release records, retirements, historical
+owner/registry evidence and nested approval evidence. No unit may delete another
+unit's authority. These references are rechecked per unlink without requiring
+already completed units' deleted targets to exist.
 
 Each execution unit retains **256 targets, 4,096 total entries, and 4 MiB per
 document**. A campaign contains at most **64 explicitly reviewed units**; it is
@@ -752,6 +762,10 @@ then publishes the companion, operational controls, and the exact original
 frozen `rollout-policy-v1` token list with durable writes and compare-and-swap
 checks. The existing suspension marker is never removed or rewritten: it is the
 transaction's safety barrier across partial multi-file publication.
+
+The install approval's own evidence references are revalidated after slow
+operations, immediately before each replacement and at completion. An unchanged
+approval JSON file cannot hide withdrawal of installation-only evidence.
 
 Results are `prepared-inactive` or `installed-suspended`, always with
 `activation:"not-authorized"`, never “ready.” Missing inputs, stale evidence,
