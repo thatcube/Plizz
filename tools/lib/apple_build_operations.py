@@ -802,6 +802,10 @@ def install_prepared(stage_path: Path, approval_ref: dict, journal_path: Path, *
                 validate_controls(controls, package, manifest, now=cleanup.now_utc())
                 if file_state(p["root"] / name) != stage["expected"][name]:
                     lease.fail("publication changed while syncing candidate")
+                check_install_approval()
+                check()
+                if not now <= cleanup.now_utc() < policy.timestamp(package["window"]["expires_at"]):
+                    lease.fail("installation expired or clock moved backwards before publication")
                 os.replace(temporary, p["root"] / name)
                 published.append(name)
                 lease.fsync_directory(p["root"])

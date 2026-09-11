@@ -176,6 +176,29 @@ class OperationalReviewTests(unittest.TestCase):
         self.assertEqual(x.marker.read_bytes(), x.marker_bytes)
         self.assertEqual(x.events(f.home / "revoked-install.jsonl")[-1]["event"], "stopped")
 
+    def test_installation_evidence_withdrawn_in_post_sync_census_prevents_first_replace(self):
+        x, f = self.fixture, self.f
+        x.stage()
+        stage = policy.document(x.stage_path.read_bytes())
+        ref = x.approval(stage, "install-suspended-rollout", "late-install-approval.json")
+        evidence = f.home / "late-installation-only-evidence.txt"
+        evidence.write_bytes(b"affirmative independent install evidence")
+        evidence.chmod(0o600)
+        approval = policy.document(Path(ref["path"]).read_bytes())
+        approval["evidence"] = [f.ref(evidence)]
+        ref = f.write_json(Path(ref["path"]), approval)
+        candidate = lease.paths()["root"] / (".operations-" + policy.POLICY_NAME)
+        def post_sync_census():
+            if candidate.exists():
+                evidence.write_bytes(b"withdrawn while post-sync process census runs")
+        with mock.patch.object(cleanup, "require_no_build_activity", post_sync_census), \
+             mock.patch.object(os, "replace", wraps=os.replace) as replace:
+            with self.assertRaisesRegex(lease.LeaseError, "changed evidence"):
+                ops.install_prepared(x.stage_path, ref, f.home / "late-install.jsonl", now=x.now)
+            replace.assert_not_called()
+        self.assertFalse((lease.paths()["root"] / policy.POLICY_NAME).exists())
+        self.assertEqual(x.marker.read_bytes(), x.marker_bytes)
+
 
 if __name__ == "__main__":
     unittest.main()
