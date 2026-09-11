@@ -473,6 +473,35 @@ clean, here's the breakdown" is a real outcome** — it stops you from cargo-cul
 "optimisations" that cost readability and fix nothing. Record the numbers so the
 next agent doesn't re-chase a ghost.
 
+### Opt-in Home backdrop composition comparisons
+
+Both options below are off by default and do not change saved settings:
+
+| Launch flag | Rendering change |
+| --- | --- |
+| `PLZHOME_CACHED_SCRIM=1` | Replaces Home's fixed wash and leading/bottom gradients with a pre-rendered alpha texture. |
+| `PLZHOME_OPAQUE_DISSOLVE=1` | Replaces the whole-backdrop alpha mask with the inverse fade into `AppBackground`'s opaque `backgroundBase`. |
+
+The options are independent. Compare each against the default before combining
+them, with the same artwork, theme, row population, and input cadence. Neither
+changes the page scroll, recede distances, or 0.9/0.96-second animation choices.
+Local layer-count and screenshot improvements are not proof of Apple TV frame
+rate; confirm on the physical device before enabling either by default.
+
+`HomeHeroLegibilityTexture` uses native-size 1920x1080 and 3840x2160 alpha assets,
+not a runtime `drawingGroup`. The texture is tinted for opaque black/white;
+other tones retain the analytic `HeroLegibilityScrim` path. Its fixed parameters
+match Home's current leading/bottom treatment. Regenerate with
+`python3 tools/generate_home_scrim.py` whenever those parameters change, and
+verify with `python3 tools/generate_home_scrim.py --check` plus
+`python3 tools/test_generate_home_scrim.py`.
+
+The color dissolve is valid only over a known opaque page color. Keep the alpha
+mask on transparent or differently composed surfaces. `HeroBackdropDissolve`
+explicitly animates its start position: static endpoint screenshots alone missed
+an earlier snapping regression. Hosted coverage checks dark/light pixels,
+intermediate fade frames, reversal, and the cached texture's RTL behavior.
+
 ---
 
 ## 8. Case study: the "whole app is laggy" player re-render (June 2026)
