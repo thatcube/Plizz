@@ -23,6 +23,7 @@ struct AddAccountView: View {
     let onMediaShareConfigured: (MediaShareOnboardingResult) -> Void
     let onCancel: () -> Void
     var onSetUpFromAnotherDevice: (() -> Void)?
+    var onStandalonePlayback: (() -> Void)?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var choice: ProviderKind?
@@ -44,7 +45,8 @@ struct AddAccountView: View {
         onWebDAVShareConfigured: @escaping (WebDAVShareConfiguration) -> Void = { _ in },
         onMediaShareConfigured: @escaping (MediaShareOnboardingResult) -> Void = { _ in },
         onCancel: @escaping () -> Void,
-        onSetUpFromAnotherDevice: (() -> Void)? = nil
+        onSetUpFromAnotherDevice: (() -> Void)? = nil,
+        onStandalonePlayback: (() -> Void)? = nil
     ) {
         self.deviceID = deviceID
         self.canReturnToApp = canReturnToApp
@@ -57,6 +59,7 @@ struct AddAccountView: View {
         self.onMediaShareConfigured = onMediaShareConfigured
         self.onCancel = onCancel
         self.onSetUpFromAnotherDevice = onSetUpFromAnotherDevice
+        self.onStandalonePlayback = onStandalonePlayback
         // Seed the flow's starting screen. This also lets "Add Another Plex
         // Account" enter Plex linking directly instead of returning to the
         // provider chooser.
@@ -129,7 +132,8 @@ struct AddAccountView: View {
             isPreparingPlex: isPreparingPlex,
             onBack: cancelPreparationOrReturn,
             onSelect: navigate(to:),
-            onSetUpFromAnotherDevice: onSetUpFromAnotherDevice
+            onSetUpFromAnotherDevice: onSetUpFromAnotherDevice,
+            onStandalonePlayback: onStandalonePlayback
         )
     }
 
@@ -208,6 +212,7 @@ private enum ProviderChooserFocus: Hashable {
     case emby
     case plex
     case mediaShare
+    case standalonePlayback
     case setUpFromAnotherDevice
 
     init(provider: ProviderKind) {
@@ -227,6 +232,7 @@ private struct ProviderChooserView: View {
     let onBack: () -> Void
     let onSelect: (ProviderKind) -> Void
     var onSetUpFromAnotherDevice: (() -> Void)?
+    var onStandalonePlayback: (() -> Void)?
     @FocusState private var focusedControl: ProviderChooserFocus?
 
     var body: some View {
@@ -239,7 +245,8 @@ private struct ProviderChooserView: View {
                 ProviderChoiceGroup(
                     focusedControl: $focusedControl,
                     isPreparingPlex: isPreparingPlex,
-                    onSelect: onSelect
+                    onSelect: onSelect,
+                    onStandalonePlayback: showsBranding ? onStandalonePlayback : nil
                 )
                 .allowsHitTesting(!isPreparingPlex)
             }
@@ -280,7 +287,8 @@ private struct ProviderChooserView: View {
         case (.some(.jellyfin), .left),
              (.some(.emby), .left),
              (.some(.plex), .left),
-             (.some(.mediaShare), .left):
+             (.some(.mediaShare), .left),
+             (.some(.standalonePlayback), .left):
             focusedControl = .back
         case (.some(.back), .right):
             focusedControl = .jellyfin
@@ -321,6 +329,7 @@ private struct ProviderChoiceGroup: View {
     let focusedControl: FocusState<ProviderChooserFocus?>.Binding
     let isPreparingPlex: Bool
     let onSelect: (ProviderKind) -> Void
+    var onStandalonePlayback: (() -> Void)?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -362,6 +371,34 @@ private struct ProviderChoiceGroup: View {
             ) {
                 onSelect(.mediaShare)
             }
+
+            #if DEBUG
+            if let onStandalonePlayback {
+                Divider().padding(.horizontal, 1)
+                Button(action: onStandalonePlayback) {
+                    HStack(spacing: 24) {
+                        Image(systemName: "antenna.radiowaves.left.and.right")
+                            .font(.system(size: 42))
+                            .frame(width: 64, height: 64)
+                        Text("Live TV / IPTV")
+                            .font(.system(size: 32, weight: .semibold))
+                        Spacer(minLength: 24)
+                        Image(systemName: "chevron.forward")
+                            .font(.system(size: 22, weight: .semibold))
+                            .settingsRowSecondary()
+                    }
+                    .padding(.horizontal, 24)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 108)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(SettingsFocusButtonStyle(size: .contained))
+                .focused(focusedControl, equals: .standalonePlayback)
+                .disabled(isPreparingPlex)
+                .accessibilityHint("Use your own playlist without signing in to a media server.")
+                .padding(12)
+            }
+            #endif
         }
         .frame(width: 720)
         .background(

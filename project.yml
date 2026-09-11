@@ -270,6 +270,12 @@ targets:
     dependencies:
       - package: Plozz
         product: AppShell
+      - package: Plozz
+        product: FeatureLiveTV
+      - package: Plozz
+        product: FeaturePlayback
+      - package: Plozz
+        product: EnginePlozzigen
       - target: PlozzTopShelf
         embed: true
 
@@ -416,6 +422,12 @@ targets:
     dependencies:
       - package: Plozz
         product: AppShelliOS
+      - package: Plozz
+        product: FeatureLiveTV
+      - package: Plozz
+        product: FeaturePlayback
+      - package: Plozz
+        product: EnginePlozzigen
 
   PlozzFocusHost:
     type: application
@@ -489,3 +501,19 @@ schemes:
         PlozziOS: all
     run:
       config: Debug
+  Plozz Live TV Prototype:
+    build:
+      targets:
+        Plozz: all
+    run:
+      config: Debug
+      commandLineArguments:
+        --live-tv-prototype: true
+  PlozziOS Live TV Prototype:
+    build:
+      targets:
+        PlozziOS: all
+    run:
+      config: Debug
+      commandLineArguments:
+        --live-tv-prototype: true

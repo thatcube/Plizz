@@ -12,6 +12,7 @@ import CoreModels
 /// click to *lift* it, then d-pad Up/Down moves it one step as focus follows
 /// (crossing the divider enables/disables), and click again to drop it. Neighbours
 /// dim while a row is lifted, which is the tvOS Home-screen rearrange idiom.
+/// Press and hold for direct Hide/Show and Move Up/Down actions.
 ///
 /// **iOS/iPadOS interaction** — the native always-editing `List` drag handle over
 /// the same flattened model, with the divider immovable.
@@ -49,6 +50,7 @@ public struct LiftableReorderList<Element: Hashable>: View {
     private let row: (Element) -> Row
     private let disabledSectionTitle: LocalizedStringResource
     private let disabledPlaceholder: LocalizedStringResource
+    private let requiredEnabled: Set<Element>
     /// Mirrors "a row is currently lifted" outward so the host page can disable its
     /// other controls while a reorder is in progress.
     @Binding private var isLifting: Bool
@@ -57,6 +59,9 @@ public struct LiftableReorderList<Element: Hashable>: View {
     /// The element currently "lifted" for reordering (nil = none lifted).
     @State private var liftedElement: Element?
     @State private var isRestoringLiftedFocus = false
+    @State private var pinnedFocusTarget: Element?
+    @State private var focusRestoreTarget: Element?
+    @State private var focusRestoreRevision = 0
     @FocusState private var focusedElement: Element?
     @FocusState private var isDisabledPlaceholderFocused: Bool
 
@@ -65,6 +70,7 @@ public struct LiftableReorderList<Element: Hashable>: View {
         disabledSectionTitle: LocalizedStringResource,
         disabledPlaceholder: LocalizedStringResource,
         isLifting: Binding<Bool>,
+        requiredEnabled: Set<Element> = [],
         row: @escaping (Element) -> Row,
         onChange: @escaping (OrderedVisibilityList.Sections<Element>) -> Void
     ) {
@@ -72,6 +78,7 @@ public struct LiftableReorderList<Element: Hashable>: View {
         self.disabledSectionTitle = disabledSectionTitle
         self.disabledPlaceholder = disabledPlaceholder
         self._isLifting = isLifting
+        self.requiredEnabled = requiredEnabled
         self.row = row
         self.onChange = onChange
     }
@@ -93,6 +100,7 @@ public struct LiftableReorderList<Element: Hashable>: View {
                     message: disabledPlaceholder,
                     isReordering: liftedElement != nil
                 )
+                .disabled(pinnedFocusTarget != nil)
                 .focused($isDisabledPlaceholderFocused)
                 .onChange(of: isDisabledPlaceholderFocused) { _, isFocused in
                     handleEmptyDisabledDropTargetFocus(isFocused)
@@ -108,10 +116,30 @@ public struct LiftableReorderList<Element: Hashable>: View {
         .onChange(of: focusedElement) { _, newValue in
             handleFocusMoveWhileLifted(to: newValue)
         }
-        .onChange(of: liftedElement) { _, lifted in
-            isLifting = lifted != nil
+        .onChange(of: liftedElement != nil || pinnedFocusTarget != nil) { _, active in
+            isLifting = active
         }
-        .onDisappear { isLifting = false }
+        .task(id: focusRestoreRevision) {
+            guard let target = focusRestoreTarget else { return }
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            isDisabledPlaceholderFocused = false
+            focusedElement = target
+            isRestoringLiftedFocus = false
+        }
+        .onChange(of: sections.combined) { _, elements in
+            if let target = pinnedFocusTarget, !elements.contains(target) {
+                pinnedFocusTarget = elements.first
+                if let replacement = elements.first { restoreFocusAfterLayout(to: replacement) }
+            }
+        }
+        .onDisappear {
+            liftedElement = nil
+            pinnedFocusTarget = nil
+            focusRestoreTarget = nil
+            isRestoringLiftedFocus = false
+            isLifting = false
+        }
     }
 
     private func rowView(_ element: Element, isEnabled: Bool, rank: Int?) -> some View {
@@ -128,9 +156,14 @@ public struct LiftableReorderList<Element: Hashable>: View {
             isDimmed: lifting && liftedElement != element,
             rank: rank,
             maximumRank: sections.enabled.count,
-            onPrimary: { toggleLift(element) }
+            onPrimary: { toggleLift(element) },
+            onFocus: {
+                if pinnedFocusTarget == element { pinnedFocusTarget = nil }
+            }
         )
         .focused($focusedElement, equals: element)
+        .disabled(pinnedFocusTarget != nil && pinnedFocusTarget != element)
+        .contextMenu { rowMenu(element) }
     }
 
     /// Click handler: lift the focused row, or drop it if it's already lifted.
@@ -153,7 +186,9 @@ public struct LiftableReorderList<Element: Hashable>: View {
         guard let from = combined.firstIndex(of: lifted),
               let to = combined.firstIndex(of: target) else { return }
         let up = to < from
-        let next = OrderedVisibilityList.stepped(lifted, up: up, in: sections)
+        let next = OrderedVisibilityList.stepped(
+            lifted, up: up, in: sections, keepingEnabled: requiredEnabled
+        )
         guard next != sections else {
             restoreFocusAfterLayout(to: lifted)
             return
@@ -172,8 +207,13 @@ public struct LiftableReorderList<Element: Hashable>: View {
         guard isFocused,
               !isRestoringLiftedFocus,
               let lifted = liftedElement else { return }
-        let next = OrderedVisibilityList.stepped(lifted, up: false, in: sections)
-        guard next != sections else { return }
+        let next = OrderedVisibilityList.stepped(
+            lifted, up: false, in: sections, keepingEnabled: requiredEnabled
+        )
+        guard next != sections else {
+            restoreFocusAfterLayout(to: lifted)
+            return
+        }
         isRestoringLiftedFocus = true
         withAnimation(.easeOut(duration: 0.10)) {
             onChange(next)
@@ -184,12 +224,9 @@ public struct LiftableReorderList<Element: Hashable>: View {
     /// Wait one run-loop turn for the reordered `ForEach` frames to settle before
     /// asking the focus engine to follow the lifted row to its new slot.
     private func restoreFocusAfterLayout(to element: Element) {
-        Task { @MainActor in
-            await Task.yield()
-            isDisabledPlaceholderFocused = false
-            focusedElement = element
-            isRestoringLiftedFocus = false
-        }
+        isRestoringLiftedFocus = true
+        focusRestoreTarget = element
+        focusRestoreRevision &+= 1
     }
     #else
     public var body: some View {
@@ -204,7 +241,8 @@ public struct LiftableReorderList<Element: Hashable>: View {
                     OrderedVisibilityList.moving(
                         fromOffsets: offsets,
                         toOffset: destination,
-                        in: sections
+                        in: sections,
+                        keepingEnabled: requiredEnabled
                     )
                 )
             }
@@ -252,6 +290,9 @@ public struct LiftableReorderList<Element: Hashable>: View {
                         .plozzForeground(.secondary)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .contextMenu { rowMenu(element) }
         case .divider:
             Text(disabledSectionTitle)
                 .font(.caption.weight(.semibold))
@@ -264,6 +305,42 @@ public struct LiftableReorderList<Element: Hashable>: View {
         }
     }
     #endif
+
+    @ViewBuilder
+    private func rowMenu(_ element: Element) -> some View {
+        if sections.enabled.contains(element) {
+            Button("Hide", systemImage: "eye.slash") { perform(.hide, on: element) }
+                .disabled(requiredEnabled.contains(element))
+        } else {
+            Button("Show", systemImage: "eye") { perform(.show, on: element) }
+        }
+        Button("Move Up", systemImage: "arrow.up") { perform(.moveUp, on: element) }
+            .disabled(edit(.moveUp, for: element) == nil)
+        Button("Move Down", systemImage: "arrow.down") { perform(.moveDown, on: element) }
+            .disabled(edit(.moveDown, for: element) == nil)
+    }
+
+    private func edit(_ action: OrderedVisibilityList.Action, for element: Element) -> OrderedVisibilityList.Edit<Element>? {
+        OrderedVisibilityList.applying(action, to: element, in: sections, keepingEnabled: requiredEnabled)
+    }
+
+    private func perform(_ action: OrderedVisibilityList.Action, on element: Element) {
+        guard let edit = edit(action, for: element) else { return }
+        #if os(tvOS)
+        liftedElement = nil
+        if action == .hide, edit.focusTarget != element {
+            // Keep the dismissed menu's old row out of the focus order until
+            // its replacement is focused, rather than chasing it at the bottom.
+            pinnedFocusTarget = edit.focusTarget
+        }
+        var transaction = Transaction()
+        transaction.disablesAnimations = action == .hide
+        withTransaction(transaction) { onChange(edit.sections) }
+        restoreFocusAfterLayout(to: edit.focusTarget)
+        #else
+        onChange(edit.sections)
+        #endif
+    }
 }
 
 /// One focusable row in the ordered list. The **whole row** is the focus target.
@@ -283,6 +360,7 @@ private struct LiftableRow: View {
     /// so crossing 9 → 10 never pushes logos and labels sideways.
     let maximumRank: Int
     let onPrimary: () -> Void
+    let onFocus: () -> Void
 
     var body: some View {
         Button(action: onPrimary) {
@@ -324,7 +402,8 @@ private struct LiftableRow: View {
             LiftableRowButtonStyle(
                 isEnabled: isEnabled,
                 isLifted: isLifted,
-                suppressFocusAppearance: isDimmed
+                suppressFocusAppearance: isDimmed,
+                onFocus: onFocus
             )
         )
         .opacity(isDimmed ? 0.4 : 1)
@@ -367,6 +446,7 @@ private struct LiftableRowButtonStyle: ButtonStyle {
     /// communicate direction. Hide that row's focus card so only the lifted row
     /// ever highlights.
     let suppressFocusAppearance: Bool
+    let onFocus: () -> Void
     @Environment(\.isFocused) private var isFocused
     @Environment(\.colorScheme) private var colorScheme
 
@@ -390,6 +470,9 @@ private struct LiftableRowButtonStyle: ButtonStyle {
             // briefly visiting its neighbour during a reorder.
             .environment(\.settingsRowIsFocused, inverted)
             .environment(\.settingsRowFocusForeground, invertedText)
+            .onChange(of: isFocused, initial: true) { _, focused in
+                if focused { onFocus() }
+            }
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous).fill(fill)
             )

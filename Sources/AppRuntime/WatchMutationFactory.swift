@@ -171,6 +171,27 @@ public enum WatchMutationFactory {
         )
     }
 
+    /// Broadcast completion must not use resume writers, which can fall back to
+    /// ordinary playback-stop reporting on older servers.
+    public static func libraryChannelCompletion(
+        item: MediaItem,
+        accountID: String,
+        additionalSources: [MediaSourceRef] = [],
+        crossServerSync: Bool = true,
+        capturedAt: Date = Date()
+    ) -> WatchMutation? {
+        guard item.sourceAccountID == accountID,
+              item.kind == .movie || item.kind == .episode,
+              var mutation = playedToggle(
+                item: item, played: true, primaryAccountID: accountID,
+                additionalSources: additionalSources, crossServerSync: crossServerSync,
+                capturedAt: capturedAt
+              ) else { return nil }
+        mutation.resumePosition = nil
+        mutation.clearResume = false
+        return mutation
+    }
+
     /// The convergence mutation for leaving the player: at/above the finished
     /// threshold it marks the title played everywhere (clearing resume) and mirrors
     /// to Trakt; otherwise it writes the resume position to every server so a

@@ -88,6 +88,21 @@ final class PlozzLogRedactionTests: XCTestCase {
         }
         XCTAssertTrue(result.contains("keep=ok"))
     }
+
+    func testLiveSessionAndIPTVCredentialsAreRedactedRegardlessOfCase() throws {
+        let url = try XCTUnwrap(URL(string:
+            "https://example.invalid/LiveStreams/Close?LiveStreamId=live-value&LIVESTREAMID=other-live&PlaySessionId=session-value&OpenToken=open-value&USERNAME=user-value&Password=password-value&ChannelId=channel-keep"
+        ))
+        let result = PlozzLog.redact(url: url)
+        for value in ["live-value", "other-live", "session-value", "open-value", "user-value", "password-value"] {
+            XCTAssertFalse(result.contains(value))
+        }
+        let items = try XCTUnwrap(URLComponents(string: result)?.queryItems)
+        for item in items where item.name != "ChannelId" {
+            XCTAssertEqual(item.value, "<redacted>")
+        }
+        XCTAssertEqual(items.first { $0.name == "ChannelId" }?.value, "channel-keep")
+    }
 }
 
 final class EndpointRequestTests: XCTestCase {

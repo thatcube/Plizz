@@ -7,11 +7,13 @@ import CoreModels
 /// scattering of booleans. `AppShell` renders one screen per state and feeds
 /// events in; the machine owns all legal transitions in one place.
 ///
-/// "Authenticated" now means **≥1 account**. Onboarding (`selectingServer` →
+/// Admission means **≥1 account or an explicit standalone choice**.
+/// Onboarding (`selectingServer` →
 /// `authenticating`) is reachable both at first launch (no accounts yet) and
 /// from inside the signed-in app ("add another server"). The `canReturnToApp`
-/// flag on an onboarding step records whether there is already ≥1 account behind
-/// it, so cancelling returns to the app instead of dead-ending.
+/// flag on an onboarding step records whether the app is available behind it,
+/// so cancelling returns to the app instead of dead-ending. Profile/PIN access
+/// remains a separate gate owned by the app shell.
 ///
 /// ```
 /// launching ─restored(≥1)────────────────────────▶ ready
@@ -54,11 +56,11 @@ public enum OnboardingStep: Equatable, Sendable {
 public enum SessionState: Equatable, Sendable {
     /// App just launched; we haven't checked for stored accounts yet.
     case launching
-    /// Adding an account. `canReturnToApp` is true when ≥1 account already
-    /// exists (i.e. the user is adding *another* server and can cancel back to
-    /// the app); false during first-run onboarding.
+    /// Adding an account. `canReturnToApp` is true when accounts or an explicit
+    /// standalone choice admit the user to the app behind onboarding.
     case onboarding(OnboardingStep, canReturnToApp: Bool)
-    /// Signed in with ≥1 account. `AppState` owns the account list/active set.
+    /// Admitted with accounts or standalone playback. The shell still gates
+    /// profile access and owns the account list/active set.
     case ready
     /// A non-fatal failure surfaced to the user (with recovery options).
     /// `canReturnToApp` carries the onboarding context forward so retry/cancel
@@ -70,6 +72,9 @@ public enum SessionState: Equatable, Sendable {
 public enum SessionEvent: Sendable {
     /// Result of the launch-time restore (the persisted accounts, possibly empty).
     case restored([Account])
+    /// An explicit standalone entry (or restore of unfinished standalone setup).
+    /// Requires the caller to supply `allowsStandalonePlayback`.
+    case standalonePlaybackRequested(needsProfileSetup: Bool)
     /// User asked to add another account from inside the app.
     case addAccountRequested
     case serverSelected(MediaServer)
@@ -86,6 +91,8 @@ public enum SessionEvent: Sendable {
     case librarySelectionRequired
     /// The user confirmed (or edited) their seeded profile on first run.
     case profileConfirmed
+    /// No media accounts exist, so standalone setup skips server-only Seerr.
+    case standaloneProfileConfirmed
     case seerrSelected
     /// The user picked an app theme on the one-time first-run theme step.
     case themeSelected
@@ -113,17 +120,37 @@ public struct SessionStateMachine: Sendable {
 
     /// Applies `event`, mutating `state`. Illegal transitions are ignored so a
     /// late/duplicate event can never corrupt the flow.
-    public mutating func apply(_ event: SessionEvent) {
-        state = Self.reduce(state: state, event: event)
+    public mutating func apply(
+        _ event: SessionEvent,
+        allowsStandalonePlayback: Bool = false
+    ) {
+        state = Self.reduce(
+            state: state,
+            event: event,
+            allowsStandalonePlayback: allowsStandalonePlayback
+        )
     }
 
     /// Pure reducer — easy to unit-test exhaustively.
-    public static func reduce(state: SessionState, event: SessionEvent) -> SessionState {
+    public static func reduce(
+        state: SessionState,
+        event: SessionEvent,
+        allowsStandalonePlayback: Bool = false
+    ) -> SessionState {
         switch (state, event) {
         // Launch restore.
         case let (.launching, .restored(accounts)):
-            return accounts.isEmpty
-                ? .onboarding(.selectingServer, canReturnToApp: false)
+            return AppAdmissionContext(
+                hasMediaAccounts: !accounts.isEmpty,
+                explicitStandaloneChoice: allowsStandalonePlayback
+            ).canEnterApp ? .ready : .onboarding(.selectingServer, canReturnToApp: false)
+
+        case let (.launching, .standalonePlaybackRequested(needsProfileSetup)),
+             let (.onboarding(.selectingServer, _), .standalonePlaybackRequested(needsProfileSetup)),
+             let (.ready, .standalonePlaybackRequested(needsProfileSetup)):
+            guard allowsStandalonePlayback else { return state }
+            return needsProfileSetup
+                ? .onboarding(.confirmProfile, canReturnToApp: true)
                 : .ready
 
         // Add-another-account from inside the app.
@@ -179,6 +206,9 @@ public struct SessionStateMachine: Sendable {
         // First profile: choose Seerr request identity, then theme.
         case (.onboarding(.confirmProfile, _), .profileConfirmed):
             return .onboarding(.selectSeerr, canReturnToApp: true)
+        case (.onboarding(.confirmProfile, _), .standaloneProfileConfirmed):
+            guard allowsStandalonePlayback else { return state }
+            return .onboarding(.selectTheme, canReturnToApp: true)
         case (.onboarding(.selectSeerr, _), .seerrSelected):
             return .onboarding(.selectTheme, canReturnToApp: true)
 
@@ -212,9 +242,10 @@ public struct SessionStateMachine: Sendable {
 
         // Account set changed (removal / sign-out) from anywhere meaningful.
         case let (_, .accountsChanged(accounts)):
-            return accounts.isEmpty
-                ? .onboarding(.selectingServer, canReturnToApp: false)
-                : .ready
+            return AppAdmissionContext(
+                hasMediaAccounts: !accounts.isEmpty,
+                explicitStandaloneChoice: allowsStandalonePlayback
+            ).canEnterApp ? .ready : .onboarding(.selectingServer, canReturnToApp: false)
 
         default:
             // No legal transition for this (state, event) pair — stay put.

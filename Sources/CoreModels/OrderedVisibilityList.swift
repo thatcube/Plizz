@@ -15,6 +15,50 @@ import Foundation
 /// d-pad step (tvOS) *cross* it and thereby change enablement, instead of needing a
 /// separate toggle control.
 public enum OrderedVisibilityList {
+    public enum Action: Equatable, Sendable {
+        case hide, show, moveUp, moveDown
+    }
+
+    public struct Edit<Element: Hashable>: Equatable {
+        public let sections: Sections<Element>
+        public let focusTarget: Element
+    }
+
+    /// Menu moves stay within their section. Hide sends an item to the bottom
+    /// without taking focus there; Show and positional moves follow the item.
+    public static func applying<Element: Hashable>(
+        _ action: Action,
+        to element: Element,
+        in sections: Sections<Element>,
+        keepingEnabled required: Set<Element> = []
+    ) -> Edit<Element>? {
+        var next = sections
+        var focusTarget = element
+        switch action {
+        case .hide:
+            guard !required.contains(element),
+                  let index = next.enabled.firstIndex(of: element) else { return nil }
+            next.enabled.remove(at: index)
+            next.disabled.append(element)
+            if !next.enabled.isEmpty {
+                focusTarget = next.enabled[min(index, next.enabled.count - 1)]
+            } else if let first = next.disabled.first {
+                focusTarget = first
+            }
+        case .show:
+            next = enabling(element, in: sections)
+        case .moveUp, .moveDown:
+            let delta = action == .moveUp ? -1 : 1
+            if next.enabled.contains(element) {
+                next.enabled = moved(element, by: delta, in: next.enabled)
+            } else {
+                next.disabled = moved(element, by: delta, in: next.disabled)
+            }
+        }
+        guard next != sections else { return nil }
+        return Edit(sections: next, focusTarget: focusTarget)
+    }
+
     /// The two sections the UI shows: ``enabled`` above the divider (in order),
     /// ``disabled`` below it.
     public struct Sections<Element: Hashable>: Equatable {
@@ -63,7 +107,8 @@ public enum OrderedVisibilityList {
     public static func moving<Element: Hashable>(
         fromOffsets offsets: IndexSet,
         toOffset destination: Int,
-        in sections: Sections<Element>
+        in sections: Sections<Element>,
+        keepingEnabled required: Set<Element> = []
     ) -> Sections<Element> {
         var items = listItems(for: sections)
         let movableOffsets = offsets
@@ -82,6 +127,7 @@ public enum OrderedVisibilityList {
         guard let divider = items.firstIndex(of: .divider) else { return sections }
         let enabled = items[..<divider].compactMap(\.element)
         let disabled = items[items.index(after: divider)...].compactMap(\.element)
+        guard !disabled.contains(where: required.contains) else { return sections }
         return Sections(enabled: enabled, disabled: disabled)
     }
 
@@ -133,7 +179,8 @@ public enum OrderedVisibilityList {
     public static func stepped<Element: Hashable>(
         _ element: Element,
         up: Bool,
-        in sections: Sections<Element>
+        in sections: Sections<Element>,
+        keepingEnabled required: Set<Element> = []
     ) -> Sections<Element> {
         var next = sections
         if let index = next.enabled.firstIndex(of: element) {
@@ -143,6 +190,7 @@ public enum OrderedVisibilityList {
             } else if index < next.enabled.count - 1 {
                 next.enabled.swapAt(index, index + 1)
             } else {
+                guard !required.contains(element) else { return sections }
                 // Crossing the divider downward → disable at the top of disabled.
                 next.enabled.remove(at: index)
                 next.disabled.insert(element, at: 0)

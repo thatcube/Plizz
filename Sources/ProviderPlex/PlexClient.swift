@@ -266,16 +266,96 @@ public struct PlexClient: Sendable {
 
     /// Sends `endpoint` against the resolved base URL, transparently re-resolving
     /// and retrying once if the chosen connection is unreachable (self-heal).
-    private func send(_ endpoint: Endpoint, using client: HTTPClient? = nil) async throws -> (Data, HTTPURLResponse) {
+    private func send(
+        _ endpoint: Endpoint,
+        using client: HTTPClient? = nil,
+        preservingStatus: Bool = false
+    ) async throws -> (Data, HTTPURLResponse) {
         let client = client ?? http
         let base = await resolver.resolved()
         do {
+            if preservingStatus { return try await client.sendRaw(endpoint, baseURL: base) }
             return try await client.send(endpoint, baseURL: base)
         } catch AppError.serverUnreachable {
             resolver.reportFailure(base)
             let retry = await resolver.resolved()
             guard retry != base else { throw AppError.serverUnreachable }
+            if preservingStatus { return try await client.sendRaw(endpoint, baseURL: retry) }
             return try await client.send(endpoint, baseURL: retry)
+        }
+    }
+
+    func liveTVGet(path: String, query: [URLQueryItem] = []) async throws -> Data {
+        var liveHeaders = headers
+        liveHeaders["Cache-Control"] = "no-store"
+        let (data, response) = try await send(
+            Endpoint(
+                path: path, queryItems: query, headers: liveHeaders,
+                redirectPolicy: .sameOrigin
+            ),
+            preservingStatus: true
+        )
+        switch response.statusCode {
+        case 200..<300: return data
+        case 401: throw AppError.unauthorized
+        case 402: throw ServerLiveTVError.subscriptionRequired
+        case 403: throw ServerLiveTVError.permissionDenied
+        case 404: throw AppError.notFound
+        case 429: throw AppError.rateLimited(
+            retryAfter: response.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init)
+        )
+        default: throw AppError.invalidResponse
+        }
+    }
+
+    /// AV/FFmpeg resource requests resolve to a URL, not this client's headers.
+    /// Keep the same nonsecret client identity on the handed-off playlist.
+    var liveTVPlaybackIdentityQuery: [URLQueryItem] {
+        deviceProfile.headers().filter { $0.key.hasPrefix("X-Plex-") }
+            .sorted { $0.key < $1.key }
+            .map { URLQueryItem(name: $0.key, value: $0.value) }
+    }
+
+    /// Session requests deliberately do not use connection-failover retries:
+    /// a lost tune response may already have allocated a tuner on the server.
+    func liveTVSessionRequest(
+        path: String, method: HTTPMethod = .get,
+        query: [URLQueryItem] = [], playbackID: String
+    ) async throws -> Data {
+        guard UUID(uuidString: playbackID) != nil,
+              query.allSatisfy({
+                  !["session", "transcodesessionid", "x-plex-session-identifier"].contains($0.name.lowercased())
+                      || $0.value == playbackID
+              }) else {
+            throw AppError.invalidResponse
+        }
+        if path == "/video/:/transcode/universal/stop",
+           !query.contains(where: { $0.name == "session" && $0.value == playbackID }) {
+            throw AppError.invalidResponse
+        }
+        var liveHeaders = headers
+        liveHeaders["Cache-Control"] = "no-store"
+        liveHeaders["X-Plex-Session-Identifier"] = playbackID
+        let (data, response) = try await http.sendRaw(
+            Endpoint(
+                method: method, path: path, queryItems: query, headers: liveHeaders,
+                redirectPolicy: .sameOrigin
+            ),
+            baseURL: await resolver.resolved()
+        )
+        switch response.statusCode {
+        case 200..<300: return data
+        case 401: throw AppError.unauthorized
+        case 402: throw ServerLiveTVError.subscriptionRequired
+        case 403: throw ServerLiveTVError.permissionDenied
+        case 404: throw AppError.notFound
+        case 409, 423, 503: throw ServerLiveTVError.tunerUnavailable
+        case 429: throw AppError.rateLimited(
+            retryAfter: response.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init)
+        )
+        case 500 where path.hasSuffix("/tune"): throw ServerLiveTVError.tunerUnavailable
+        case 502, 504: throw AppError.serverUnreachable
+        default: throw AppError.invalidResponse
         }
     }
 

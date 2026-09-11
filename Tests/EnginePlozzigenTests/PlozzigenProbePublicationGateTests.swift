@@ -1,4 +1,5 @@
 import XCTest
+import AetherEngine
 import CoreModels
 @testable import EnginePlozzigen
 
@@ -114,5 +115,79 @@ final class PlozzigenProbePublicationGateTests: XCTestCase {
 
         XCTAssertFalse(gate.record(.dolbyVision, generation: stale))
         XCTAssertEqual(gate.currentRange, .hlg)
+    }
+
+    func testLiveLoadOptionsUseStableNativeHLSWithFallbacks() {
+        let headers = [
+            "Authorization": "Bearer secret",
+            "User-Agent": "PlozzTests",
+        ]
+
+        let options = PlozzigenVideoEngine.liveLoadOptions(
+            httpHeaders: headers
+        )
+
+        XCTAssertEqual(options.httpHeaders, headers)
+        XCTAssertTrue(options.isLive)
+        XCTAssertNil(options.dvrWindowSeconds)
+        XCTAssertEqual(options.liveJoinProfile, .standard)
+        XCTAssertTrue(options.nativeRemoteHLS)
+        XCTAssertTrue(options.nativeRemoteHLSIngestFallback)
+        XCTAssertNil(options.declaredDurationSeconds)
+        XCTAssertTrue(options.autoplay)
+    }
+
+    func testLivePlaybackPhaseMapping() {
+        XCTAssertEqual(PlozzigenVideoEngine.livePhase(.idle), .idle)
+        XCTAssertEqual(PlozzigenVideoEngine.livePhase(.loading), .loading)
+        XCTAssertEqual(PlozzigenVideoEngine.livePhase(.playing), .playing)
+        XCTAssertEqual(PlozzigenVideoEngine.livePhase(.paused), .paused)
+        XCTAssertEqual(PlozzigenVideoEngine.livePhase(.seeking), .seeking)
+        XCTAssertEqual(PlozzigenVideoEngine.livePhase(.rebuffering), .rebuffering)
+        XCTAssertEqual(
+            PlozzigenVideoEngine.livePhase(.stalled(reconnecting: true)),
+            .stalled(reconnecting: true)
+        )
+        XCTAssertEqual(PlozzigenVideoEngine.livePhase(.ended), .ended)
+        XCTAssertEqual(PlozzigenVideoEngine.livePhase(.error("private detail")), .failed)
+    }
+
+    func testLiveVideoRouteMapping() {
+        XCTAssertEqual(PlozzigenVideoEngine.liveRoute(.none), .none)
+        XCTAssertEqual(PlozzigenVideoEngine.liveRoute(.remoteBypass), .nativeHLS)
+        XCTAssertEqual(PlozzigenVideoEngine.liveRoute(.loopback), .localHLS)
+        XCTAssertEqual(PlozzigenVideoEngine.liveRoute(.software), .software)
+        XCTAssertEqual(PlozzigenVideoEngine.liveRoute(.audio), .audio)
+    }
+
+    func testNewLiveAttemptFencesPriorCallbacksAndCompletion() {
+        var gate = PlozzigenLiveAttemptGate()
+        let stale = gate.begin()
+        let active = gate.begin()
+
+        XCTAssertFalse(gate.accepts(stale))
+        XCTAssertTrue(gate.accepts(active))
+    }
+
+    func testStoppingLiveAttemptFencesQueuedCallbacks() {
+        var gate = PlozzigenLiveAttemptGate()
+        let active = gate.begin()
+
+        gate.invalidate()
+
+        XCTAssertFalse(gate.accepts(active))
+        XCTAssertNil(gate.activeGeneration)
+    }
+
+    func testLiveAttemptReportsFailureOnlyOnce() {
+        var gate = PlozzigenLiveAttemptGate()
+        let active = gate.begin()
+
+        XCTAssertTrue(gate.consumeFailure(for: active))
+        XCTAssertFalse(gate.consumeFailure(for: active))
+
+        let replacement = gate.begin()
+        XCTAssertTrue(gate.consumeFailure(for: replacement))
+        XCTAssertFalse(gate.consumeFailure(for: active))
     }
 }

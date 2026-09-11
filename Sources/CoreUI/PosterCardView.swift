@@ -1386,14 +1386,16 @@ public extension View {
     func focusableCard(
         isFocused: FocusState<Bool>.Binding,
         cornerRadius: CGFloat,
+        isEnabled: Bool = true,
         action: @escaping () -> Void
     ) -> some View {
         #if os(tvOS)
         contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .focusable(true)
+            .focusable(isEnabled)
             .focused(isFocused)
             .focusEffectDisabled()
             .onTapGesture(perform: action)
+            .disabled(!isEnabled)
             .accessibilityAddTraits(.isButton)
         #else
         contentShape(

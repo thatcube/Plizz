@@ -90,6 +90,7 @@ public struct TraktScrobbleIntent: Codable, Hashable, Sendable {
 /// drains it best-effort and idempotently — applying it twice is harmless.
 public struct WatchMutation: Codable, Hashable, Sendable, Identifiable {
     public var id: UUID
+    public private(set) var authorization: WatchMutationAuthorization?
     /// When the user's action actually happened (NOT when it is sent). The basis
     /// for stale-write suppression: a queued write older than what has already been
     /// accepted for this title is dropped so a late offline write can't rewind state.
@@ -199,6 +200,7 @@ public struct WatchMutation: Codable, Hashable, Sendable, Identifiable {
         malPending: Bool? = nil
     ) {
         self.id = id
+        self.authorization = nil
         self.capturedAt = capturedAt
         self.canonicalMediaID = canonicalMediaID
         self.seasonNumber = seasonNumber
@@ -229,16 +231,36 @@ public struct WatchMutation: Codable, Hashable, Sendable, Identifiable {
         case resumePosition, played, clearResume, targets, optimisticTargets, trakt, traktPending
         case simklPending, anilistPending, malPending
         case attempts, episodeOrigin, expansionPending, identities, kind
-        case anchorTitle, anchorYear
+        case anchorTitle, anchorYear, authorization
+    }
+
+    private struct AuthorizedIdentity: Codable {
+        let version: Int
+        let value: UUID
+        let requirement: UUID
     }
 
     /// Decodes tolerating outbox files written before `episodeOrigin` /
     /// `expansionPending` / `identities` / `kind` / `anchorTitle` / `anchorYear` /
     /// tracker pending flags existed (they decode to `nil` / `false` / `[]`), so an
-    /// in-app upgrade never drops a queued watch. `encode(to:)` is synthesized.
+    /// in-app upgrade never drops an ordinary queued watch. Guarded identities
+    /// use a versioned envelope so older readers cannot discard their requirement.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(UUID.self, forKey: .id)
+        // Explicit null/malformed requirements must not downgrade a guarded intent.
+        authorization = container.contains(.authorization)
+            ? try container.decode(WatchMutationAuthorization.self, forKey: .authorization) : nil
+        if let authorization {
+            let identity = try container.decode(AuthorizedIdentity.self, forKey: .id)
+            guard identity.version == 1, identity.requirement == authorization.id else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .id, in: container, debugDescription: "Mismatched authorization requirement"
+                )
+            }
+            id = identity.value
+        } else {
+            id = try container.decode(UUID.self, forKey: .id)
+        }
         capturedAt = try container.decode(Date.self, forKey: .capturedAt)
         canonicalMediaID = try container.decode(String.self, forKey: .canonicalMediaID)
         seasonNumber = try container.decodeIfPresent(Int.self, forKey: .seasonNumber)
@@ -265,9 +287,45 @@ public struct WatchMutation: Codable, Hashable, Sendable, Identifiable {
         anchorYear = try container.decodeIfPresent(Int.self, forKey: .anchorYear)
     }
 
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        if let authorization {
+            // Older readers require a scalar UUID here. They must reject, not
+            // replay a protected intent after ignoring an unknown optional key.
+            try container.encode(
+                AuthorizedIdentity(version: 1, value: id, requirement: authorization.id), forKey: .id
+            )
+            try container.encode(authorization, forKey: .authorization)
+        } else {
+            try container.encode(id, forKey: .id)
+        }
+        try container.encode(capturedAt, forKey: .capturedAt)
+        try container.encode(canonicalMediaID, forKey: .canonicalMediaID)
+        try container.encodeIfPresent(seasonNumber, forKey: .seasonNumber)
+        try container.encodeIfPresent(episodeNumber, forKey: .episodeNumber)
+        try container.encodeIfPresent(resumePosition, forKey: .resumePosition)
+        try container.encodeIfPresent(played, forKey: .played)
+        try container.encode(clearResume, forKey: .clearResume)
+        try container.encode(targets, forKey: .targets)
+        try container.encode(optimisticTargets, forKey: .optimisticTargets)
+        try container.encodeIfPresent(trakt, forKey: .trakt)
+        try container.encode(traktPending, forKey: .traktPending)
+        try container.encode(simklPending, forKey: .simklPending)
+        try container.encode(anilistPending, forKey: .anilistPending)
+        try container.encode(malPending, forKey: .malPending)
+        try container.encode(attempts, forKey: .attempts)
+        try container.encodeIfPresent(episodeOrigin, forKey: .episodeOrigin)
+        try container.encode(expansionPending, forKey: .expansionPending)
+        try container.encode(identities, forKey: .identities)
+        try container.encodeIfPresent(kind, forKey: .kind)
+        try container.encodeIfPresent(anchorTitle, forKey: .anchorTitle)
+        try container.encodeIfPresent(anchorYear, forKey: .anchorYear)
+    }
+
     /// Title-level key used to COALESCE queued mutations (latest wins, targets
     /// unioned) and to key the stale-write clock. Excludes the account/day so any
     /// server's write for the same title/episode collapses to one queue entry.
+    /// Guarded intents add an isolated requirement domain; the ordinary key is unchanged.
     ///
     /// Scoped by media **kind**: TMDb/TVDb reuse one integer id space across movies
     /// and series (movie 550 ≠ tv 550), so an unscoped key would collapse a movie's
@@ -276,7 +334,39 @@ public struct WatchMutation: Codable, Hashable, Sendable, Identifiable {
     /// with no persisted `kind` uses a stable `?` token so it keeps coalescing with
     /// its own kind rather than silently splitting mid-flight.
     public var coalesceKey: String {
+        guard let authorization else { return titleCoalesceKey }
+        return "@authorized:\(authorization.id.uuidString)|\(titleCoalesceKey)"
+    }
+
+    var titleCoalesceKey: String {
         "\(kind?.rawValue ?? "?")|\(canonicalMediaID)|s\(seasonNumber.map(String.init) ?? "-")|e\(episodeNumber.map(String.init) ?? "-")"
+    }
+
+    /// Tag before handing the value to any asynchronous enqueue path. No global
+    /// registry is needed; the pending value owns the validator until retirement.
+    /// Capture profile/account owners weakly to avoid retaining their outbox.
+    public func requiringAuthorization(
+        _ validator: @escaping @Sendable () async -> Bool
+    ) -> WatchMutation {
+        var result = self
+        let previous = authorization
+        result.authorization = WatchMutationAuthorization {
+            if let previous, !(await previous.allows()) { return false }
+            return await validator()
+        }
+        return result
+    }
+
+    /// Keeps an application/reconciler owner weakly, avoiding an outbox → grant
+    /// → owner → outbox cycle. Read that owner through the closure argument.
+    public func requiringAuthorization<Owner: AnyObject & Sendable>(
+        owner: Owner,
+        _ validator: @escaping @Sendable (Owner) async -> Bool
+    ) -> WatchMutation {
+        requiringAuthorization { [weak owner] in
+            guard let owner else { return false }
+            return await validator(owner)
+        }
     }
 
     /// Durable Trakt idempotency key (`profile | canonicalMediaId | episode |
@@ -284,7 +374,7 @@ public struct WatchMutation: Codable, Hashable, Sendable, Identifiable {
     /// `profile` is folded in by the reconciler (its store is profile-scoped) so it
     /// is omitted here.
     public func traktIdempotencyKey(dayBucket: String) -> String {
-        "\(coalesceKey)|\(dayBucket)"
+        "\(titleCoalesceKey)|\(dayBucket)"
     }
 
     /// Whether every server target AND all tracker mirrors are done **and** no

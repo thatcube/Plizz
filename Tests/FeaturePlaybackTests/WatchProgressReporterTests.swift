@@ -60,6 +60,23 @@ final class WatchProgressReporterTests: XCTestCase {
 
     // MARK: report + scrobble fan-out
 
+    func testLibraryChannelRequestSuppressesEveryOrdinaryMutationIncludingStop() async {
+        let (sut, host, provider, scrobbler, recorder) = makeSUT()
+        host.request?.suppressOrdinaryWatchReporting = true
+        host.engineCurrentTime = 950
+        host.resumePosition = 950
+        await sut.reportStart(isPaused: false, positionOverride: 950)
+        await sut.report(event: .progress, isPaused: false)
+        await sut.report(event: .pause, isPaused: true)
+        await sut.report(event: .stop, isPaused: true, positionOverride: 950)
+        sut.checkpointNow()
+        let events = await provider.events
+        let scrobbles = await scrobbler.calls
+        XCTAssertTrue(events.isEmpty)
+        XCTAssertTrue(scrobbles.isEmpty)
+        XCTAssertTrue(recorder.positions.isEmpty)
+    }
+
     func testReportSendsToProviderAndScrobbler() async {
         let (sut, host, provider, scrobbler, _) = makeSUT()
         host.engineCurrentTime = 500

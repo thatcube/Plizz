@@ -85,6 +85,28 @@ final class WatchOutboxResumeRecencyTests: XCTestCase {
         XCTAssertTrue(snapshot.appliedRecency.isEmpty)
     }
 
+    func testCompletionWithoutResumeWriteClearsEarlierAppliedRecency() async {
+        let applier = FakeApplier()
+        let reconciler = WatchStateReconciler(
+            store: InMemoryWatchMutationStore(), applier: applier, now: { self.drainTime }
+        )
+        let targets = [target("plex", "rk1")]
+        await reconciler.enqueue(resume(900, capturedAt: playTime, targets: targets))
+        await reconciler.drain()
+        let before = await reconciler.snapshot()
+        XCTAssertNotNil(before.appliedRecency["plex:rk1"])
+
+        await reconciler.enqueue(WatchMutation(
+            capturedAt: playTime.addingTimeInterval(60), canonicalMediaID: "imdb:tt1",
+            played: true, clearResume: false, targets: targets
+        ))
+        await reconciler.drain()
+        let after = await reconciler.snapshot()
+        XCTAssertTrue(after.pending.isEmpty)
+        XCTAssertTrue(after.appliedRecency.isEmpty)
+        XCTAssertEqual(applier.resumeWrites.count, 1)
+    }
+
     /// The record is short-lived: a later drain past the TTL prunes it, so a stale
     /// record can never override a genuine later play (e.g. one made on another client).
     func testAppliedRecencyPrunedAfterTTL() async {

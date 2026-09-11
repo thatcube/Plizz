@@ -133,7 +133,13 @@ public struct URLSessionHTTPClient: HTTPClient {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: request)
+            switch endpoint.redirectPolicy {
+            case .follow:
+                (data, response) = try await session.data(for: request)
+            case .sameOrigin:
+                let delegate = SameOriginHTTPRedirectDelegate(url: request.url ?? baseURL)
+                (data, response) = try await session.data(for: request, delegate: delegate)
+            }
         } catch let urlError as URLError {
             throw Self.map(urlError)
         } catch is CancellationError {
@@ -184,6 +190,40 @@ public struct URLSessionHTTPClient: HTTPClient {
         default:
             return .serverUnreachable
         }
+    }
+}
+
+/// Per-task protection for endpoints carrying credentials or tuner ownership.
+/// A blocked redirect is returned as its original non-success HTTP response.
+final class SameOriginHTTPRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let origin: NetworkOrigin?
+
+    init(url: URL) {
+        self.origin = Self.origin(of: url)
+        super.init()
+    }
+
+    func allowedRequest(_ request: URLRequest) -> URLRequest? {
+        guard let origin, let url = request.url,
+              Self.origin(of: url) == origin else { return nil }
+        return request
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        completionHandler(allowedRequest(request))
+    }
+
+    private static func origin(of url: URL) -> NetworkOrigin? {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.user == nil, components.password == nil,
+              let scheme = components.scheme, let host = components.host else { return nil }
+        return try? NetworkOrigin(scheme: scheme, host: host, port: components.port)
     }
 }
 

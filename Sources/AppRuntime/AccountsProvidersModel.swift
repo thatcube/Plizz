@@ -3,6 +3,10 @@ import Observation
 import CoreModels
 import CoreNetworking
 import FeatureAuthCore
+#if DEBUG
+import CryptoKit
+import FeatureLiveTVCore
+#endif
 
 /// The accounts + providers hub, extracted from `AppState`.
 ///
@@ -89,6 +93,63 @@ public final class AccountsProvidersModel {
 
     /// This device's stable client identifier.
     public var deviceID: String { accountStore.deviceID() }
+
+    #if DEBUG
+    public var liveTVServerChoices: [LiveTVServerChoice] {
+        resolvedActiveAccounts.compactMap { resolved in
+            guard resolved.provider is any ServerLiveTVProviding,
+                  let kind = Self.liveTVKind(resolved.account.server.provider) else { return nil }
+            let account = resolved.account
+            let name = account.server.name.isEmpty
+                ? (account.server.baseURL.host ?? kind.rawValue)
+                : account.server.name
+            return LiveTVServerChoice(
+                id: account.id, name: name, userName: account.userName, kind: kind
+            )
+        }
+    }
+
+    public var liveTVAuthorizationID: String {
+        let identities = accounts.filter { activeAccountIDs.contains($0.id) }
+            .map(liveTVAuthorizationID(for:)).sorted()
+        return profilesModel.activeProfileID + "|" + identities.joined(separator: "|")
+    }
+
+    public func liveTVProviderResolver() -> LiveTVServerProviderResolver {
+        let expectedProfile = profilesModel.activeProfileID
+        return { [weak self] accountID in
+            guard let self, self.profilesModel.activeProfileID == expectedProfile,
+                  self.activeAccountIDs.contains(accountID),
+                  let account = self.accounts.first(where: { $0.id == accountID }),
+                  let kind = Self.liveTVKind(account.server.provider),
+                  let provider = self.provider(forAccountID: accountID) as? any ServerLiveTVProviding
+            else { return nil }
+            return LiveTVAuthorizedServerProvider(
+                accountID: accountID, authorizationID: self.liveTVAuthorizationID(for: account),
+                kind: kind, provider: provider
+            )
+        }
+    }
+
+    private func liveTVAuthorizationID(for account: Account) -> String {
+        let fields = [
+            profilesModel.activeProfileID, account.id, account.server.id,
+            account.server.provider.rawValue, account.server.baseURL.absoluteString,
+            account.userID, account.deviceID, credentialRevision(account).rawValue.uuidString
+        ] + (account.server.connectionURLs ?? []).map(\.absoluteString)
+        let fingerprint = fields.map { "\($0.utf8.count):\($0)" }.joined()
+        return SHA256.hash(data: Data(fingerprint.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func liveTVKind(_ kind: ProviderKind) -> LiveTVPrototypeSource? {
+        switch kind {
+        case .plex: .plex
+        case .jellyfin: .jellyfin
+        case .emby: .emby
+        case .mediaShare: nil
+        }
+    }
+    #endif
 
     /// The provider for the primary active account — the single-provider Home in
     /// this branch. `nil` when not signed in.

@@ -144,4 +144,98 @@ final class AccountsProvidersModelTests: XCTestCase {
         // Exactly the surviving chosen account — not the global {a, b}.
         XCTAssertEqual(model.activeAccountIDs, ["a"])
     }
+
+    #if DEBUG
+    func testLiveTVNeverFallsBackToAnExcludedAccount() throws {
+        let (model, store, profiles) = try makeModel(accountIDs: [("a", "a.example.com"), ("b", "b.example.com")])
+        model.registry.register(.jellyfin) { LiveTVAccountsTestProvider(session: $0.session) }
+        model.tokenResolver = { _ in "fixture-effective-user-token" }
+        store.setActiveAccountIDs(["a", "b"])
+        profiles.setActiveAccountIDs(["a"], for: profiles.activeProfileID)
+        model.reloadAccounts()
+        let resolver = model.liveTVProviderResolver()
+        XCTAssertEqual(model.liveTVServerChoices.map(\.id), ["a"])
+        XCTAssertNotNil(resolver("a"))
+        XCTAssertNil(resolver("b"))
+
+        profiles.setActiveAccountIDs([], for: profiles.activeProfileID)
+        model.reloadAccounts()
+        XCTAssertNotNil(model.provider(forAccountID: "a"))
+        XCTAssertTrue(model.liveTVServerChoices.isEmpty)
+        XCTAssertNil(resolver("a"))
+    }
+
+    func testLiveTVUsesEffectiveCredentialsAndInvalidatesTheirIdentity() throws {
+        let (model, store, profiles) = try makeModel(accountIDs: [("a", "a.example.com")])
+        model.registry.register(.jellyfin) { LiveTVAccountsTestProvider(session: $0.session) }
+        model.tokenResolver = { _ in "fixture-effective-user-token" }
+        var revision = CredentialRevision()
+        model.credentialRevision = { _ in revision }
+        store.setActiveAccountIDs(["a"])
+        profiles.setActiveAccountIDs(["a"], for: profiles.activeProfileID)
+        model.reloadAccounts()
+        let resolver = model.liveTVProviderResolver()
+        let original = try XCTUnwrap(resolver("a"))
+        let provider = try XCTUnwrap(original.provider as? LiveTVAccountsTestProvider)
+        XCTAssertEqual(provider.session.accessToken, "fixture-effective-user-token")
+        revision = CredentialRevision()
+        let replacement = try XCTUnwrap(resolver("a"))
+        XCTAssertNotEqual(original.authorizationID, replacement.authorizationID)
+        XCTAssertFalse(replacement.authorizationID.contains("fixture-effective-user-token"))
+    }
+
+    func testLiveTVResolverIsBoundToTheProfileThatCreatedIt() throws {
+        let (model, store, profiles) = try makeModel(accountIDs: [("a", "a.example.com")])
+        model.registry.register(.jellyfin) { LiveTVAccountsTestProvider(session: $0.session) }
+        model.tokenResolver = { _ in "fixture-effective-user-token" }
+        store.setActiveAccountIDs(["a"])
+        profiles.setActiveAccountIDs(["a"], for: profiles.activeProfileID)
+        model.reloadAccounts()
+        let resolver = model.liveTVProviderResolver()
+        let original = try XCTUnwrap(resolver("a"))
+        let other = profiles.add(name: "Other profile", activeAccountIDs: ["a"])
+        profiles.select(other.id)
+        model.reloadAccounts()
+        XCTAssertNil(resolver("a"))
+        let replacement = try XCTUnwrap(model.liveTVProviderResolver()("a"))
+        XCTAssertNotEqual(original.authorizationID, replacement.authorizationID)
+    }
+    #endif
 }
+
+#if DEBUG
+private final class LiveTVAccountsTestProvider: MediaProvider, ServerLiveTVProviding, Sendable {
+    let kind: ProviderKind = .jellyfin
+    let session: UserSession
+
+    init(session: UserSession) { self.session = session }
+    func libraries() async throws -> [MediaLibrary] { [] }
+    func continueWatching(limit: Int) async throws -> [MediaItem] { [] }
+    func latest(limit: Int) async throws -> [MediaItem] { [] }
+    func item(id: String) async throws -> MediaItem { throw AppError.notFound }
+    func children(of itemID: String) async throws -> [MediaItem] { [] }
+    func items(in containerID: String, kind: MediaItemKind, page: PageRequest) async throws -> MediaPage {
+        MediaPage(items: [], startIndex: 0, totalCount: 0)
+    }
+    func search(query: String, limit: Int) async throws -> [MediaItem] { [] }
+    func playbackInfo(for itemID: String) async throws -> PlaybackRequest { throw AppError.notFound }
+    func reportPlayback(_ progress: PlaybackProgress, event: PlaybackEvent) async throws {}
+    func imageURL(itemID: String, kind: ImageKind, maxWidth: Int?) -> URL? { nil }
+    func liveTVAvailability() async throws -> ServerLiveTVAvailability {
+        XCTFail("Listing authorized accounts must not contact a Live TV server")
+        throw ServerLiveTVError.unsupportedAPI
+    }
+    func liveTVChannels() async throws -> [ServerLiveTVChannel] {
+        XCTFail("Listing authorized accounts must not load channels")
+        return []
+    }
+    func liveTVGuide(channelIDs: [String], from: Date, to: Date) async throws -> [ServerLiveTVProgramme] {
+        XCTFail("Listing authorized accounts must not load a guide")
+        return []
+    }
+    func openLiveTVChannel(id: String) async throws -> any LiveTVStreamLease {
+        XCTFail("Listing authorized accounts must not open a tuner")
+        throw ServerLiveTVError.unsupportedPlaybackMode
+    }
+}
+#endif

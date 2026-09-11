@@ -136,6 +136,14 @@ extension AppState {
             Task { await appState?.cloudSync?.publishLocalChanges() }
         }
 
+        var channels = [mediaChannel, trackerTokenChannel]
+        #if DEBUG
+        channels.append(Self.makeLiveTVSyncChannel(
+            bridge: appState.liveTVPortableSync,
+            stateFileURL: syncDir.appendingPathComponent("cloud-live-tv-state-v1.json")
+        ))
+        appState.observeLiveTVPortableSync()
+        #endif
         return CloudConfigSyncService(.init(
             containerIdentifier: cloudContainerIdentifier,
             stateFileURL: configStateURL,
@@ -151,7 +159,7 @@ extension AppState {
                 await appState?.clearRemoteDerivedSyncState()
             },
             status: appState.cloudSyncStatus
-        ), channels: [mediaChannel, trackerTokenChannel])
+        ), channels: channels)
     }
 
     /// Force an immediate two-way sync (manual "Sync Now").
@@ -307,6 +315,9 @@ extension AppState {
         let config = cloudSync
         Task { @MainActor in
             await config?.deleteAllServerData()
+            #if DEBUG
+            resetLiveTVPortableSync()
+            #endif
             for profileID in profilesModel.profiles.map(\.id) {
                 do {
                     try await mediaAliasLedger.removeProfile(profileID)
@@ -835,6 +846,9 @@ extension AppState {
     }
 
     func removeMediaAliases(forProfileID profileID: String) {
+        #if DEBUG
+        removeLiveTVPortableProfile(profileID)
+        #endif
         removeUniversalWatchlist(forProfileID: profileID)
         Task { @MainActor [weak self] in
             guard let self else { return }

@@ -6,31 +6,43 @@ import SwiftUI
 /// Shared by cast-credit rails and compact selection rails. The 24-stop
 /// smoothstep curve has zero slope at both ends, avoiding the visible crease and
 /// banding of a two-stop linear gradient.
+/// Independent strengths keep a reached content edge readable without changing
+/// the mask's structure or geometry.
 public struct HorizontalEdgeFadeMask: View {
     private let fadeWidth: CGFloat
     private let verticalOverhang: CGFloat
+    private let leadingStrength: CGFloat
+    private let trailingStrength: CGFloat
 
-    public init(fadeWidth: CGFloat, verticalOverhang: CGFloat = 0) {
+    public init(
+        fadeWidth: CGFloat,
+        verticalOverhang: CGFloat = 0,
+        leadingStrength: CGFloat = 1,
+        trailingStrength: CGFloat = 1
+    ) {
         self.fadeWidth = fadeWidth
         self.verticalOverhang = verticalOverhang
+        self.leadingStrength = min(max(leadingStrength, 0), 1)
+        self.trailingStrength = min(max(trailingStrength, 0), 1)
     }
 
     public var body: some View {
         HStack(spacing: 0) {
-            edgeFade(reversed: false).frame(width: fadeWidth)
+            edgeFade(reversed: false, strength: leadingStrength).frame(width: fadeWidth)
             Color.black
-            edgeFade(reversed: true).frame(width: fadeWidth)
+            edgeFade(reversed: true, strength: trailingStrength).frame(width: fadeWidth)
         }
         .padding(.vertical, -verticalOverhang)
     }
 
-    private func edgeFade(reversed: Bool) -> some View {
+    private func edgeFade(reversed: Bool, strength: CGFloat) -> some View {
         let samples = 24
         let stops = (0 ... samples).map { step -> Gradient.Stop in
             let t = Double(step) / Double(samples)
             let eased = t * t * (3 - 2 * t)
+            let activeOpacity = reversed ? 1 - eased : eased
             return Gradient.Stop(
-                color: .black.opacity(reversed ? 1 - eased : eased),
+                color: .black.opacity(1 - Double(strength) * (1 - activeOpacity)),
                 location: t
             )
         }
@@ -282,12 +294,16 @@ public extension View {
 
     func horizontalEdgeFadeMask(
         fadeWidth: CGFloat,
-        verticalOverhang: CGFloat = 0
+        verticalOverhang: CGFloat = 0,
+        leadingStrength: CGFloat = 1,
+        trailingStrength: CGFloat = 1
     ) -> some View {
         mask {
             HorizontalEdgeFadeMask(
                 fadeWidth: fadeWidth,
-                verticalOverhang: verticalOverhang
+                verticalOverhang: verticalOverhang,
+                leadingStrength: leadingStrength,
+                trailingStrength: trailingStrength
             )
         }
     }

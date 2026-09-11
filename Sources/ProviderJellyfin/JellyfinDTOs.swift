@@ -241,6 +241,10 @@ struct MediaSourceInfo: Decodable {
     let SupportsDirectPlay: Bool?
     let SupportsDirectStream: Bool?
     let SupportsTranscoding: Bool?
+    let RequiresOpening: Bool?
+    let RequiresClosing: Bool?
+    let VideoType: String?
+    let IsInfiniteStream: Bool?
     let Container: String?
     /// Human-readable source name, e.g. `Movie (2009) Bluray-2160p`. Surfaced in
     /// the version picker when a title has several sources.

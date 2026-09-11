@@ -13,25 +13,33 @@ public enum HTTPMethod: String, Sendable {
 /// Providers build `Endpoint`s and hand them to `HTTPClient`, which keeps the
 /// transport (URLSession), header redaction, and error mapping in one place.
 public struct Endpoint: Sendable {
+    public enum RedirectPolicy: Equatable, Sendable {
+        case follow
+        case sameOrigin
+    }
+
     public var method: HTTPMethod
     /// Path relative to the server base URL, e.g. `/QuickConnect/Initiate`.
     public var path: String
     public var queryItems: [URLQueryItem]
     public var headers: [String: String]
     public var body: Data?
+    public var redirectPolicy: RedirectPolicy
 
     public init(
         method: HTTPMethod = .get,
         path: String,
         queryItems: [URLQueryItem] = [],
         headers: [String: String] = [:],
-        body: Data? = nil
+        body: Data? = nil,
+        redirectPolicy: RedirectPolicy = .follow
     ) {
         self.method = method
         self.path = path
         self.queryItems = queryItems
         self.headers = headers
         self.body = body
+        self.redirectPolicy = redirectPolicy
     }
 
     /// Convenience for a JSON `POST`/`GET` carrying an `Encodable` body.

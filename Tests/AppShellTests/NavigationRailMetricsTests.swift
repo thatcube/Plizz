@@ -1,5 +1,6 @@
 #if os(tvOS)
 import XCTest
+import CoreModels
 @testable import AppShell
 
 final class NavigationRailMetricsTests: XCTestCase {
@@ -47,6 +48,75 @@ final class NavigationRailMetricsTests: XCTestCase {
             NavigationRailMetrics.expandedRowContentWidth
         )
         XCTAssertEqual(NavigationRailMetrics.verticalPadding, 14)
+    }
+}
+
+final class NavigationDestinationLayoutTests: XCTestCase {
+    private func library(
+        _ id: String,
+        kind: MediaItemKind = .movie,
+        isMusic: Bool = false
+    ) -> AggregatedLibrary {
+        AggregatedLibrary(
+            accountID: "account",
+            accountName: "Account",
+            serverName: "Server",
+            providerKind: .jellyfin,
+            library: MediaLibrary(
+                id: id,
+                title: id,
+                kind: kind,
+                isMusic: isMusic,
+                sourceAccountID: "account"
+            )
+        )
+    }
+
+    func testCompactNavigationPreservesLegacyOrderAndOmitsLibraries() {
+        let keys = NavigationDestinationDefaults.compact(hasMusic: true)
+        var expected = [
+            NavigationLibraryLayout.homeKey,
+            NavigationLibraryLayout.watchlistKey,
+        ]
+        #if DEBUG
+        expected.append(NavigationLibraryLayout.liveTVKey)
+        #endif
+        expected += [
+            NavigationLibraryLayout.searchKey,
+            NavigationLibraryLayout.musicKey,
+            NavigationLibraryLayout.settingsKey,
+        ]
+        XCTAssertEqual(keys, expected)
+    }
+
+    func testSidebarAndRailKeepTheirLegacyDefaultsWhileSupportingLibraries() {
+        let libraries = [
+            library("movies"),
+            library("music", isMusic: true),
+            library("shows", kind: .series),
+        ]
+
+        let sidebar = NavigationDestinationDefaults.sidebar(
+            visibleLibraries: libraries,
+            hasMusic: true
+        )
+        XCTAssertEqual(sidebar.first, NavigationLibraryLayout.homeKey)
+        XCTAssertEqual(Array(sidebar.suffix(4)), [
+            NavigationLibraryLayout.allLibrariesKey,
+            "account:movies",
+            "account:shows",
+            NavigationLibraryLayout.settingsKey,
+        ])
+        XCTAssertFalse(sidebar.contains("account:music"))
+
+        let rail = NavigationDestinationDefaults.rail(
+            visibleLibraries: libraries,
+            hasMusic: true
+        )
+        XCTAssertEqual(rail.first, NavigationLibraryLayout.searchKey)
+        XCTAssertEqual(rail.last, NavigationLibraryLayout.settingsKey)
+        XCTAssertTrue(rail.contains("account:movies"))
+        XCTAssertFalse(rail.contains("account:music"))
     }
 }
 #endif

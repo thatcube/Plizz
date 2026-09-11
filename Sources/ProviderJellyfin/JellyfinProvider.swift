@@ -13,6 +13,7 @@ public struct JellyfinProvider: MediaProvider, SeriesResumeProviding, SeriesIden
     public let accountID: String
     public let credentialRevision: CredentialRevision
     let client: JellyfinClient
+    let liveTVLeases = JellyfinLiveTVLeaseStore()
     let themeArchiveResolver: @Sendable (String?) async -> URL?
     private let authenticatedStreamProber: (any AuthenticatedHTTPStreamProbing)?
     private let probeDescriptors: MediaBrowserProbeDescriptorStore
@@ -1555,7 +1556,7 @@ public struct JellyfinProvider: MediaProvider, SeriesResumeProviding, SeriesIden
 
     // MARK: - Mapping
 
-    private func authenticatedPlaybackLocator(
+    func authenticatedPlaybackLocator(
         itemID: String,
         source: MediaSourceInfo,
         playSessionID: String?,
@@ -1672,7 +1673,7 @@ public struct JellyfinProvider: MediaProvider, SeriesResumeProviding, SeriesIden
         )
     }
 
-    private func map(item dto: BaseItemDto) -> MediaItem {
+    func map(item dto: BaseItemDto) -> MediaItem {
         let kind = Self.kind(forItemType: dto.`Type`)
         if self.kind == .emby {
             PlozzLog.playback.debug(
@@ -2079,7 +2080,7 @@ public struct JellyfinProvider: MediaProvider, SeriesResumeProviding, SeriesIden
         return ratings
     }
 
-    private func map(stream dto: MediaStreamDto) -> MediaTrack {
+    func map(stream dto: MediaStreamDto) -> MediaTrack {
         let isSubtitle = dto.`Type` == "Subtitle"
         return MediaTrack(
             id: dto.Index,
@@ -2099,7 +2100,7 @@ public struct JellyfinProvider: MediaProvider, SeriesResumeProviding, SeriesIden
     /// subtitles so the player can inject them into the native picker even on
     /// direct play. Image-based subs (PGS/VOBSUB) get no text delivery source;
     /// their engine-decoded bitmap cues keep their authored placement.
-    private func map(
+    func map(
         subtitleStream dto: MediaStreamDto,
         itemID: String,
         sourceID: String

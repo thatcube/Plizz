@@ -1,0 +1,82 @@
+name: LiveTVSearchFixture
+options:
+  deploymentTarget:
+    tvOS: "26.0"
+packages:
+  Plozz:
+    path: ../..
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    GENERATE_INFOPLIST_FILE: YES
+    CODE_SIGNING_ALLOWED: NO
+targets:
+  LiveTVSearchFixture:
+    type: application
+    platform: tvOS
+    sources:
+      - SearchFixtureApp.swift
+      - SourceOnboardingFixture.swift
+      - NavigationRailFixture.swift
+      - MultiviewFixture.swift
+    dependencies:
+      - package: Plozz
+        product: FeatureLiveTV
+      - package: Plozz
+        product: FeatureLiveTVCore
+      - package: Plozz
+        product: CoreModels
+      - package: Plozz
+        product: FeatureSettings
+      - package: Plozz
+        product: AppShell
+      - package: Plozz
+        product: CoreUI
+      - package: Plozz
+        product: FeaturePlayback
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.thatcube.Plozz.SearchTestHost
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+  SearchFocusTests:
+    type: bundle.unit-test
+    platform: tvOS
+    sources:
+      - ../FeatureLiveTVTests/LiveTVGuideFocusTests.swift
+      - ../FeatureLiveTVTests/LiveTVSearchBoundaryTests.swift
+      - ../FeaturePlaybackTests/LiveChannelPlayerModelTests.swift
+    dependencies:
+      - target: LiveTVSearchFixture
+      - package: Plozz
+        product: FeatureLiveTV
+      - package: Plozz
+        product: FeatureLiveTVCore
+      - package: Plozz
+        product: FeaturePlayback
+      - package: Plozz
+        product: CoreNetworking
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.thatcube.Plozz.SearchFocusTests
+  SearchRemoteTests:
+    type: bundle.ui-testing
+    platform: tvOS
+    sources:
+      - LiveTVSearchRemoteTests.swift
+      - LiveTVSourceNavigationSmokeTests.swift
+      - NavigationRailRemoteTests.swift
+      - LiveTVMultiviewRemoteTests.swift
+    dependencies:
+      - target: LiveTVSearchFixture
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.thatcube.Plozz.SearchRemoteTests
+schemes:
+  LiveTVSearchFixture:
+    build:
+      targets:
+        LiveTVSearchFixture: all
+    test:
+      targets:
+        - SearchFocusTests
+        - SearchRemoteTests

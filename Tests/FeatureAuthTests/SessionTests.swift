@@ -20,6 +20,83 @@ final class SessionStateMachineTests: XCTestCase {
         XCTAssertEqual(m.state, .onboarding(.selectingServer, canReturnToApp: false))
     }
 
+    func testRestoreStandaloneWithoutAccountsBecomesReady() {
+        var m = SessionStateMachine()
+        m.apply(.restored([]), allowsStandalonePlayback: true)
+        XCTAssertEqual(m.state, .ready)
+    }
+
+    func testExplicitStandaloneEntryRequiresCallerAdmission() {
+        var m = SessionStateMachine()
+        m.apply(.restored([]))
+        m.apply(.standalonePlaybackRequested(needsProfileSetup: false))
+        XCTAssertEqual(m.state, .onboarding(.selectingServer, canReturnToApp: false))
+        m.apply(
+            .standalonePlaybackRequested(needsProfileSetup: false),
+            allowsStandalonePlayback: true
+        )
+        XCTAssertEqual(m.state, .ready)
+    }
+
+    func testStandaloneFirstRunKeepsProfileAndAppearanceButSkipsServerSetup() {
+        var m = SessionStateMachine()
+        m.apply(.restored([]))
+        m.apply(
+            .standalonePlaybackRequested(needsProfileSetup: true),
+            allowsStandalonePlayback: true
+        )
+        XCTAssertEqual(m.state, .onboarding(.confirmProfile, canReturnToApp: true))
+        m.apply(.standaloneProfileConfirmed, allowsStandalonePlayback: true)
+        XCTAssertEqual(m.state, .onboarding(.selectTheme, canReturnToApp: true))
+        m.apply(.themeSelected, allowsStandalonePlayback: true)
+        XCTAssertEqual(m.state, .onboarding(.selectNavigation, canReturnToApp: true))
+        m.apply(.navigationSelected, allowsStandalonePlayback: true)
+        XCTAssertEqual(m.state, .ready)
+    }
+
+    func testRestoreUnfinishedStandaloneProfileConfirmation() {
+        var m = SessionStateMachine()
+        m.apply(
+            .standalonePlaybackRequested(needsProfileSetup: true),
+            allowsStandalonePlayback: true
+        )
+        XCTAssertEqual(m.state, .onboarding(.confirmProfile, canReturnToApp: true))
+    }
+
+    func testStandaloneCannotBypassPlexOrLibrarySelection() {
+        let states: [SessionState] = [
+            .onboarding(.authenticating(server), canReturnToApp: true),
+            .onboarding(.selectPlexUser, canReturnToApp: true),
+            .onboarding(.selectLibraries, canReturnToApp: true),
+            .onboarding(.confirmProfile, canReturnToApp: true)
+        ]
+        for state in states {
+            XCTAssertEqual(SessionStateMachine.reduce(
+                state: state,
+                event: .standalonePlaybackRequested(needsProfileSetup: false),
+                allowsStandalonePlayback: true
+            ), state)
+        }
+    }
+
+    func testStandaloneProfileConfirmationCannotSkipSeerrWithoutAdmission() {
+        var m = SessionStateMachine(state: .onboarding(.confirmProfile, canReturnToApp: true))
+        m.apply(.standaloneProfileConfirmed)
+        XCTAssertEqual(m.state, .onboarding(.confirmProfile, canReturnToApp: true))
+        m.apply(.profileConfirmed, allowsStandalonePlayback: true)
+        XCTAssertEqual(m.state, .onboarding(.selectSeerr, canReturnToApp: true))
+    }
+
+    func testStandaloneLastAccountRemovalRemainsReadyAndCanAddServer() {
+        var m = SessionStateMachine(state: .ready)
+        m.apply(.accountsChanged([]), allowsStandalonePlayback: true)
+        XCTAssertEqual(m.state, .ready)
+        m.apply(.addAccountRequested, allowsStandalonePlayback: true)
+        XCTAssertEqual(m.state, .onboarding(.selectingServer, canReturnToApp: true))
+        m.apply(.cancelOnboarding, allowsStandalonePlayback: true)
+        XCTAssertEqual(m.state, .ready)
+    }
+
     func testFirstRunHappyPath() {
         var m = SessionStateMachine()
         m.apply(.restored([]))

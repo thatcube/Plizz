@@ -64,8 +64,13 @@ public struct PlozziOSRootView: View {
 
     public var body: some View {
         Group {
-            if appModel.accounts.isEmpty {
-                PlozziOSOnboardingView(appModel: appModel)
+            if !appModel.canEnterApp {
+                PlozziOSOnboardingView(
+                    appModel: appModel,
+                    onStandalonePlayback: PlozziOSAppModel.isStandalonePlaybackAvailable
+                        ? { _ = appModel.enterStandalonePlayback() }
+                        : nil
+                )
             } else if appModel.mustChooseProfile
                 || (appModel.requiresLaunchProfileSelection
                     && !appModel.didCompleteLaunchProfileSelection) {
@@ -87,6 +92,12 @@ public struct PlozziOSRootView: View {
                     // picker both manage profiles from the launch screen too.
                     manager: appModel.managementRequiresParentalPIN ? nil : appModel
                     // No `onCancel`: at launch there is nothing to go back to.
+                )
+            } else if usesInlineStandaloneFirstRun, appModel.pendingFirstRunStep != nil {
+                PlozziOSFirstRunView(
+                    step: appModel.pendingFirstRunStep,
+                    appModel: appModel,
+                    systemColorScheme: systemColorScheme
                 )
             } else {
                 PlozziOSTabShell(
@@ -362,7 +373,8 @@ public struct PlozziOSRootView: View {
     }
 
     private var releaseNotesStartupReady: Bool {
-        !appModel.accounts.isEmpty
+        appModel.canEnterApp
+            && !appModel.pendingStandaloneLiveTVEntry
             && !appModel.mustChooseProfile
             && (!appModel.requiresLaunchProfileSelection
                 || appModel.didCompleteLaunchProfileSelection)
@@ -477,9 +489,18 @@ public struct PlozziOSRootView: View {
     /// the cover so changing it animates in place instead of re-presenting.
     private var firstRunPresentedBinding: Binding<Bool> {
         Binding(
-            get: { appModel.pendingFirstRunStep != nil },
+            get: {
+                appModel.pendingFirstRunStep != nil
+                    && !usesInlineStandaloneFirstRun
+            },
             set: { _ in }
         )
+    }
+
+    /// Keep standalone setup in the root, behind its ordinary profile picker
+    /// and access-gate cover, instead of mounting tabs beneath a new cover.
+    private var usesInlineStandaloneFirstRun: Bool {
+        appModel.allowsStandalonePlayback && !appModel.admissionContext.hasMediaAccounts
     }
 
     /// Takes a pairing link, waiting for an open sheet to close first.
@@ -598,8 +619,12 @@ private enum ServerPromptFollowUp {
 private enum PlozziOSDestination: String, CaseIterable, Identifiable, Hashable {
     case home
     case watchlist
+    #if DEBUG
+    case liveTV
+    #endif
     case downloads
     case search
+    case settings
 
     var id: Self { self }
 
@@ -607,8 +632,12 @@ private enum PlozziOSDestination: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .home: "Home"
         case .watchlist: "Watchlist"
+        #if DEBUG
+        case .liveTV: "Live TV"
+        #endif
         case .downloads: "Downloads"
         case .search: "Search"
+        case .settings: "Settings"
         }
     }
 
@@ -616,8 +645,12 @@ private enum PlozziOSDestination: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .home: "house"
         case .watchlist: "bookmark"
+        #if DEBUG
+        case .liveTV: "antenna.radiowaves.left.and.right"
+        #endif
         case .downloads: "arrow.down.circle"
         case .search: "magnifyingglass"
+        case .settings: "gearshape"
         }
     }
 }
@@ -644,8 +677,12 @@ private struct PlozziOSTabShell: View {
     @Environment(\.themePalette) private var palette
     @Environment(PlozziOSSidebarGeometryModel.self)
     private var sidebarGeometry
+    @Environment(HeroTrailerController.self)
+    private var heroTrailerController
     @State private var settingsPresentationColorScheme: ColorScheme = .dark
     @State private var selectedDestination: PlozziOSDestination = .home
+    @State private var lastContentDestination: PlozziOSDestination = .home
+    @State private var retainsExplicitLiveTVEntry = false
     @State private var sharedHomeViewModel: HomeViewModel
     /// The profile picker opened deliberately (from Settings) rather than at
     /// launch. Presented from the ROOT so the Parental PIN and profile-lock gates
@@ -689,9 +726,201 @@ private struct PlozziOSTabShell: View {
         _showingProfileSwitcher = showingProfileSwitcher
         _deferredPairingURL = deferredPairingURL
         self.systemColorScheme = systemColorScheme
+        let visible = Self.configuredDestinations(appModel: appModel)
+        let initial: PlozziOSDestination
+        #if DEBUG
+        initial = AppAdmissionNavigation.initialSelection(
+            current: .home,
+            visible: visible,
+            liveTV: .liveTV,
+            fallback: .settings,
+            admission: appModel.admissionContext,
+            hasPendingLiveTVEntry: appModel.pendingStandaloneLiveTVEntry
+        )
+        #else
+        initial = visible.contains(.home) ? .home : (visible.first ?? .settings)
+        #endif
+        _selectedDestination = State(initialValue: initial)
+        _lastContentDestination = State(initialValue: initial)
         _sharedHomeViewModel = State(
             initialValue: Self.makeHomeViewModel(appModel: appModel)
         )
+    }
+
+    private static func configuredDestinations(
+        appModel: PlozziOSAppModel
+    ) -> [PlozziOSDestination] {
+        appModel.settings.navigation.libraryLayout
+            .visibleKeys(available: NavigationDestinationDefaults.iOS)
+            .compactMap { key -> PlozziOSDestination? in
+                switch key {
+                case NavigationLibraryLayout.homeKey: return .home
+                case NavigationLibraryLayout.watchlistKey: return .watchlist
+                #if DEBUG
+                case NavigationLibraryLayout.liveTVKey: return .liveTV
+                #endif
+                case NavigationLibraryLayout.searchKey: return .search
+                case NavigationLibraryLayout.downloadsKey: return .downloads
+                case NavigationLibraryLayout.settingsKey: return .settings
+                default: return nil
+                }
+            }
+    }
+
+    private var tabDestinations: [PlozziOSDestination] {
+        let configured = Self.configuredDestinations(appModel: appModel)
+        #if DEBUG
+        return AppAdmissionNavigation.destinations(
+            configured,
+            liveTV: .liveTV,
+            includesExplicitEntry: appModel.allowsStandalonePlayback
+                && (appModel.pendingStandaloneLiveTVEntry || retainsExplicitLiveTVEntry)
+        )
+        #else
+        return configured
+        #endif
+    }
+
+    private var effectiveSelectedDestination: PlozziOSDestination {
+        #if DEBUG
+        if appModel.pendingStandaloneLiveTVEntry && appModel.allowsStandalonePlayback {
+            return .liveTV
+        }
+        #endif
+        return resolvedDestination(selectedDestination)
+    }
+
+    private var destinationSelection: Binding<PlozziOSDestination> {
+        Binding(
+            get: { effectiveSelectedDestination },
+            set: { selectedDestination = resolvedDestination($0) }
+        )
+    }
+
+    private func consumeStandaloneEntryIfNeeded() {
+        #if DEBUG
+        guard appModel.pendingStandaloneLiveTVEntry, appModel.allowsStandalonePlayback else { return }
+        retainsExplicitLiveTVEntry = true
+        selectedDestination = .liveTV
+        lastContentDestination = .liveTV
+        appModel.consumeStandaloneLiveTVEntryIntent()
+        #endif
+    }
+
+    private var tabDestinationKey: String {
+        tabDestinations.map(\.rawValue).joined(separator: "|")
+    }
+
+    private func resolvedDestination(
+        _ destination: PlozziOSDestination
+    ) -> PlozziOSDestination {
+        tabDestinations.contains(destination)
+            ? destination
+            : (tabDestinations.first ?? .settings)
+    }
+
+    @ViewBuilder
+    private func tabContent(for destination: PlozziOSDestination) -> some View {
+        switch destination {
+        case .home:
+            NavigationStack {
+                PlozziOSDestinationView(
+                    destination: .home,
+                    appModel: appModel,
+                    sharedHomeViewModel: sharedHomeViewModel,
+                    onAddServer: onAddServer,
+                    onShowSettings: showSettings
+                )
+                .plozziOSLibraryDestination(appModel: appModel)
+                .plozziOSItemNavigation(appModel: appModel, registersScreenshotRouting: true)
+            }
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbarBackground(.hidden, for: .tabBar)
+            .background { AppBackground(palette: palette) }
+        case .watchlist:
+            NavigationStack {
+                PlozziOSDestinationView(
+                    destination: .watchlist,
+                    appModel: appModel,
+                    sharedHomeViewModel: sharedHomeViewModel,
+                    onAddServer: onAddServer,
+                    onShowSettings: showSettings
+                )
+                .plozziOSItemNavigation(appModel: appModel)
+            }
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .background { AppBackground(palette: palette) }
+        #if DEBUG
+        case .liveTV:
+            PlozziOSLiveTVDestination(
+                isActive: effectiveSelectedDestination == .liveTV,
+                profileID: appModel.profiles.activeProfileID,
+                preferencesNamespace: appModel.profiles.activeNamespace,
+                accountsProviders: appModel.accountsProviders,
+                authenticatedHTTPResolver: appModel.authenticatedHTTPResolver,
+                connectServer: onAddServer,
+                didConfigurePlaylist: {
+                    _ = appModel.recordSuccessfulIPTVSetup()
+                },
+                completeLibraryChannelPlayback: { [appModel,
+                    profileID = appModel.profiles.activeProfileID,
+                    namespace = appModel.profiles.activeNamespace] item, token in
+                    try Task.checkCancellation()
+                    guard appModel.profiles.activeProfileID == profileID,
+                          appModel.profiles.activeNamespace == namespace,
+                          LibraryChannelHistorySettings.shared(namespace: namespace).authorizationID == token,
+                          let accountID = item.sourceAccountID,
+                          appModel.accountsProviders.resolvedActiveAccounts.contains(where: {
+                              $0.account.id == accountID
+                          }) else { throw LibraryChannelError.authorizationChanged }
+                    try appModel.completeLibraryChannelPlayback(for: item, authorizationID: token)
+                },
+                isProfileAuthorized: { [appModel] in appModel.isLiveTVProfileAuthorized },
+                restoreDestination: { [profileID = appModel.profiles.activeProfileID] in
+                    guard appModel.isLiveTVProfileAuthorized,
+                          appModel.profiles.activeProfileID == profileID,
+                          tabDestinations.contains(.liveTV) else { return false }
+                    selectedDestination = .liveTV
+                    return effectiveSelectedDestination == .liveTV
+                }
+            )
+            .environment(appModel.profiles)
+        #endif
+        case .downloads:
+            NavigationStack {
+                PlozziOSDestinationView(
+                    destination: .downloads,
+                    appModel: appModel,
+                    sharedHomeViewModel: sharedHomeViewModel,
+                    onAddServer: onAddServer,
+                    onShowSettings: showSettings
+                )
+            }
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .background { AppBackground(palette: palette) }
+        case .search:
+            NavigationStack {
+                PlozziOSDestinationView(
+                    destination: .search,
+                    appModel: appModel,
+                    sharedHomeViewModel: sharedHomeViewModel,
+                    onAddServer: onAddServer,
+                    onShowSettings: showSettings
+                )
+                .plozziOSItemNavigation(appModel: appModel)
+            }
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .background { AppBackground(palette: palette) }
+        case .settings:
+            VStack(spacing: 24) {
+                Label("Settings", systemImage: "gearshape")
+                    .font(.largeTitle)
+                Button("Open Settings", action: showSettings)
+                    .buttonStyle(.borderedProminent)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background { AppBackground(palette: palette) }
+        }
     }
 
     private static func makeHomeViewModel(
@@ -717,107 +946,57 @@ private struct PlozziOSTabShell: View {
     }
 
     var body: some View {
-        TabView(selection: $selectedDestination) {
-            Tab(
-                "Home",
-                systemImage: "house",
-                value: PlozziOSDestination.home
-            ) {
-                NavigationStack {
-                    PlozziOSDestinationView(
-                        destination: .home,
-                        appModel: appModel,
-                        sharedHomeViewModel: sharedHomeViewModel,
-                        onAddServer: onAddServer,
-                        onShowSettings: showSettings
-                    )
-                    .plozziOSLibraryDestination(appModel: appModel)
-                    .plozziOSItemNavigation(appModel: appModel, registersScreenshotRouting: true)
-                }
-                .toolbarBackground(.hidden, for: .navigationBar)
-                .toolbarBackground(.hidden, for: .tabBar)
-                .background { AppBackground(palette: palette) }
-            }
-
-            if appModel.settings.navigation.showsWatchlist {
-                Tab(
-                    "Watchlist",
-                    systemImage: "bookmark",
-                    value: PlozziOSDestination.watchlist
-                ) {
-                    NavigationStack {
-                        PlozziOSDestinationView(
-                            destination: .watchlist,
-                            appModel: appModel,
-                            sharedHomeViewModel: sharedHomeViewModel,
-                            onAddServer: onAddServer,
-                            onShowSettings: showSettings
-                        )
-                        .plozziOSItemNavigation(appModel: appModel)
+        TabView(selection: destinationSelection) {
+            ForEach(tabDestinations) { destination in
+                if destination == .search && tabDestinations.last == .search {
+                    // Preserve native trailing Search until the viewer moves it.
+                    Tab(
+                        "Search",
+                        systemImage: "magnifyingglass",
+                        value: PlozziOSDestination.search,
+                        role: .search
+                    ) {
+                        tabContent(for: destination)
                     }
-                    .toolbarBackground(.hidden, for: .navigationBar)
-                    .background { AppBackground(palette: palette) }
+                } else {
+                    Tab(value: destination) {
+                        tabContent(for: destination)
+                    } label: {
+                        Label {
+                            Text(destination.title)
+                        } icon: {
+                            if destination == .downloads {
+                                downloadsTabIcon
+                            } else {
+                                Image(systemName: destination.systemImage)
+                            }
+                        }
+                    }
                 }
-            }
-
-            Tab(value: PlozziOSDestination.downloads) {
-                NavigationStack {
-                    PlozziOSDestinationView(
-                        destination: .downloads,
-                        appModel: appModel,
-                        sharedHomeViewModel: sharedHomeViewModel,
-                        onAddServer: onAddServer,
-                        onShowSettings: showSettings
-                    )
-                }
-                .toolbarBackground(.hidden, for: .navigationBar)
-                .background { AppBackground(palette: palette) }
-            } label: {
-                Label {
-                    Text("Downloads")
-                } icon: {
-                    downloadsTabIcon
-                }
-            }
-
-            // Last, and with the SEARCH ROLE rather than an ordinary tab: on a
-            // wide layout with the top tab bar (iPad) the system pulls a
-            // search-role tab out of the row and renders it as a lone
-            // magnifying glass at the trailing edge, which is the icon-only
-            // treatment we want — and it stays a normal labelled tab on iPhone.
-            // Doing that by hand would mean blanking the title, which reads as a
-            // bug to VoiceOver.
-            Tab(
-                "Search",
-                systemImage: "magnifyingglass",
-                value: PlozziOSDestination.search,
-                role: .search
-            ) {
-                NavigationStack {
-                    PlozziOSDestinationView(
-                        destination: .search,
-                        appModel: appModel,
-                        sharedHomeViewModel: sharedHomeViewModel,
-                        onAddServer: onAddServer,
-                        onShowSettings: showSettings
-                    )
-                    .plozziOSItemNavigation(appModel: appModel)
-                }
-                .toolbarBackground(.hidden, for: .navigationBar)
-                .background { AppBackground(palette: palette) }
             }
         }
 
         .tabViewStyle(.tabBarOnly)
         .environment(sharedHomeViewModel)
-        .onChange(of: appModel.settings.navigation.showsWatchlist) {
-            _, showsWatchlist in
-            selectedDestination = WatchlistNavigationPolicy.resolvedSelection(
-                selectedDestination,
-                watchlist: .watchlist,
-                home: .home,
-                showsWatchlist: showsWatchlist
-            )
+        .onChange(of: appModel.pendingStandaloneLiveTVEntry, initial: true) { _, _ in
+            consumeStandaloneEntryIfNeeded()
+        }
+        .onChange(of: tabDestinationKey, initial: true) { _, _ in
+            selectedDestination = resolvedDestination(selectedDestination)
+        }
+        .onChange(of: selectedDestination, initial: true) { _, destination in
+            if destination == .settings {
+                showSettings()
+            } else {
+                lastContentDestination = destination
+            }
+            #if DEBUG
+            if destination == .liveTV {
+                heroTrailerController.stop()
+            } else {
+                retainsExplicitLiveTVEntry = false
+            }
+            #endif
         }
         .onChange(of: homeContentIdentity) {
             _, _ in
@@ -826,7 +1005,7 @@ private struct PlozziOSTabShell: View {
         .background { AppBackground(palette: palette) }
         .background(alignment: .topLeading) {
             PlozziOSHomeSidebarOverlapProbe(
-                enabled: selectedDestination == .home,
+                enabled: effectiveSelectedDestination == .home,
                 geometryModel: sidebarGeometry
             )
             .frame(width: 0, height: 0)
@@ -839,19 +1018,18 @@ private struct PlozziOSTabShell: View {
                 director: appModel.screenshotDirector,
                 onSelect: { name in
                     guard let destination = PlozziOSDestination(rawValue: name) else { return }
-                    selectedDestination = WatchlistNavigationPolicy.resolvedSelection(
-                        destination,
-                        watchlist: .watchlist,
-                        home: .home,
-                        showsWatchlist: appModel.settings.navigation.showsWatchlist
-                    )
+                    selectedDestination = resolvedDestination(destination)
                 }
             )
             #if DEBUG
             // The push seams live on the Home stack, so the router brings this tab
             // forward before it navigates. Registered here because only the shell
             // owns the tab selection.
-            .onAppear { appModel.screenshotDirector.selectHomeTab = { selectedDestination = .home } }
+            .onAppear {
+                appModel.screenshotDirector.selectHomeTab = {
+                    selectedDestination = resolvedDestination(.home)
+                }
+            }
             #endif
         }
         .background {
@@ -909,6 +1087,15 @@ private struct PlozziOSTabShell: View {
                 // Settings is actually gone.
                 pendingSwitchProfileID = nil
                 appModel.selectProfile(id)
+            }
+            if selectedDestination == .settings {
+                let fallback = tabDestinations.first {
+                    $0 != .settings
+                } ?? .settings
+                selectedDestination = tabDestinations.contains(lastContentDestination)
+                    && lastContentDestination != .settings
+                    ? lastContentDestination
+                    : fallback
             }
             consumeDeferredPairingURL()
         }) {
@@ -1094,6 +1281,10 @@ private struct PlozziOSDestinationView: View {
                 viewModel: sharedHomeViewModel,
                 onShowSettings: onShowSettings
             )
+        #if DEBUG
+        case .liveTV:
+            EmptyView()
+        #endif
         case .search:
             PlozziOSSearchView(
                 appModel: appModel,
@@ -1107,6 +1298,8 @@ private struct PlozziOSDestinationView: View {
                 onShowSettings: onShowSettings
             )
                 .id(appModel.profiles.activeProfileID)
+        case .settings:
+            EmptyView()
         }
     }
 
