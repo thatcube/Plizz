@@ -902,20 +902,36 @@ fsyncs a suspension-restoration candidate, fsyncs the archive's parent entries,
 publishes a pending receipt with compare-and-swap, and durably journals intent.
 An existing transaction directory is never reused or modified as a new attempt.
 
+Every live activation authority reference must be outside **every target in
+the campaign**, not just the selected unit. This includes the independently
+supplied activation approval's nested evidence, window approval and owner
+attestations/evidence, controls approval/coverage, staged inputs, all units'
+provenance, writer sources and store-attribution files. Request, approval and
+journal destinations are also excluded. The check precedes any activation
+archive or receipt publication. Archiving an evidence copy never authorizes
+deleting its required live original.
+
 It then revalidates full unit eligibility, all campaign reference closures,
 missing-owner absence, current owner/writer/registry coverage, protected roots,
 executing-bundle/legacy-route fingerprints, approvals/evidence, actual open
 target paths/inodes, process activity, deadline and lock identities. Slow
-probes and fsyncs are followed by renewed checks. Operation-specific approval
-evidence is checked **after** the final slow requester census; the suspension
-file is pinned so final no-follow metadata checks catch last-moment mutation.
-Only then is the exact marker unlinked relative to its verified parent FD.
+probes and fsyncs are followed by renewed checks. The **complete schema-known
+authorization file-reference closure**, not only activation-specific evidence,
+is checked **after** the final slow requester census. This last file-only pass
+launches no further Git, process or lsof probes; it is followed by cheap
+identity, receipt/marker, kernel-lock and deadline checks. The suspension file
+is pinned so final no-follow metadata checks catch last-moment mutation. Only
+then is the exact marker unlinked relative to its verified parent FD.
 
 After fsyncing that directory, the same validations repeat with suspension
 required absent. A durable commit event and an active
 `activation-receipt-v2.json` are published; active-receipt candidate synchronization
-is followed by fresh approval/readiness checks before publication. Successful
-output is `state:"activated"` with
+is followed by fresh approval/readiness and post-census closure checks before
+publication. The same full post-census closure check runs again **before
+declaring completion**. Withdrawal during the last requester census therefore
+fails and restores suspension, including after active-receipt publication;
+the failed receipt is fenced and the genuine activation lane is retained.
+Successful output is `state:"activated"` with
 `lane_finalization:"required-before-cleanup"`. **The enclosing frozen wrapper
 must also return successfully and cleanly finalize its own lane.** Do not infer
 successful whole-operation completion from child stdout alone.
@@ -923,9 +939,12 @@ successful whole-operation completion from child stdout alone.
 `apply-unit` requires the exact active receipt, its archive and commit journal,
 unchanged live request/approval and evidence, matching current file
 identities/bytes, exact unit/window/campaign, unexpired deadline, and no failure
-fence. These checks repeat per unlink. Marker absence alone never authorizes
-v2 cleanup. The activation lane must no longer be in the registry; its receipt
-alone cannot authorize cleanup while that genuine v1 record remains.
+fence. Full-campaign live-authority exclusion and reference validation repeat
+per unlink, including for internally consistent receipts created by an older
+implementation. Completed units' compiler targets need not still exist; their
+authority files must. Marker absence alone never authorizes v2 cleanup. The
+activation lane must no longer be in the registry; its receipt alone cannot
+authorize cleanup while that genuine v1 record remains.
 
 ### Interrupted or uncertain activation
 
@@ -1002,12 +1021,17 @@ wrapper before transition, after transition and after receipt publication.
 They verify retained real lease fences, nonblocking upgrades and refusal on
 policy/registry/coordination contention, no-overwrite rollback, I/O failure,
 independent activation-evidence withdrawal and refusal to replay an attempt.
+Review regressions additionally reproduce selected/cross-unit activation
+evidence overlap and legacy-receipt consumption before any unlink; separate
+owner and window-approval evidence is withdrawn during the final requester
+census both before receipt publication and before completion.
 
 The scale fixture nominates **328 tiny compiler files in 41 stores**, preserves
 one log per store, and executes **three independently approved units/windows**.
 It removes exactly **369 entries** (files plus compiler-only directories), with
 **785 real companion checks**. The full guarded-activation lifecycle took
-**144.348 seconds**, excluding fixture construction (the earlier
+**198.827 seconds** with full authority-closure revalidation, excluding fixture
+construction (initial activation measured 144.348 seconds; the earlier
 pre-activation version measured 87.081–103.103 seconds).
 This deliberately measures the actual per-unlink
 validation path rather than replacing the guard with a no-op.
@@ -1022,6 +1046,7 @@ on its deadline; never infer authorization for another unit from elapsed time,
 free-space pressure, or an incomplete previous attempt.
 
 The combined activation, operations, independent-review regression, cleanup and
-companion suites passed **172 tests** in **388.720 seconds**. This includes
-45 focused activation tests. The unchanged frozen whole-lane shell suite also
+companion suites passed **187 tests** in **503.027 seconds**. This includes
+57 focused activation tests and all eight original independent-review
+regressions. The unchanged frozen whole-lane shell suite also
 passed. These are synthetic results, not a production rollout or activation.

@@ -349,7 +349,9 @@ def validate_unit(path: Path, *, now: dt.datetime) -> tuple[dict, bytes, dict]:
     return manifest, data, entries
 
 
-def campaign(path: Path, unit_id: str, *, now: dt.datetime) -> Path:
+def campaign_review(
+    path: Path, unit_id: str, *, now: dt.datetime,
+) -> tuple[Path, cleanup.TargetIndex, cleanup.ReferenceIndex]:
     value, _ = cleanup.read_private_document(path)
     policy.exact(value, {"schema", "units", "reviewed_at", "approval"}, "campaign")
     v2(value["schema"])
@@ -402,7 +404,11 @@ def campaign(path: Path, unit_id: str, *, now: dt.datetime) -> Path:
     references.validate()
     if unit_id not in manifests:
         lease.fail("unit was not explicitly reviewed in campaign")
-    return manifests[unit_id]
+    return manifests[unit_id], index, references
+
+
+def campaign(path: Path, unit_id: str, *, now: dt.datetime) -> Path:
+    return campaign_review(path, unit_id, now=now)[0]
 
 
 @contextlib.contextmanager

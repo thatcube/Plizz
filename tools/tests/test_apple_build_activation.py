@@ -212,6 +212,142 @@ class ActivationTests(unittest.TestCase):
         approval["evidence"] = [self.f.ref(evidence)]
         self.f.write_json(path, approval)
 
+    def reinstall_reviewed_inputs(self):
+        self.x.stage_path = self.f.home / ("restaged-" + str(uuid.uuid4()) + ".json")
+        self.x.stage()
+        stage = policy.document(self.x.stage_path.read_bytes())
+        approval = self.x.approval(stage, "install-suspended-rollout", "reinstall-approval.json")
+        ops.install_prepared(
+            self.x.stage_path, approval, self.f.home / ("reinstall-" + str(uuid.uuid4()) + ".jsonl"),
+            now=self.x.now,
+        )
+        self.request, self.approval, self.journal = self.x.activation_request()
+
+    def nominated_activation_evidence(self, *, cross_unit):
+        target = self.x.target
+        if cross_unit:
+            target = target.with_name("second-compiler")
+            target.mkdir()
+            (target / "one.o").write_bytes(b"independent activation permission")
+            self.x.retirement["targets"].append(self.x.retired_target(target))
+            self.x.approve_retirement()
+        evidence = target / "one.o"
+        evidence.chmod(0o600)
+        full = ops.inventory([], [self.x.retirement_path], now=self.x.now)
+        self.x.manifest = {**full, "targets": full["targets"][:1]}
+        self.f.write_json(self.f.manifest, self.x.manifest)
+        units = [{"id": self.x.unit_id, "manifest": self.f.ref(self.f.manifest)}]
+        if cross_unit:
+            second = self.f.home / "second-unit.json"
+            self.f.write_json(second, {**full, "targets": full["targets"][1:]})
+            units.append({"id": str(uuid.uuid4()), "manifest": self.f.ref(second)})
+        campaign = {"schema": 2, "units": units, "reviewed_at": cleanup.utc(self.x.now)}
+        campaign["approval"] = self.x.approval(campaign, "bounded-campaign", "campaign-approval.json")
+        self.f.write_json(self.x.campaign_path, campaign)
+        self.x.make_window()
+        self.reinstall_reviewed_inputs()
+        return evidence
+
+    def assert_activation_evidence_overlap_refused(self, *, cross_unit):
+        evidence = self.nominated_activation_evidence(cross_unit=cross_unit)
+        path = Path(self.approval["path"])
+        approval = policy.document(path.read_bytes())
+        approval["evidence"] = [self.f.ref(evidence)]
+        self.f.write_json(path, approval)
+        self.assert_refused(message="activation authority overlaps a campaign target")
+        self.assertTrue(evidence.exists())
+        self.assertEqual(self.x.marker.read_bytes(), self.x.marker_bytes)
+        self.assertFalse((lease.paths()["root"] / activation.RECEIPT_NAME).exists())
+        self.assertFalse((lease.paths()["root"] / activation.ARCHIVE_NAME).exists())
+
+    def test_selected_unit_activation_approval_evidence_cannot_be_deleted(self):
+        self.assert_activation_evidence_overlap_refused(cross_unit=False)
+
+    def test_cross_unit_activation_approval_evidence_cannot_be_deleted(self):
+        self.assert_activation_evidence_overlap_refused(cross_unit=True)
+
+    def assert_legacy_receipt_evidence_overlap_refused(self, *, cross_unit):
+        evidence = self.nominated_activation_evidence(cross_unit=cross_unit)
+        result = self.run_activation()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt_path = lease.paths()["root"] / activation.RECEIPT_NAME
+        receipt = policy.document(receipt_path.read_bytes())
+        approval_path = Path(self.approval["path"])
+        approval = policy.document(approval_path.read_bytes())
+        approval["evidence"] = [self.f.ref(evidence)]
+        # Model an internally consistent receipt from the previously vulnerable
+        # implementation. Its archived copy must not exempt the live authority.
+        for key, path in (
+            ("live_approval", approval_path),
+            ("approval", Path(receipt["approval"]["identity"]["path"])),
+        ):
+            self.f.write_json(path, approval)
+            receipt[key] = activation.binding(path)
+        self.f.write_json(receipt_path, receipt)
+        with self.assertRaisesRegex(lease.LeaseError, "activation authority overlaps a campaign target"):
+            activation.validate_receipt(
+                activation.binding(receipt_path), self.f.manifest, self.x.campaign_path,
+                self.x.unit_id, self.f.package["window"]["id"], now=cleanup.now_utc(),
+            )
+        with self.x.exclusive():
+            with self.assertRaisesRegex(lease.LeaseError, "activation authority overlaps a campaign target"):
+                self.x.apply()
+        self.assertEqual(self.x.events()[-1]["removed"], 0)
+        self.assertTrue(evidence.exists())
+
+    def test_selected_unit_legacy_receipt_cannot_exempt_live_activation_evidence(self):
+        self.assert_legacy_receipt_evidence_overlap_refused(cross_unit=False)
+
+    def test_cross_unit_legacy_receipt_cannot_exempt_live_activation_evidence(self):
+        self.assert_legacy_receipt_evidence_overlap_refused(cross_unit=True)
+
+    def assert_final_authority_census_refused(self, *, owner, completion):
+        evidence = self.f.home / ("independent-owner.txt" if owner else "independent-window.txt")
+        evidence.write_bytes(b"independent affirmative permission")
+        evidence.chmod(0o600)
+        if owner:
+            self.f.approve({"plozz-current-writers": {"evidence": [self.f.ref(evidence)]}})
+        else:
+            path = Path(self.f.package["approval"]["path"])
+            approval = policy.document(path.read_bytes())
+            approval["evidence"] = self.f.ref(evidence)
+            self.f.package["approval"] = self.f.write_json(path, approval)
+            self.f.write_json(self.f.request, self.f.package)
+        self.x.make_controls()
+        self.reinstall_reviewed_inputs()
+        kind, phase = ("owner" if owner else "window"), ("completion" if completion else "publication")
+        self.assert_refused(f"{kind}-evidence-{phase}-census", message="changed evidence")
+        self.assertIn(b"withdrawn in final census", evidence.read_bytes())
+        self.assertEqual(self.x.marker.read_bytes(), self.x.marker_bytes)
+        self.assertEqual(self.x.events(self.journal)[-1]["suspension"], "restored")
+        receipt = policy.document((lease.paths()["root"] / activation.RECEIPT_NAME).read_bytes())
+        self.assertEqual(receipt["state"], "active" if completion else "pending")
+        self.assert_failed_receipt()
+
+    def test_owner_evidence_withdrawn_in_final_publication_census_restores_suspension(self):
+        self.assert_final_authority_census_refused(owner=True, completion=False)
+
+    def test_owner_evidence_withdrawn_in_final_completion_census_restores_suspension(self):
+        self.assert_final_authority_census_refused(owner=True, completion=True)
+
+    def test_window_evidence_withdrawn_in_final_publication_census_restores_suspension(self):
+        self.assert_final_authority_census_refused(owner=False, completion=False)
+
+    def test_window_evidence_withdrawn_in_final_completion_census_restores_suspension(self):
+        self.assert_final_authority_census_refused(owner=False, completion=True)
+
+    def test_post_census_authority_recheck_uses_no_external_probes(self):
+        request = policy.document(self.request.read_bytes())
+        with mock.patch.object(ops, "git", side_effect=AssertionError("late Git probe")), \
+             mock.patch.object(policy, "worktree_snapshot", side_effect=AssertionError("late registry probe")), \
+             mock.patch.object(lease, "process_start", side_effect=AssertionError("late process census")), \
+             mock.patch.object(cleanup, "require_no_build_activity", side_effect=AssertionError("late activity probe")), \
+             mock.patch.object(cleanup, "open_file_inventory", side_effect=AssertionError("late lsof probe")):
+            activation.validate_authority(
+                request, activation.binding(self.request), activation.binding(Path(self.approval["path"])),
+                self.journal, now=cleanup.now_utc(),
+            )
+
     def test_activation_evidence_withdrawn_in_last_requester_census_prevents_transition(self):
         self.distinct_evidence()
         self.assert_refused("approval-after-requester-census", message="changed evidence")

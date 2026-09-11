@@ -162,6 +162,74 @@ def readiness(request: dict, *, clock: Callable, suspended: bool, opened: Callab
     return manifest, controls
 
 
+def validate_authority(request: dict, live_request: dict, live_approval: dict,
+                       journal_path: Path, *, now: dt.datetime) -> None:
+    """Recheck the complete file-reference closure without another external census."""
+    campaign_path = Path(request["campaign"]["identity"]["path"])
+    _, targets, private = ops.campaign_review(campaign_path, request["unit_id"], now=now)
+    nonprivate = cleanup.ReferenceIndex()
+    for ref in (live_request, live_approval, request["stage"], request["manifest"],
+                request["campaign"], *request["installed"].values()):
+        bound_bytes(ref)
+        private.add({"path": ref["identity"]["path"], "sha256": ref["sha256"]}, "activation authority")
+    stage = policy.document(bound_bytes(request["stage"]))
+    for key in ("window", "manifest", "controls"):
+        private.add(stage[key], "staged activation authority")
+    ops.collect_references(
+        {"path": live_approval["identity"]["path"], "sha256": live_approval["sha256"]},
+        private, kind="approval",
+    )
+    controls = policy.document(bound_bytes(request["installed"][ops.CONTROLS_NAME]))
+    ops.collect_references(controls["approval"], private, kind="approval")
+    for ref in controls["coverage_evidence"]:
+        private.add(ref, "operational coverage evidence")
+    for entry in controls["entrypoints"]:
+        nonprivate.add({"path": entry["path"], "sha256": entry["sha256"]}, "cleanup entrypoint")
+    package = policy.document(bound_bytes(request["installed"][policy.POLICY_NAME]))
+    private.add(package["approval"], "window approval")
+    approval = policy.document(policy.reference(package["approval"]))
+    private.add(approval["evidence"], "window approval evidence")
+    attestations = {}
+    for ref in approval["attestations"]:
+        private.add(ref, "owner attestation")
+        attestation = policy.document(policy.reference(ref))
+        attestations[attestation["cohort"]] = attestation
+        for evidence in attestation["evidence"]:
+            private.add(evidence, "owner attestation evidence")
+    for cohort in package["cohorts"]:
+        for root in cohort["roots"]:
+            for ref in root["writers"]:
+                nonprivate.add(ref, "writer fingerprint")
+            if attestations[cohort["name"]]["disposition"] == "wrapped":
+                for name, digest in policy.PROTOCOL_FILES.items():
+                    nonprivate.add({
+                        "path": str(Path(root["identity"]["path"]) / name), "sha256": digest,
+                    }, "frozen writer protocol")
+    campaign = policy.document(bound_bytes(request["campaign"]))
+    retired = set()
+    for unit in campaign["units"]:
+        manifest = policy.document(policy.reference(unit["manifest"]))
+        for target in manifest["targets"]:
+            ref = target["release_record"]
+            if target.get("ownership") == "retired-v2" and ref["path"] not in retired:
+                retired.add(ref["path"])
+                retirement = policy.document(policy.reference(ref))
+                for item in retirement["targets"]:
+                    nonprivate.add({
+                        "path": str(Path(item["store"]["path"]) / "info.plist"),
+                        "sha256": item["info_sha256"],
+                    }, "retired store attribution")
+    for path in [journal_path, *(Path(ref["path"]) for ref in (
+        *private.references.values(), *nonprivate.references.values(),
+    ))]:
+        if targets.contains(path):
+            lease.fail("activation authority overlaps a campaign target")
+    private.validate()
+    for ref in nonprivate.references.values():
+        if policy.digest(policy.read_bytes(Path(ref["path"]), private=False)) != ref["sha256"]:
+            lease.fail("activation writer or attribution evidence changed")
+
+
 def activation_inputs(stage_path: Path, campaign_path: Path, unit_id: str, activation_id: str, *,
                       clock: Callable = cleanup.now_utc,
                       opened: Callable = cleanup.open_file_inventory) -> dict:
@@ -300,8 +368,13 @@ def activate(request_path: Path, approval_ref: dict, journal_path: Path, *,
     request = policy.document(policy.read_bytes(request_path, private=True))
     manifest = policy.document(bound_bytes(request["manifest"]))
     controls = policy.document(bound_bytes(request["installed"][ops.CONTROLS_NAME]))
+    _, campaign_targets, _ = ops.campaign_review(
+        Path(request["campaign"]["identity"]["path"]), request["unit_id"], now=clock(),
+    )
     for artifact in (request_path, Path(approval_ref["path"]), journal_path):
         ops.artifact_outside(artifact, manifest, controls)
+        if campaign_targets.contains(artifact):
+            lease.fail("activation authority overlaps a campaign target")
     journal = cleanup.DurableJournal(journal_path, {"schema": 2, "operation": "activate-installed-window"})
     stopped_attempted = False
     try:
@@ -338,6 +411,11 @@ def activate(request_path: Path, approval_ref: dict, journal_path: Path, *,
                     lock_check()
                     ops.approved(request, approval_ref, purpose="activate-installed-window",
                                  earliest=observed, now=clock())
+                    validate_authority(request, live_request, live_approval, journal_path, now=clock())
+                    bound_bytes(live_request)
+                    bound_bytes(live_approval)
+                    input_documents(request, now=clock(), suspended=suspended, verify_policy=False)
+                    same_state(lease.paths()["root"] / RECEIPT_NAME, receipt)
                     lock_check(inspect_requester=False)
                     current = clock()
                     if current < last_time or current >= expires or time.monotonic() >= deadline:
@@ -508,3 +586,7 @@ def validate_receipt(reference: dict, manifest_path: Path, campaign_path: Path,
     # Do not rescan removed targets: runtime already validates the current
     # target per unlink. Immutable input identities and approvals remain live.
     input_documents(request, now=now, suspended=False, verify_policy=False)
+    validate_authority(
+        request, value["live_request"], value["live_approval"],
+        Path(value["journal"]["identity"]["path"]), now=now,
+    )

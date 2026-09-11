@@ -25,6 +25,7 @@ def main():
     import apple_build_lease as lease
     import apple_build_operations as ops
     import apple_build_activation as activation
+    import apple_maintenance_policy as policy
     home = lease.paths()["home"]
     for path in (args.bundle, args.request, args.approval, args.journal, args.status):
         if home not in path.parents:
@@ -45,6 +46,9 @@ def main():
     injected = False
     after_intent = False
     requester_checks = 0
+    active_candidate_synced = False
+    active_published = False
+    final_census_checks = 0
 
     def aged(*values):
         record = original_entry(*values)
@@ -87,16 +91,20 @@ def main():
         return result
 
     def published(archive, name, value, expected, **kwargs):
+        nonlocal active_published
         result = original_publish(archive, name, value, expected, **kwargs)
         if name == "active":
+            active_published = True
             phase("receipt")
         return result
 
     def written(path, data):
-        nonlocal injected
+        nonlocal injected, active_candidate_synced
         if args.fault == "archive-write" and path.name == "suspension-original":
             raise OSError("fixture original preservation failed")
         original_write(path, data)
+        if path.name == "candidate-active.json":
+            active_candidate_synced = True
         if ((args.fault == "approval-evidence" and path.name == "candidate-pending.json") or
             (args.fault == "active-approval-evidence" and path.name == "candidate-active.json")) and not injected:
             injected = True
@@ -104,7 +112,7 @@ def main():
             Path(approval["evidence"][0]["path"]).write_bytes(b"activation-only evidence withdrawn")
 
     def requester_start(pid):
-        nonlocal requester_checks, injected
+        nonlocal requester_checks, injected, final_census_checks
         result = original_process_start(pid)
         if after_intent and pid == os.getppid():
             requester_checks += 1
@@ -112,6 +120,24 @@ def main():
                 injected = True
                 approval = json.loads(args.approval.read_bytes())
                 Path(approval["evidence"][0]["path"]).write_bytes(b"withdrawn during final requester census")
+        if pid == os.getppid() and not injected and args.fault in {
+            "owner-evidence-publication-census", "owner-evidence-completion-census",
+            "window-evidence-publication-census", "window-evidence-completion-census",
+        }:
+            in_phase = (active_published if args.fault.endswith("completion-census")
+                        else active_candidate_synced and not active_published)
+            if in_phase:
+                final_census_checks += 1
+                if final_census_checks == 2:
+                    injected = True
+                    package = json.loads((lease.paths()["root"] / policy.POLICY_NAME).read_bytes())
+                    approval = json.loads(Path(package["approval"]["path"]).read_bytes())
+                    evidence = approval["evidence"]
+                    if args.fault.startswith("owner-"):
+                        owners = [json.loads(Path(ref["path"]).read_bytes()) for ref in approval["attestations"]]
+                        owner = next(value for value in owners if value["cohort"] == "plozz-current-writers")
+                        evidence = owner["evidence"][0]
+                    Path(evidence["path"]).write_bytes(b"independent authority withdrawn in final census")
         return result
 
     def synced(fd):
