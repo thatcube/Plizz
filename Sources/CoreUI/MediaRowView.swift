@@ -857,7 +857,8 @@ public struct MediaRowView: View {
         // Cover the drawing without masking the real scroller: SwiftUI can
         // otherwise discard its lazy children before their target is realized.
         .background(palette.backgroundBase)
-        .clipped()
+        // Focus lift and halo deliberately overflow this viewport, just like
+        // the real episode cards. The overlay must not crop them at its edge.
         .focusSectionIf(true)
     }
 

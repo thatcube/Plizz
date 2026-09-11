@@ -10,6 +10,49 @@ import UIKit
 #if os(tvOS)
 @MainActor
 final class MediaRowEpisodeEntryHostedTests: XCTestCase {
+    func testFocusedLoadingCardKeepsItsLeadingOverflow() async throws {
+        await waitUntil { UIApplication.shared.connectedScenes.contains { $0.activationState == .foregroundActive } }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive })
+        for style in [CardFocusStyle.highlight, .outlined] {
+            let model = EpisodeEntryFixture()
+            model.focusStyle = style
+            let host = EpisodeEntryHost(model: model)
+            let window = UIWindow(windowScene: scene)
+            window.frame = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            defer {
+                window.isHidden = true
+                window.rootViewController = nil
+            }
+            host.view.layoutIfNeeded()
+            await waitUntil { host.row.view.window != nil && model.appeared && host.heroIsFocused }
+            let before = screenshot(window)
+            let system = try XCTUnwrap(UIFocusSystem.focusSystem(for: window))
+            host.prefersRow = true
+            system.requestFocusUpdate(to: host)
+            system.updateFocusIfNeeded()
+            await waitUntil { model.events.contains("placeholder") }
+            // Wait for rendered overflow, not merely a FocusState callback.
+            let rowFrame = host.row.view.convert(host.row.view.bounds, to: window)
+            let x = Int(rowFrame.minX + host.row.view.safeAreaInsets.left + PlozzTheme.Metrics.screenPadding - 4)
+            let y = Int(rowFrame.minY + EpisodeColumnCard.artworkSize.height / 2)
+            XCTAssertGreaterThanOrEqual(x, 0)
+            let unfocusedPixel = try pixel(before, x: x, y: y)
+            var overflowVisible = false
+            let deadline = ContinuousClock.now + .seconds(3)
+            while !overflowVisible, ContinuousClock.now < deadline {
+                let focusedPixel = try pixel(screenshot(window), x: x, y: y)
+                overflowVisible = zip(focusedPixel.prefix(3), unfocusedPixel.prefix(3))
+                    .contains { abs(Int($0.0) - Int($0.1)) > 3 }
+                if !overflowVisible { try await Task.sleep(for: .milliseconds(30)) }
+            }
+            XCTAssertTrue(overflowVisible, "Focused \(style) thumbnail was clipped at the row's leading edge")
+            capture(window, system: system, name: "episode-placeholder-overflow-\(style)")
+        }
+    }
+
     func testFocusedLoadingSlotHandsOffToTheFarEpisodeAfterDataArrives() async throws {
         let settingsStore = MetadataProviderSettingsStore()
         let original = settingsStore.load()
@@ -119,10 +162,7 @@ final class MediaRowEpisodeEntryHostedTests: XCTestCase {
     }
 
     private func capture(_ window: UIWindow, system: UIFocusSystem, name: String) {
-        let renderer = UIGraphicsImageRenderer(bounds: window.bounds)
-        let image = renderer.image { _ in
-            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
-        }
+        let image = screenshot(window)
         let picture = XCTAttachment(image: image)
         picture.name = name
         picture.lifetime = .keepAlways
@@ -136,6 +176,30 @@ final class MediaRowEpisodeEntryHostedTests: XCTestCase {
         tree.name = "\(name)-hierarchy"
         tree.lifetime = .keepAlways
         add(tree)
+    }
+
+    private func screenshot(_ window: UIWindow) -> UIImage {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(bounds: window.bounds, format: format).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+    }
+
+    private func pixel(_ image: UIImage, x: Int, y: Int) throws -> [UInt8] {
+        let cgImage = try XCTUnwrap(image.cgImage)
+        let cropped = try XCTUnwrap(cgImage.cropping(to: CGRect(x: x, y: y, width: 1, height: 1)))
+        var bytes = [UInt8](repeating: 0, count: 4)
+        try bytes.withUnsafeMutableBytes { buffer in
+            let context = try XCTUnwrap(CGContext(
+                data: buffer.baseAddress, width: 1, height: 1,
+                bitsPerComponent: 8, bytesPerRow: 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ))
+            context.draw(cropped, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        }
+        return bytes
     }
 
     private func waitUntil(_ condition: @MainActor () -> Bool) async {
@@ -177,6 +241,7 @@ private final class EpisodeEntryFixture {
     var phase = MediaRowEpisodeEntry.Phase.loading
     var active = true
     var resumeTarget = "episode-998"
+    var focusStyle = CardFocusStyle.highlight
     @ObservationIgnored var appeared = false
     @ObservationIgnored var events: [String] = []
 }
@@ -199,6 +264,7 @@ private struct EpisodeEntryFixtureView: View {
             onSelect: { _ in }
         )
         .frame(height: 520)
+        .environment(\.plozzCardFocusStyle, model.focusStyle)
         .onAppear { model.appeared = true }
     }
 }

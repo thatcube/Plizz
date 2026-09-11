@@ -2,6 +2,9 @@ import CoreModels
 import SwiftUI
 import XCTest
 @testable import CoreUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 final class MediaRowEpisodeEntryPolicyTests: XCTestCase {
     func testLoadedDataDoesNotRetireThePlaceholderUntilTheTargetIsOnScreen() {
@@ -24,6 +27,85 @@ final class MediaRowEpisodeEntryPolicyTests: XCTestCase {
         ))
         XCTAssertFalse(MediaRowEpisodeEntryPolicy.targetReady("other-season", layout: onscreen))
     }
+
+    #if canImport(UIKit)
+    @MainActor
+    final class EpisodeRowEntryPlaceholderRenderingTests: XCTestCase {
+        func testStatusStaysBelowAnOpaqueThumbnailInEveryFocusStyle() throws {
+            for focusStyle in [CardFocusStyle.highlight, .outlined] {
+                for phase in [
+                    MediaRowEpisodeEntry.Phase.loading, .ready, .empty, .failed
+                ] {
+                    for focused in [false, true] {
+                        let renderer = ImageRenderer(content:
+                            EpisodeRowEntryPlaceholder(phase: phase, showsStatus: true, isFocused: focused)
+                                .environment(\.themePalette, .dark)
+                                .environment(\.plozzCardFocusStyle, focusStyle)
+                                .transaction { $0.animation = nil }
+                                .padding(80)
+                        )
+                        renderer.scale = 1
+                        let image = try XCTUnwrap(renderer.uiImage)
+                        let bitmap = try pixels(image)
+                        // The center remains one opaque surface, without loading text
+                        // or the focus backing showing through the thumbnail.
+                        for y in stride(from: 120, through: 300, by: 12) {
+                            for x in stride(from: 140, through: 500, by: 12) {
+                                let pixel = (y * bitmap.width + x) * 4
+                                if focusStyle == .highlight && focused {
+                                    XCTAssertLessThan(bitmap.bytes[pixel], 100)
+                                    XCTAssertLessThan(bitmap.bytes[pixel + 1], 100)
+                                    XCTAssertLessThan(bitmap.bytes[pixel + 2], 100)
+                                } else {
+                                    XCTAssertEqual(Int(bitmap.bytes[pixel]), 26, accuracy: 2)
+                                    XCTAssertEqual(Int(bitmap.bytes[pixel + 1]), 26, accuracy: 2)
+                                    XCTAssertEqual(Int(bitmap.bytes[pixel + 2]), 31, accuracy: 2)
+                                }
+                                XCTAssertEqual(bitmap.bytes[pixel + 3], 255)
+                            }
+                        }
+                        XCTAssertEqual(image.size.width, EpisodeColumnCard.slotWidth + 160, accuracy: 1)
+                    }
+                }
+            }
+        }
+
+        func testLoadingAndRetryStatesKeepTheSameLayoutOnFocus() throws {
+            var expected: CGSize?
+            for phase in [
+                MediaRowEpisodeEntry.Phase.loading, .ready, .empty, .failed
+            ] {
+                for focused in [false, true] {
+                    let renderer = ImageRenderer(content:
+                        EpisodeRowEntryPlaceholder(phase: phase, showsStatus: true, isFocused: focused)
+                            .transaction { $0.animation = nil }
+                    )
+                    let size = try XCTUnwrap(renderer.uiImage).size
+                    if let expected {
+                        XCTAssertEqual(size, expected)
+                    } else {
+                        expected = size
+                    }
+                }
+            }
+        }
+
+        private func pixels(_ image: UIImage) throws -> (width: Int, bytes: [UInt8]) {
+            let cgImage = try XCTUnwrap(image.cgImage)
+            var bytes = [UInt8](repeating: 0, count: cgImage.width * cgImage.height * 4)
+            try bytes.withUnsafeMutableBytes { buffer in
+                let context = try XCTUnwrap(CGContext(
+                    data: buffer.baseAddress, width: cgImage.width, height: cgImage.height,
+                    bitsPerComponent: 8, bytesPerRow: cgImage.width * 4,
+                    space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                ))
+                context.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+            }
+            return (cgImage.width, bytes)
+        }
+    }
+    #endif
 
     func testUnknownGeometryNeverCountsAsARealizedTarget() {
         XCTAssertFalse(MediaRowEpisodeEntryPolicy.targetReady("episode", layout: .init()))

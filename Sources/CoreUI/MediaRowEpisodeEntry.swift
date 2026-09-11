@@ -80,41 +80,54 @@ struct EpisodeRowEntryPlaceholder: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             RoundedRectangle(cornerRadius: metrics.landscapeCardCornerRadius)
-                .fill(palette.fill)
+                // Like real artwork, the tile must hide the center of its
+                // expanding focus halo rather than reveal a second surface.
+                .fill(palette.cardOpaqueSurface)
                 .frame(width: EpisodeColumnCard.artworkSize.width, height: EpisodeColumnCard.artworkSize.height)
                 .plozzMediaEdge(cornerRadius: metrics.landscapeCardCornerRadius)
-                .overlay {
-                    if showsStatus {
-                        VStack(spacing: 12) {
-                            switch phase {
-                            case .loading, .ready:
-                                Label("Loading episodes", systemImage: "hourglass")
-                            case .empty:
-                                Text("No episodes available")
-                            case .failed:
-                                Text("Unable to load episodes")
-                                Label("Retry", systemImage: "arrow.clockwise")
-                            }
-                        }
-                        .font(.subheadline)
-                        .foregroundStyle(palette.primaryText)
-                    }
-                }
                 .plozzFocusHalo(
                     cornerRadius: metrics.landscapeCardCornerRadius,
-                    focusScale: PlozzTheme.Metrics.mediumFocusedCardScale,
+                    focusScale: reduceMotion ? 1 : PlozzTheme.Metrics.mediumFocusedCardScale,
                     isFocused: isFocused
                 )
             VStack(alignment: .leading, spacing: 10) {
-                Capsule().fill(palette.fill).frame(width: 250, height: 20)
+                Group {
+                    if showsStatus {
+                        switch phase {
+                        case .loading, .ready:
+                            Label("Loading episodes", systemImage: "hourglass")
+                        case .empty:
+                            Text("No episodes available")
+                        case .failed:
+                            Text("Unable to load episodes")
+                        }
+                    } else {
+                        Capsule().fill(palette.fill).frame(width: 250, height: 20)
+                    }
+                }
+                .font(.system(size: metrics.cardTitleFontSize, weight: .semibold))
+                .foregroundStyle(palette.primaryText)
+                .lineLimit(1)
+                .frame(height: metrics.cardTitleFontSize * 1.25, alignment: .leading)
                 Capsule().fill(palette.fill).frame(width: 440, height: 15)
                 Capsule().fill(palette.fill).frame(width: 390, height: 15)
-                Capsule().fill(palette.fill).frame(width: 310, height: 15)
+                Group {
+                    if showsStatus && phase == .failed {
+                        Label("Retry", systemImage: "arrow.clockwise")
+                            .font(.system(size: 20))
+                            .foregroundStyle(palette.secondaryText)
+                    } else {
+                        Capsule().fill(palette.fill).frame(width: 310, height: 15)
+                    }
+                }
+                .frame(height: 24, alignment: .leading)
             }
-            .padding(.top, metrics.landscapeCaptionTopSpacing)
+            .padding(.top, metrics.landscapeCaptionTopSpacing + metrics.focusCaptionPush)
+            .offset(y: reduceMotion || isFocused ? 0 : -metrics.focusCaptionPush)
         }
         .frame(width: EpisodeColumnCard.artworkSize.width, alignment: .leading)
         .padding(.horizontal, EpisodeColumnCard.sideMargin)
+        .compositingGroup()
         .plozzCardFocusTransition(isFocused: isFocused, animates: !reduceMotion)
     }
 }
