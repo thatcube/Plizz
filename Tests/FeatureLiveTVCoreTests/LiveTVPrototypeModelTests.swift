@@ -542,6 +542,34 @@ final class LiveTVPrototypeModelTests: XCTestCase {
         XCTAssertEqual(model.favoriteIDs, [channels[0].id])
     }
 
+    func testGuideIdentityIndexTracksFiltersFavoritesRecentsAndHiddenChannels() {
+        let model = LiveTVPrototypeModel(channels: hiddenChannelFixtures)
+        func assertIndex() {
+            XCTAssertEqual(model.guideRowIDs, model.guideChannels.map(\.id))
+            for entry in model.guideChannels {
+                XCTAssertEqual(model.guideEntry(for: entry.id), entry)
+                XCTAssertEqual(
+                    model.guideRow(for: entry.channel.id, preferring: entry.section), entry.id)
+            }
+        }
+        assertIndex()
+        let first = hiddenChannelFixtures[0]
+        model.toggleFavorite(first.id)
+        model.tune(first.id)
+        XCTAssertTrue(model.recordWatched(first.id))
+        assertIndex()
+        XCTAssertNotNil(model.guideEntry(for: .init(channelID: first.id, section: .recent)))
+        model.query = "no-matches"
+        assertIndex()
+        XCTAssertTrue(model.guideRowIDs.isEmpty)
+        XCTAssertNil(model.guideEntry(for: .init(channelID: first.id, section: .recent)))
+        model.query = ""
+        assertIndex()
+        XCTAssertTrue(model.hideChannel(first))
+        assertIndex()
+        XCTAssertNil(model.guideRow(for: first.id))
+    }
+
     func testFailedMultiviewSaveRetriesWithoutErasingConcurrentFavorites() {
         let store = HiddenChannelsFixtureStore()
         let channels = hiddenChannelFixtures

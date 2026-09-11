@@ -98,10 +98,14 @@ is no prior in-memory history to migrate on the first updated launch.
   dialog. Apple TV uses the native inline search keyboard above the familiar
   channel/programme rows; iPhone/iPad replace the hero with an inline search field.
   Both use the same query and filtered catalog, not an extra eight-result list.
-  On TV, each actual guide row supplies a row-sized native focus boundary.
-  This keeps keyboard-collapse scrolling aimed at that row rather than the
-  entire SwiftUI results host; retain `PrototypeSearchFocusBoundary` around
-  rows when changing the guide layout.
+  On TV, the guide and Search use `PrototypeNativeGuideList`, a native collection
+  view that recycles visible rows while retaining the shared SwiftUI row controls.
+  The focus engine no longer traverses a full-catalog set of synthetic lazy-stack
+  placeholders. Each row has its own hosting boundary, preserving the logo/programme
+  focus column and keeping keyboard-collapse scrolling aimed at the actual row.
+  Stable row identities, cached row configuration and measured heights avoid
+  rebuilding unrelated rows as focus moves. Guide lookup indices are refreshed
+  with catalog/filter changes, not rebuilt for every scroll callback.
   The current category remains identified. Leaving Search restores the
   original guide occurrence and time position; the video stays in the same player.
   On Apple TV, Back works from both the native keyboard and the results.

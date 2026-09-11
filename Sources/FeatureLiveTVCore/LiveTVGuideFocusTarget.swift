@@ -37,7 +37,7 @@ public enum LiveTVGuideFocusTarget: Hashable, Sendable {
 
     @MainActor
     public func isAvailable(in model: LiveTVPrototypeModel, from start: Date, hours: Int = 6) -> Bool {
-        guard model.guideChannels.contains(where: { $0.id == rowID }) else { return false }
+        guard model.guideEntry(for: rowID) != nil else { return false }
         if case .channel = self { return true }
         let programs = model.programs(for: channelID, from: start, hours: hours)
         if case .channelContent(_, nil, _) = self { return programs.isEmpty }

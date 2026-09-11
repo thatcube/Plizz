@@ -295,6 +295,17 @@ public final class LiveTVPrototypeModel {
 
     public private(set) var visibleChannels: [LiveTVPrototypeChannel] = []
     public private(set) var guideChannels: [LiveTVGuideChannel] = []
+    @ObservationIgnored private var orderedGuideRowIDs: [LiveTVGuideRowID] = []
+    @ObservationIgnored private var guideEntries: [LiveTVGuideRowID: LiveTVGuideChannel] = [:]
+    public var guideRowIDs: [LiveTVGuideRowID] {
+        _ = guideChannels
+        return orderedGuideRowIDs
+    }
+
+    public func guideEntry(for row: LiveTVGuideRowID) -> LiveTVGuideChannel? {
+        _ = guideChannels
+        return guideEntries[row]
+    }
     private let preferences = LiveTVPrototypePreferencesState()
     public private(set) var recentChannelIDs: [String] {
         get { preferences.recentChannelIDs }
@@ -506,12 +517,12 @@ public final class LiveTVPrototypeModel {
     }
 
     public func guideRow(for channelID: String, preferring section: LiveTVGuideSection? = nil) -> LiveTVGuideRowID? {
-        if let section,
-           let row = guideChannels.first(where: { $0.channel.id == channelID && $0.section == section }) {
-            return row.id
+        if let section, let entry = guideEntry(for: .init(channelID: channelID, section: section)) {
+            return entry.id
         }
-        return guideChannels.first { $0.channel.id == channelID && $0.section == .channels }?.id
-            ?? guideChannels.first { $0.channel.id == channelID }?.id
+        return guideEntry(for: .init(channelID: channelID, section: .channels))?.id
+            ?? guideEntry(for: .init(channelID: channelID, section: .recent))?.id
+            ?? guideEntry(for: .init(channelID: channelID, section: .favorites))?.id
     }
 
     public func toggleFavorite(_ id: String) {
@@ -967,11 +978,14 @@ public final class LiveTVPrototypeModel {
         let groups: [(LiveTVGuideSection, [LiveTVPrototypeChannel])] = [
             (.recent, recent), (.favorites, favorites), (.channels, visibleChannels)
         ]
-        guideChannels = groups.flatMap { section, channels in
+        let updated = groups.flatMap { section, channels in
             channels.enumerated().map { index, channel in
                 LiveTVGuideChannel(channel: channel, section: section, startsSection: index == 0)
             }
         }
+        orderedGuideRowIDs = updated.map(\.id)
+        guideEntries = Dictionary(uniqueKeysWithValues: updated.map { ($0.id, $0) })
+        guideChannels = updated
     }
 
     private func channelsAreOrdered(
