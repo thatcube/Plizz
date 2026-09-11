@@ -456,8 +456,7 @@ struct HomeHeroView: View {
     /// The watchlist toggle action for the slide's watchlist target, if its
     /// provider supports it.
     private func watchlistAction(for item: MediaItem) -> MediaItemAction? {
-        actionHandler?.actions(for: watchlistTarget(for: item), context: actionContext)
-            .first { $0 == .addToWatchlist || $0 == .removeFromWatchlist }
+        actionHandler?.watchlistAction(for: watchlistTarget(for: item), context: actionContext)
     }
 
     private static var screenHeight: CGFloat { HomeHeroLayout.screenHeight }

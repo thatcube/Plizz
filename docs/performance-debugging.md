@@ -453,6 +453,16 @@ utilisation = "death by a thousand re-renders", not one big stall.
    or cancellation cannot publish stale results or call the old completion.
    Keep that protection when changing the worker boundary, and retain the
    order-stable merge rather than re-sorting Continue Watching.
+7. **Ask only for the action a visible control needs.** The Home hero previously
+   built the complete context-menu catalog just to draw its bookmark button,
+   repeating provider-ownership identity lookups on focus changes. Its
+   `watchlistAction` query now shares the catalog's eligibility rules but skips
+   unrelated identity, provider-capability and download work when Plozz owns the
+   watchlist. Membership still uses the live revision-aware cache; legacy
+   provider watchlists and custom handlers retain their full-menu fallback.
+   The UIKit foreground also retains its ratings hosting view and updates its
+   isolated ratings state only when scores change. Focus, selection and paging
+   gauge updates must not replace that SwiftUI root with unchanged badges.
 
 ### Profiling that ends in "no change" is a valid, valuable result
 

@@ -279,6 +279,19 @@ public final class MediaItemActionCoordinator: MediaItemActionHandling {
         )
     }
 
+    public func watchlistAction(for item: MediaItem, context: MediaItemActionContext) -> MediaItemAction? {
+        guard universalWatchlistEnabled() else {
+            return actions(for: item, context: context)
+                .first { $0 == .addToWatchlist || $0 == .removeFromWatchlist }
+        }
+        guard !item.isUpcomingUnaired else { return nil }
+        // Plozz-owned membership is independent of provider ownership, watch-state,
+        // refresh and download capabilities. Those require identity graph lookups.
+        return MediaItemActionCatalog.watchlistAction(
+            for: item, supportsWatchlist: false, isWatchlisted: cachedWatchlistMembership(item)
+        )
+    }
+
     public func perform(_ action: MediaItemAction, on item: MediaItem, context: MediaItemActionContext) {
         switch action {
         case .markWatched, .markUnwatched, .markWatchedUpToHere:
