@@ -28,6 +28,12 @@ public enum SeasonLoadState: Equatable, Sendable {
     }
 }
 
+@MainActor
+@Observable
+private final class SeriesResumeResolution {
+    var isResolving = false
+}
+
 /// Loads full detail for an item plus its children (episodes/seasons), and
 /// asynchronously enriches it with external ratings (IMDb/RT/Metacritic).
 @MainActor
@@ -88,6 +94,8 @@ public final class ItemDetailViewModel {
     /// server has no resume point. Observed through `state`: cached seasons can
     /// render before this live answer without changing their ids when it arrives.
     public var serverResumeEpisode: MediaItem? { state.value?.serverResumeEpisode }
+    private let resumeResolution = SeriesResumeResolution()
+    public var isResolvingServerResume: Bool { resumeResolution.isResolving }
 
 
     /// empty array — cached deliberately, so a season that genuinely cannot be
@@ -628,6 +636,10 @@ public final class ItemDetailViewModel {
                 itemID: loadItemID,
                 accountID: loadAccountID
             )
+        }
+        resumeResolution.isResolving = true
+        defer {
+            if isCurrent() { resumeResolution.isResolving = false }
         }
         if let interactive = loadProvider as? any InteractiveBrowseActivityReporting {
             await interactive.noteInteractiveBrowseActivity()
@@ -1804,6 +1816,7 @@ public final class ItemDetailViewModel {
               isStillLoaded(item, sourceGeneration: sourceGeneration),
               var detail = state.value else { return }
         detail.serverResumeEpisode = resume.map(tagged)
+        resumeResolution.isResolving = false
         state = .loaded(detail)
     }
 

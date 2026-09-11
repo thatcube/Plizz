@@ -117,11 +117,6 @@ final class SeriesDetailBrowserPolicyTests: XCTestCase {
         ))
     }
 
-    func testLooseEpisodeBrowserRearmsWhenHeroRegainsFocus() {
-        XCTAssertTrue(SeriesDetailBrowserPolicy.rearmsEpisodeRailOnHeroFocus(hasSeasons: false))
-        XCTAssertFalse(SeriesDetailBrowserPolicy.rearmsEpisodeRailOnHeroFocus(hasSeasons: true))
-    }
-
     func testCastRevealsOnlyWhenAnEmptyBrowserHasFinishedLoading() {
         XCTAssertFalse(SeriesDetailBrowserPolicy.revealsCastWithoutBrowser(
             childrenLoaded: false,

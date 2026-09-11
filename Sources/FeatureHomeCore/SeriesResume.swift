@@ -208,6 +208,13 @@ public struct SeasonEpisodeRef: Equatable, Sendable {
 /// Resolves an episode-context entry against the active server's season/episode
 /// objects. Provider ids differ across servers, but S/E ordinals remain stable.
 public enum SeriesEpisodeEntry {
+    /// A loading-slot focus is not a choice of the provisional cached season.
+    public static func waitsForResume(
+        isResolving: Bool, hasResumeSeed: Bool, hasExplicitSelection: Bool
+    ) -> Bool {
+        isResolving && !hasResumeSeed && !hasExplicitSelection
+    }
+
     public static func openingSeed(
         for series: MediaItem,
         initialEpisode: MediaItem?,

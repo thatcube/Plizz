@@ -814,7 +814,7 @@ struct SeriesDetailView: View {
         return ScrollViewReader { proxy in
             if seasons.isEmpty, showsSeasonEntry {
                 LoadingSeasonTab(isFocused: focusedSeasonID == Self.loadingSeasonID)
-                    .focusable()
+                    .focusable(browserHoldsFocus)
                     .focusEffectDisabled()
                     .focused($focusedSeasonID, equals: Self.loadingSeasonID)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -874,7 +874,7 @@ struct SeriesDetailView: View {
         seasonBarEngaged = !loading
         browserEntry = loading ? .loadingSeasons : .browser
         browserHoldsFocus = true
-        hasUserDirectedFocus = true
+        if !loading { hasUserDirectedFocus = true }
         hasSettledOpeningFocus = true
         if entering { episodeRailResetToken += 1 }
         if shouldReveal { onFocusEntered() }
@@ -1006,7 +1006,7 @@ struct SeriesDetailView: View {
             hasOwnedSeasons: !seasons.isEmpty,
             seasonBarEngaged: seasonBarEngaged,
             hasRequestHandler: onRequestSeasons != nil
-        ))
+        ) || !browserHoldsFocus)
         .onChange(of: requestSeasonsFocused) { _, focused in
             if focused {
                 enterSeasonBrowser(onFocusEntered: onFocusEntered)
@@ -1063,7 +1063,7 @@ struct SeriesDetailView: View {
         // The chip focus can land on while *entering* the bar: the active season,
         // falling back to the first one before a selection settles, so the bar is
         // never momentarily unfocusable during initial load.
-        let isFocusable = seasonBarEngaged || season.id == activeID
+        let isFocusable = browserHoldsFocus && (seasonBarEngaged || season.id == activeID)
         return SeasonWatchStateMenu(for: season) {
             select(season)
         } label: {
@@ -1124,12 +1124,7 @@ struct SeriesDetailView: View {
 
     // MARK: Episode rail
 
-    @ViewBuilder
     private func episodeRail(onFocusEntered: @escaping () -> Void) -> some View {
-        if let selectedSeasonID,
-           viewModel.episodes(for: selectedSeasonID) == nil {
-            SeriesEpisodeSkeletonRail()
-        } else {
         // Owned episodes first, then the season's not-yet-aired ones so a viewer can
         // see (and read about) the rest of the run without leaving the page.
         let episodes = currentEpisodes + upcomingPlaceholders
@@ -1149,29 +1144,40 @@ struct SeriesDetailView: View {
         // Resolve the same fallback synchronously from the final episode pool so
         // the rail's very first frame already uses its permanent target.
         let target = episodeEntryTarget(in: currentEpisodes)
-        SeriesEpisodeRailContent(
+        return SeriesEpisodeRailContent(
             title: railTitle,
             episodes: episodes,
             spoilerSettings: spoilerSettings,
             targetID: target,
-            initialFocusID: initialEpisode == nil ? nil : target,
+            initialFocusID: initialEpisode == nil ? nil : (target ?? initialEpisode?.id),
             focusResetToken: episodeRailResetToken,
             isCovered: hasChildOnTop,
             precedingContainerIDs: precedingSeasonIDs,
+            episodeEntry: MediaRowEpisodeEntry(
+                phase: episodeEntryPhase,
+                isActive: browserEntry == .hero || seasonBarEngaged,
+                onPlaceholderFocus: {
+                    // Entering a loading slot is not an explicit choice of a
+                    // season. Let the arriving resume answer select the right one.
+                    enterEpisodeBrowser(isPlaceholder: true, onFocusEntered: onFocusEntered)
+                },
+                onRetry: {
+                    Task {
+                        if let selectedSeasonID {
+                            await viewModel.loadEpisodes(for: selectedSeasonID)
+                        } else {
+                            await viewModel.reload()
+                        }
+                    }
+                }
+            ),
             onRefocusComplete: {
                 reclaimTimeout?.cancel()
                 reclaimTimeout = nil
                 isReclaimingFocus = false
             },
             onFocusEntered: {
-                seasonBarEngaged = false
-                browserEntry = .browser
-                browserHoldsFocus = true
-                // The user has taken focus into the rail themselves — the opening
-                // Play claim must not fire behind them.
-                hasUserDirectedFocus = true
-                hasSettledOpeningFocus = true
-                onFocusEntered()
+                enterEpisodeBrowser(isPlaceholder: false, onFocusEntered: onFocusEntered)
             },
             onSelect: { item in
                 // An unaired episode has nothing to play and no page worth opening,
@@ -1181,12 +1187,45 @@ struct SeriesDetailView: View {
                 onPlay(item)
             }
         )
+    }
+
+    private var episodeEntryPhase: MediaRowEpisodeEntry.Phase {
+        guard viewModel.state.value?.childrenLoaded == true else { return .loading }
+        if SeriesEpisodeEntry.waitsForResume(
+            isResolving: viewModel.isResolvingServerResume,
+            hasResumeSeed: viewModel.serverResumeEpisode != nil,
+            hasExplicitSelection: hasUserDirectedFocus || initialEpisode != nil || initialSeasonID != nil
+        ) { return .loading }
+        if !seasons.isEmpty, selectedSeasonID == nil || selectedSeasonID != activeSeasonID {
+            return .loading
         }
+        if let id = selectedSeasonID ?? activeSeasonID {
+            switch viewModel.seasonLoadState(for: id) {
+            case .notLoaded: return .loading
+            case .failed: return .failed
+            case .loaded: break
+            }
+        } else if !seasons.isEmpty {
+            return .loading
+        }
+        return currentEpisodes.isEmpty && upcomingPlaceholders.isEmpty ? .empty : .ready
+    }
+
+    private func enterEpisodeBrowser(isPlaceholder: Bool, onFocusEntered: () -> Void) {
+        guard !ignoresSystemFocusMoves else { return }
+        let shouldReveal = !browserHoldsFocus || !recedeModel.isReceded
+        seasonBarEngaged = false
+        browserEntry = .browser
+        browserHoldsFocus = true
+        if !isPlaceholder { hasUserDirectedFocus = true }
+        hasSettledOpeningFocus = true
+        if shouldReveal { onFocusEntered() }
     }
 
     private func episodeEntryTarget(in episodes: [MediaItem]) -> String? {
         SeriesEpisodeEntry.episode(matching: initialEpisode, in: episodes)?.id
             ?? railTargetID.flatMap { id in episodes.contains { $0.id == id } ? id : nil }
+            ?? playTarget.flatMap { target in episodes.first { $0.id == target.id }?.id }
             ?? SeriesResume.nextUp(in: episodes)?.id
     }
 
@@ -1215,7 +1254,7 @@ struct SeriesDetailView: View {
 
     private var initialSeasonPreparationKey: String {
         let resume = viewModel.serverResumeEpisode
-        return "\(seasonSetKey)#\(resume?.id ?? "")#\(resume?.resumePosition ?? 0)"
+        return "\(seasonSetKey)#\(activeSeasonID ?? "_")#\(viewModel.isResolvingServerResume)#\(resume?.id ?? "")#\(resume?.resumePosition ?? 0)"
     }
 
     /// Warms the **currently selected** season so its episode thumbnails are
@@ -1344,9 +1383,6 @@ struct SeriesDetailView: View {
     }
 
     private func rearmEpisodeRailOnHeroFocusIfNeeded() {
-        guard SeriesDetailBrowserPolicy.rearmsEpisodeRailOnHeroFocus(
-            hasSeasons: !seasons.isEmpty
-        ) else { return }
         episodeRailResetToken &+= 1
     }
 
@@ -1705,6 +1741,7 @@ private struct SeriesEpisodeRailContent: View {
     let focusResetToken: Int
     let isCovered: Bool
     let precedingContainerIDs: [String]
+    let episodeEntry: MediaRowEpisodeEntry
     let onRefocusComplete: () -> Void
     let onFocusEntered: () -> Void
     let onSelect: (MediaItem) -> Void
@@ -1723,6 +1760,7 @@ private struct SeriesEpisodeRailContent: View {
             onRefocusComplete: onRefocusComplete,
             leadingInset: PlozzTheme.Metrics.heroLeadingPadding,
             onFocusEntered: onFocusEntered,
+            episodeEntry: episodeEntry,
             onSelect: onSelect
         )
         .mediaItemActionContext(
@@ -1771,64 +1809,6 @@ private final class SeriesPlaceholderCache {
     }
 }
 
-private struct SeriesEpisodeSkeletonRail: View {
-    private let metrics = PlozzMetrics.standard
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(alignment: .top, spacing: metrics.cardSpacing) {
-                ForEach(0..<4, id: \.self) { _ in
-                    SeriesEpisodeSkeletonCard()
-                }
-            }
-            .padding(.leading, PlozzTheme.Metrics.heroLeadingPadding)
-            .padding(.trailing, PlozzTheme.Metrics.screenPadding)
-            .padding(.vertical, metrics.railShadowClearance)
-        }
-        .padding(.top, metrics.railTopClearanceOffset)
-        .padding(.bottom, metrics.railBottomClearanceOffset)
-        .scrollDisabled(true)
-        .accessibilityLabel("Loading episodes")
-    }
-}
-
-private struct SeriesEpisodeSkeletonCard: View {
-    @Environment(\.themePalette) private var palette
-    private let metrics = PlozzMetrics.standard
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            RoundedRectangle(
-                cornerRadius: metrics.landscapeCardCornerRadius,
-                style: .continuous
-            )
-            .fill(palette.fill)
-            .frame(
-                width: EpisodeColumnCard.artworkSize.width,
-                height: EpisodeColumnCard.artworkSize.height
-            )
-            .plozzMediaEdge(cornerRadius: metrics.landscapeCardCornerRadius)
-
-            VStack(alignment: .leading, spacing: 10) {
-                skeletonLine(width: 250, height: 20)
-                skeletonLine(width: 440, height: 15)
-                skeletonLine(width: 390, height: 15)
-                skeletonLine(width: 310, height: 15)
-            }
-            .padding(.top, metrics.landscapeCaptionTopSpacing)
-        }
-        .frame(width: EpisodeColumnCard.artworkSize.width, alignment: .leading)
-        .padding(.horizontal, EpisodeColumnCard.sideMargin)
-        .shimmering()
-    }
-
-    private func skeletonLine(width: CGFloat, height: CGFloat) -> some View {
-        Capsule()
-            .fill(palette.fill)
-            .frame(width: width, height: height)
-    }
-}
-
 private enum SeriesBrowserEntry {
     case hero
     case loadingSeasons
@@ -1852,10 +1832,6 @@ private struct LoadingSeasonTab: View {
 enum SeriesDetailBrowserPolicy {
     static func showsSeasonEntry(childrenLoaded: Bool, hasSeasons: Bool) -> Bool {
         hasSeasons || !childrenLoaded
-    }
-
-    static func rearmsEpisodeRailOnHeroFocus(hasSeasons: Bool) -> Bool {
-        !hasSeasons
     }
 
     static func revealsCastWithoutBrowser(

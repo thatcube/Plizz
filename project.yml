@@ -417,7 +417,48 @@ targets:
       - package: Plozz
         product: AppShelliOS
 
+  PlozzFocusHost:
+    type: application
+    platform: tvOS
+    sources:
+      - path: Tests/FocusHost
+      - path: App/Resources/Assets.xcassets
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.thatcube.Plozz.FocusHost
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+
+  PlozzFocusTests:
+    type: bundle.unit-test
+    platform: tvOS
+    sources:
+      - path: Tests/FocusIntegrationTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.thatcube.Plozz.FocusTests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/PlozzFocusHost.app/PlozzFocusHost"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+    dependencies:
+      - target: PlozzFocusHost
+      - package: Plozz
+        product: CoreUI
+      - package: Plozz
+        product: CoreModels
+
 schemes:
+  PlozzFocusTests:
+    build:
+      targets:
+        PlozzFocusHost: all
+        PlozzFocusTests: [test]
+    test:
+      config: Debug
+      targets:
+        - PlozzFocusTests
+
   Plozz:
     build:
       targets:

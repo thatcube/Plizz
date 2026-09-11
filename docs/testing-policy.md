@@ -144,6 +144,19 @@ the normal isolated retry only after every requested bundle reported.
 Runner verdict regressions use the existing host-side unittest runner:
 `python3 -m unittest discover -s tools/tests -p 'test_xcresult_summary.py'`.
 
+## App-hosted focus integration
+
+`tools/run-focus-tests.sh` runs the `PlozzFocusTests` scheme in a minimal,
+separate `PlozzFocusHost` app. It uses the same package code but supplies a real
+foreground window scene, which package logic tests cannot provide. The suite
+exercises native focus on a loading episode slot and its handoff to an episode
+near the end of a 1,000-item row. It uses local fixture artwork, not media servers.
+
+Pass `PLOZZ_SIM_ID` to select a simulator. Run `tools/generate-project.sh` after
+changing the host or test target. Results are retained under
+`.build/focus-test-results/`; the runner requires an authoritative passing
+`xcresult` just like the package runner. Both runners execute in CI.
+
 ## Guards that run before the compile
 
 Both are host-side Python (the tests run inside the tvOS Simulator sandbox and

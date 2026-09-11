@@ -38,6 +38,7 @@ final class ItemDetailViewModelTests: XCTestCase {
             let load = Task { await vm.load() }
             if holdResume {
                 await waitUntil { provider.childrenCallCount[show.id] == 1 }
+                XCTAssertTrue(vm.isResolvingServerResume)
                 XCTAssertEqual(vm.state.value?.childrenLoaded, false)
                 XCTAssertEqual(vm.state.value?.children.map(\.id), [])
                 XCTAssertNil(vm.serverResumeEpisode)
@@ -55,6 +56,7 @@ final class ItemDetailViewModelTests: XCTestCase {
             }
             gate.open()
             await load.value
+            XCTAssertFalse(vm.isResolvingServerResume)
             XCTAssertEqual(vm.serverResumeEpisode?.id, resume.id)
             XCTAssertEqual(vm.state.value?.children.map(\.id), ["s4"])
             vm.suspendEnrichment()
@@ -119,6 +121,21 @@ final class ItemDetailViewModelTests: XCTestCase {
             )
             XCTAssertNil(vm.serverResumeEpisode)
         }
+    }
+
+    func testEpisodeEntryWaitsForResumeWithoutFreezingAProvisionalSeason() {
+        XCTAssertTrue(SeriesEpisodeEntry.waitsForResume(
+            isResolving: true, hasResumeSeed: false, hasExplicitSelection: false
+        ))
+        XCTAssertFalse(SeriesEpisodeEntry.waitsForResume(
+            isResolving: false, hasResumeSeed: false, hasExplicitSelection: false
+        ))
+        XCTAssertFalse(SeriesEpisodeEntry.waitsForResume(
+            isResolving: true, hasResumeSeed: true, hasExplicitSelection: false
+        ))
+        XCTAssertFalse(SeriesEpisodeEntry.waitsForResume(
+            isResolving: true, hasResumeSeed: false, hasExplicitSelection: true
+        ))
     }
 
     func testResumeArrivalIsObservedAfterCachedSeasonsHaveAlreadyRendered() async {
