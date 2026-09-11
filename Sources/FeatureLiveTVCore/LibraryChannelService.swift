@@ -236,7 +236,8 @@ public final class LibraryChannelService {
     }
 
     public func refreshAutomaticChannels(
-        at now: Date = Date(), unavailableAccountIDs: Set<String> = []
+        at now: Date = Date(), unavailableAccountIDs: Set<String> = [],
+        reportProgress: @escaping @MainActor @Sendable (LibraryChannelPreparationUpdate) -> Void = { _ in }
     ) async throws -> LibraryChannelAutomaticGenerationSummary {
         let stamp = generation
         let automaticStamp = automaticGeneration
@@ -250,12 +251,17 @@ public final class LibraryChannelService {
         let profileID = profileID
         let cachedSnapshots = snapshots
         let cachedSchedules = schedules
+        let progress = LibraryChannelPreparationReporter(report: reportProgress)
         let catalogTask = Task.detached(priority: .utility) {
             var catalog = LibraryChannelAutomaticCatalog()
             var failures: [LibraryChannelSourceFailure] = []
             for context in providerContexts.sorted(by: { $0.accountID < $1.accountID }) {
                 do {
-                    let source = try await LibraryChannelAutomaticCatalog.fetch(contexts: [context]) {
+                    let source = try await LibraryChannelAutomaticCatalog.fetch(
+                        contexts: [context], reportProgress: { update in
+                            await progress.receive(update, accountID: context.accountID)
+                        }
+                    ) {
                         try await self.checkAutomatic(stamp: stamp, automaticStamp: automaticStamp)
                     }
                     catalog.entries += source.entries
@@ -291,6 +297,7 @@ public final class LibraryChannelService {
         if !formerlyAccessible.subtracting(catalog.accessibleLibraries).isEmpty { generation = UUID() }
         discoveredLibraries = catalog.accessibleLibraries
         let publicationStamp = generation
+        reportProgress(.init(stage: .buildingChannels, scannedItemCount: progress.scannedItemCount))
         let groupTask = Task.detached(priority: .utility) {
             try LibraryChannelAutomaticPlanner.groups(catalog: catalog, profileID: profileID)
         }
@@ -300,6 +307,8 @@ public final class LibraryChannelService {
             groupTask.cancel()
         }
         try checkAutomatic(stamp: publicationStamp, automaticStamp: automaticStamp)
+        reportProgress(.init(
+            stage: .buildingChannels, scannedItemCount: progress.scannedItemCount, channelCount: groups.count))
         let blockedSources = Set(groups.map {
             LibraryChannelAutomaticIdentity.sourceID(profileID: profileID, key: $0.key)
         }.filter { !isSourceAllowed($0) })
@@ -316,6 +325,9 @@ public final class LibraryChannelService {
             publicationTask.cancel()
         }
         try checkAutomatic(stamp: publicationStamp, automaticStamp: automaticStamp)
+        reportProgress(.init(
+            stage: .savingGuides, scannedItemCount: progress.scannedItemCount,
+            channelCount: publication.definitions.filter { $0.isAutomatic && $0.isEnabled }.count))
         let requiredSources = Set(groups.map {
             LibraryChannelAutomaticIdentity.sourceID(profileID: profileID, key: $0.key)
         }).subtracting(blockedSources)

@@ -12,6 +12,7 @@ public struct LiveTVAutomaticChannelsState {
     public let channelCount: Int
     public let skippedItemCount: Int
     public let unavailableSources: [LibraryChannelSourceFailure]
+    public let preparation: LibraryChannelPreparationProgress?
     public let setEnabled: @MainActor (Bool) async -> Void
     public let retry: @MainActor () -> Void
 
@@ -20,7 +21,8 @@ public struct LiveTVAutomaticChannelsState {
         channelCount: Int, skippedItemCount: Int,
         setEnabled: @escaping @MainActor (Bool) async -> Void,
         retry: @escaping @MainActor () -> Void,
-        unavailableSources: [LibraryChannelSourceFailure] = []
+        unavailableSources: [LibraryChannelSourceFailure] = [],
+        preparation: LibraryChannelPreparationProgress? = nil
     ) {
         self.enabled = enabled
         self.isWorking = isWorking
@@ -30,6 +32,7 @@ public struct LiveTVAutomaticChannelsState {
         self.setEnabled = setEnabled
         self.retry = retry
         self.unavailableSources = unavailableSources
+        self.preparation = preparation
     }
 
     var needsEmptyState: Bool { enabled || isWorking || issue != nil }
@@ -147,12 +150,16 @@ struct LiveTVAutomaticChannelsStatusView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: PlozzTheme.Spacing.small) {
             if state.isWorking {
-                ProgressView("Preparing Plozz channels")
-                    .accessibilityIdentifier("live-tv-automatic-progress")
+                if let preparation = state.preparation {
+                    LiveTVPreparationProgressView(progress: preparation)
+                } else {
+                    ProgressView("Preparing Plozz channels")
+                        .accessibilityIdentifier("live-tv-automatic-progress")
+                }
             } else {
                 Text(state.status.title).font(.headline)
+                Text(state.status.detail).settingsRowSecondary()
             }
-            Text(state.status.detail).settingsRowSecondary()
             if state.enabled, state.channelCount > 0 {
                 Text("\(state.channelCount) automatic channels")
             }
@@ -193,13 +200,18 @@ struct LiveTVAutomaticChannelsEmptyView: View {
                 }
             }
         } description: {
-            if state.status == .ready {
+            if state.isWorking, let preparation = state.preparation {
+                LiveTVPreparationProgressView(progress: preparation)
+                    .frame(maxWidth: 680, alignment: .leading)
+                    .multilineTextAlignment(.leading)
+                    .padding(.top, PlozzTheme.Spacing.medium)
+            } else if state.status == .ready {
                 Text("Your Plozz channels are enabled. Their programmes will appear here when the guide is ready.")
             } else {
                 Text(state.status.detail)
             }
         } actions: {
-            if state.isWorking {
+            if state.isWorking, state.preparation == nil {
                 ProgressView().accessibilityLabel("Preparing Plozz channels")
             }
             Button(action: manage) {

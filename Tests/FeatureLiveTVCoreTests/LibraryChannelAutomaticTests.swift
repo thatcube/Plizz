@@ -68,6 +68,54 @@ final class LibraryChannelAutomaticTests: XCTestCase {
         XCTAssertTrue(try service.portableState().snapshots.flatMap(\.items).allSatisfy { $0.kind != .series })
     }
 
+    func testPreparationProgressReportsActualPagesAndOrderedStages() async throws {
+        let (service, _, _) = try await service(items: (0..<501).map { movie("m\($0)") })
+        let records = PreparationRecords()
+        _ = try await service.refreshAutomaticChannels(at: now) { records.updates.append($0) }
+
+        let moviePages = records.updates.filter {
+            $0.stage == .readingLibrary && $0.kind == .movie && $0.totalItems != nil
+        }
+        XCTAssertEqual(Set(moviePages.map(\.completedItems)), [250, 500, 501])
+        XCTAssertTrue(moviePages.allSatisfy { $0.totalItems == 501 && $0.libraryName == "Library" })
+        XCTAssertEqual(records.updates.first?.stage, .checkingServers)
+        XCTAssertEqual(records.updates.last?.stage, .savingGuides)
+        XCTAssertEqual(records.updates.last?.scannedItemCount, 501)
+        XCTAssertGreaterThan(records.updates.last?.channelCount ?? 0, 0)
+        let stages = records.updates.map { $0.stage.step }
+        XCTAssertEqual(stages, stages.sorted())
+    }
+
+    func testPreparationProgressCountsDoNotFallBackWhenAnotherAccountFails() {
+        let records = PreparationRecords()
+        let reporter = LibraryChannelPreparationReporter { records.updates.append($0) }
+        reporter.receive(.init(stage: .readingLibrary, scannedItemCount: 250), accountID: "first")
+        reporter.receive(.init(stage: .checkingServers), accountID: "second")
+        reporter.receive(.init(stage: .readingLibrary, scannedItemCount: 20), accountID: "second")
+        XCTAssertEqual(records.updates.map(\.scannedItemCount), [250, 250, 270])
+    }
+
+    func testPreparationWaitingUsesRealLastUpdateAndResetClearsPreviousRun() {
+        let progress = LibraryChannelPreparationProgress()
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        progress.begin(at: start)
+        XCTAssertFalse(progress.isWaiting(at: start.addingTimeInterval(14)))
+        XCTAssertTrue(progress.isWaiting(at: start.addingTimeInterval(15)))
+        progress.receive(.init(stage: .readingLibrary, scannedItemCount: 250), at: start.addingTimeInterval(20))
+        XCTAssertFalse(progress.isWaiting(at: start.addingTimeInterval(30)))
+        progress.receive(.init(stage: .buildingChannels, scannedItemCount: 250), at: start.addingTimeInterval(31))
+        XCTAssertFalse(progress.isWaiting(at: start.addingTimeInterval(80)))
+        progress.begin(at: start.addingTimeInterval(90))
+        XCTAssertEqual(progress.update.scannedItemCount, 0)
+        XCTAssertEqual(progress.update.stage, .checkingServers)
+        XCTAssertEqual(progress.startedAt, start.addingTimeInterval(90))
+    }
+
+    @MainActor
+    private final class PreparationRecords {
+        var updates: [LibraryChannelPreparationUpdate] = []
+    }
+
     func testCatalogueFailureOnOneAccountKeepsHealthyChannelsAndReportsTheFailedAccount() async throws {
         let (service, _, _) = try await service(items: [movie("healthy")])
         let other = LibraryCatalogFixture(items: [movie("other")])

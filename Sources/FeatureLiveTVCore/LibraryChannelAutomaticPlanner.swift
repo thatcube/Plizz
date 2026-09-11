@@ -75,6 +75,7 @@ struct LibraryChannelAutomaticCatalog: Sendable {
     static func fetch(
         contexts: [LibraryChannelProviderContext],
         policy: LibraryChannelAutomaticPlanner.Policy = .init(),
+        reportProgress: @Sendable (LibraryChannelPreparationUpdate) async -> Void = { _ in },
         checkAuthorization: @Sendable () async throws -> Void
     ) async throws -> Self {
         var catalog = Self()
@@ -83,6 +84,9 @@ struct LibraryChannelAutomaticCatalog: Sendable {
         var episodeCount = 0
         for context in contexts.sorted(by: { $0.accountID < $1.accountID }) {
             try await checkAuthorization()
+            await reportProgress(.init(
+                stage: .checkingServers, serverName: context.provider.session.server.name,
+                scannedItemCount: queriedCount))
             let libraries = try await context.provider.libraries()
             try await checkAuthorization()
             guard Set(libraries.map(\.id)).count == libraries.count else {
@@ -111,6 +115,10 @@ struct LibraryChannelAutomaticCatalog: Sendable {
                     repeat {
                         try Task.checkCancellation()
                         try await checkAuthorization()
+                        await reportProgress(.init(
+                            stage: .readingLibrary, serverName: context.provider.session.server.name,
+                            libraryName: library.title, kind: kind, scannedItemCount: queriedCount,
+                            completedItems: page.startIndex, totalItems: total))
                         let response = try await context.provider.libraryChannelItems(in: library.id, kind: kind, page: page)
                         try await checkAuthorization()
                         guard response.startIndex == page.startIndex, response.totalCount >= response.startIndex,
@@ -178,6 +186,10 @@ struct LibraryChannelAutomaticCatalog: Sendable {
                             ))
                         }
                         page.startIndex += response.items.count
+                        await reportProgress(.init(
+                            stage: .readingLibrary, serverName: context.provider.session.server.name,
+                            libraryName: library.title, kind: kind, scannedItemCount: queriedCount,
+                            completedItems: page.startIndex, totalItems: total))
                     } while page.startIndex < (total ?? 0)
                 }
             }

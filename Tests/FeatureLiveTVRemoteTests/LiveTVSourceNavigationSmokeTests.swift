@@ -205,6 +205,27 @@ final class LiveTVSourceNavigationSmokeTests: XCTestCase {
     }
 
     @MainActor
+    func testPreparationShowsLibraryPageCountsAndWaitingStatus() {
+        let app = launchFixture(arguments: [
+            "--automatic-channels", "--automatic-enabled", "--automatic-working", "--automatic-progress"
+        ])
+        defer { app.terminate() }
+        let library = app.staticTexts["live-tv-preparation-library"]
+        XCTAssertTrue(library.waitForExistence(timeout: 5))
+        XCTAssertEqual(library.label, "TV Shows")
+        XCTAssertEqual(app.staticTexts["live-tv-preparation-page-count"].label, "750 of 2,400")
+        XCTAssertEqual(app.staticTexts["live-tv-preparation-total"].label, "1,250 library items checked")
+        XCTAssertTrue(app.staticTexts["live-tv-preparation-waiting"].exists)
+        capture("automatic-preparation-real-progress", in: app)
+        guard select(app.buttons["live-tv-automatic-manage"], in: app) else { return }
+        XCTAssertTrue(app.staticTexts["live-tv-preparation-stage"].waitForExistence(timeout: 5))
+        capture("automatic-preparation-management-progress", in: app)
+        guard select(app.switches["live-tv-automatic-enabled"], in: app) else { return }
+        assertAutomaticMetrics("Enabled false changes 1 retries 0", in: app)
+        assertNoSourcesOrNetwork(in: app)
+    }
+
+    @MainActor
     func testPreparingAndFailureKeepAutomaticManagementReachable() {
         for state in ["--automatic-working", "--automatic-failure"] {
             let app = launchFixture(arguments: ["--automatic-channels", "--automatic-enabled", state])

@@ -334,6 +334,15 @@ to temporarily unavailable servers are retained, but cannot play without
 current library authority. Media-share libraries are not yet supported by
 the automatic channel generator.
 
+Preparation reports the current server/library, actual page counts and total
+library items checked, followed by building-channel and saving-guide stages.
+The progress bar belongs to the current library/item type, not an invented
+whole-job percentage. Elapsed time and a waiting-for-server message explain
+long requests without claiming a predicted completion time. Progress is held
+in a separate observable object so elapsed ticks and page updates do not redraw
+the guide. Turning the feature off cancels preparation even during initial
+server discovery; late callbacks cannot replace the next run's progress.
+
 Catalogue changes trigger coalesced refreshes; foreground
 periodic refreshes provide a fallback. Refreshes wait while playback holds live
 identities. Published programme slots remain frozen, with changed catalogues

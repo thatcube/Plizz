@@ -23,12 +23,16 @@ private final class LiveTVLibraryAuthority {
         self.profiles = profiles
     }
 
-    var isAuthorized: Bool {
+    var isCurrentProfile: Bool {
         guard let profiles, profiles.activeProfileID == profileID,
               preferencesNamespace == LiveTVLibraryStorage.preferencesNamespace(
                 profileID: profileID, profiles: profiles
               ) else { return false }
-        return expectedAccounts != nil
+        return true
+    }
+
+    var isAuthorized: Bool {
+        isCurrentProfile && expectedAccounts != nil
             && expectedAccounts == (accounts?.liveTVAuthorizationID ?? "")
     }
 }
@@ -45,6 +49,7 @@ public final class LiveTVLibraryRuntime {
     public private(set) var isLoading = false
     public private(set) var automaticChannelsEnabled = false
     public private(set) var isPreparingAutomaticChannels = false
+    public let automaticPreparation = LibraryChannelPreparationProgress()
     public private(set) var automaticChannelsIssue: LibraryChannelError?
     public private(set) var automaticUnavailableSources: [LibraryChannelSourceFailure] = []
     public private(set) var automaticSkippedItemCount = 0
@@ -125,7 +130,7 @@ public final class LiveTVLibraryRuntime {
     }
 
     public func setAutomaticChannelsEnabled(_ enabled: Bool) async {
-        guard authority.isAuthorized, service.isLoaded else {
+        guard authority.isCurrentProfile, !enabled || (authority.isAuthorized && service.isLoaded) else {
             automaticChannelsIssue = .authorizationChanged
             PlozzLog.app.error("Automatic Plozz channels changed outside their authorized profile")
             return
@@ -138,9 +143,11 @@ public final class LiveTVLibraryRuntime {
             if !enabled {
                 refreshID = UUID()
                 isPreparingAutomaticChannels = false
+                isLoading = false
                 automaticSkippedItemCount = 0
                 automaticUnavailableSources = []
-                try service.setAutomaticChannelsEnabled(false)
+                if service.isLoaded { try service.setAutomaticChannelsEnabled(false) }
+                else { service.setContexts([]) }
             }
             retry()
         } catch {
@@ -201,7 +208,10 @@ public final class LiveTVLibraryRuntime {
             service.setContexts([])
         }
         defer {
-            if refreshID == stamp { isLoading = false }
+            if refreshID == stamp {
+                isLoading = false
+                isPreparingAutomaticChannels = false
+            }
         }
         do {
             try check(stamp, accounts: accounts, expected: expected)
@@ -218,10 +228,15 @@ public final class LiveTVLibraryRuntime {
                 PlozzLog.app.error("Automatic Plozz channels preference could not be read")
             }
             authority.automaticChannelsEnabled = automaticChannelsEnabled
+            if automaticChannelsEnabled {
+                isPreparingAutomaticChannels = true
+                automaticPreparation.begin()
+            }
             let requiredAccounts = automaticChannelsEnabled ? nil : Self.requiredDiscoveryAccountIDs(
                 definitions: definitions.filter { !$0.isAutomatic })
             let discovery = try await discoverContexts(
-                accounts: accounts, requiredAccountIDs: requiredAccounts, stamp: stamp, expected: expected)
+                accounts: accounts, requiredAccountIDs: requiredAccounts, stamp: stamp, expected: expected,
+                reportsProgress: automaticChannelsEnabled)
             try check(stamp, accounts: accounts, expected: expected)
             unavailableAccountIDs = discovery.unavailableAccountIDs
             automaticUnavailableSources = discovery.failures
@@ -242,7 +257,11 @@ public final class LiveTVLibraryRuntime {
                 }
                 do {
                     let summary = try await service.refreshAutomaticChannels(
-                        unavailableAccountIDs: unavailableAccountIDs)
+                        unavailableAccountIDs: unavailableAccountIDs,
+                        reportProgress: { [weak self] update in
+                            guard let self, self.refreshID == stamp, self.automaticChannelsEnabled else { return }
+                            self.automaticPreparation.receive(update)
+                        })
                     try check(stamp, accounts: accounts, expected: expected)
                     authority.automaticSourceIDs = Set(service.definitions.filter(\.isAutomatic).map(\.sourceID))
                     automaticSkippedItemCount = summary.skippedItemCount
@@ -283,7 +302,7 @@ public final class LiveTVLibraryRuntime {
 
     private func discoverContexts(
         accounts: AccountsProvidersModel?, requiredAccountIDs: Set<String>?,
-        stamp: UUID, expected: String
+        stamp: UUID, expected: String, reportsProgress: Bool = false
     ) async throws -> (
         contexts: [LibraryChannelProviderContext], unavailableAccountIDs: Set<String>,
         failures: [LibraryChannelSourceFailure]
@@ -298,6 +317,10 @@ public final class LiveTVLibraryRuntime {
             guard let provider = resolved.provider as? any LibraryChannelCatalogProviding,
                   provider is any LibraryChannelPlaybackProviding else { continue }
             do {
+                if reportsProgress {
+                    automaticPreparation.receive(.init(
+                        stage: .checkingServers, serverName: resolved.account.server.name))
+                }
                 let libraries = try await provider.libraries()
                 try check(stamp, accounts: accounts, expected: expected)
                 contexts.append(LibraryChannelProviderContext(

@@ -117,6 +117,15 @@ private final class AutomaticChannelsFixtureModel {
         ? .sourceUnavailable : nil
     var changes = 0
     var retries = 0
+    let preparation: LibraryChannelPreparationProgress = {
+        let value = LibraryChannelPreparationProgress()
+        value.begin(at: Date().addingTimeInterval(-70))
+        value.receive(.init(
+            stage: .readingLibrary, serverName: "Fixture Jellyfin", libraryName: "TV Shows",
+            kind: .episode, scannedItemCount: 1_250, completedItems: 750, totalItems: 2_400),
+            at: Date().addingTimeInterval(-20))
+        return value
+    }()
     let service = LibraryChannelService(
         profileID: "source-smoke", store: SourceSmokeDefinitions(),
         snapshotStore: LibraryChannelSnapshotStore(databaseURL: nil))
@@ -133,7 +142,8 @@ private final class AutomaticChannelsFixtureModel {
                 issue = nil
                 changes += 1
             },
-            retry: { [self] in retries += 1 }
+            retry: { [self] in retries += 1 },
+            preparation: ProcessInfo.processInfo.arguments.contains("--automatic-progress") ? preparation : nil
         )
     }
 }

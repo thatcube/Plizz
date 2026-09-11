@@ -38,6 +38,9 @@ final class LiveTVAutomaticChannelsRuntimeTests: XCTestCase {
             XCTAssertTrue(runtime.automaticChannelsEnabled)
             XCTAssertNil(runtime.automaticChannelsIssue)
             XCTAssertGreaterThan(runtime.automaticChannelCount, 0)
+            XCTAssertNotNil(runtime.automaticPreparation.startedAt)
+            XCTAssertEqual(runtime.automaticPreparation.update.stage, .savingGuides)
+            XCTAssertEqual(runtime.automaticPreparation.update.scannedItemCount, 12)
             XCTAssertTrue(runtime.service.definitions.allSatisfy(\.isAutomatic))
             let ids = runtime.service.definitions.map(\.id)
             let revisions = runtime.service.definitions.map(\.revisions)
@@ -82,6 +85,37 @@ final class LiveTVAutomaticChannelsRuntimeTests: XCTestCase {
         XCTAssertNil(runtime.automaticChannelsIssue)
         XCTAssertEqual(runtime.service.definitions.map(\.id), ids)
         XCTAssertGreaterThan(runtime.automaticChannelCount, 0)
+    }
+
+    func testInitialServerDiscoveryCanBeCancelledWithoutWaitingForItsResponse() async throws {
+        let fixture = try Fixture()
+        defer { fixture.close() }
+        try fixture.settings.setEnabled(true)
+        let requested = expectation(description: "Library request started")
+        let gate = DiscoveryGate()
+        await fixture.provider.requests.beforeNextLibraries {
+            requested.fulfill()
+            await gate.wait()
+        }
+        let runtime = fixture.runtime()
+        let refresh = Task { await runtime.refresh(accounts: fixture.accounts) }
+        await fulfillment(of: [requested], timeout: 2)
+        XCTAssertTrue(runtime.isPreparingAutomaticChannels)
+        XCTAssertEqual(runtime.automaticPreparation.update.serverName, "Library")
+
+        await runtime.setAutomaticChannelsEnabled(false)
+        XCTAssertFalse(runtime.isPreparingAutomaticChannels)
+        XCTAssertFalse(runtime.automaticChannelsEnabled)
+        XCTAssertFalse(try fixture.settings.isEnabled())
+
+        await gate.resume()
+        await refresh.value
+        await runtime.refresh(accounts: fixture.accounts)
+        XCTAssertFalse(runtime.isPreparingAutomaticChannels)
+        XCTAssertFalse(runtime.automaticChannelsEnabled)
+        XCTAssertEqual(runtime.automaticPreparation.update.stage, .checkingServers)
+        let requests = await fixture.provider.requests.count
+        XCTAssertEqual(requests, 1, "Cancelled discovery must not restart or fetch items")
     }
 
     func testEnabledDiscoveryFailureIsScopedAndRetryRecovers() async throws {
@@ -271,11 +305,32 @@ private actor AutomaticRuntimeRequests {
     private(set) var count = 0
     private(set) var empty = false
     private var unavailable = false
+    private var libraryHook: (@Sendable () async -> Void)?
+    func beforeNextLibraries(_ hook: @escaping @Sendable () async -> Void) { libraryHook = hook }
+    func librariesRequested() async {
+        let hook = libraryHook
+        libraryHook = nil
+        await hook?()
+    }
     func setEmpty(_ value: Bool) { empty = value }
     func setUnavailable(_ value: Bool) { unavailable = value }
     func record() throws {
         count += 1
         if unavailable { throw AppError.serverUnreachable }
+    }
+}
+
+private actor DiscoveryGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var isOpen = false
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func resume() {
+        isOpen = true
+        continuation?.resume()
+        continuation = nil
     }
 }
 
@@ -297,6 +352,7 @@ private struct AutomaticRuntimeProvider: LibraryChannelCatalogProviding, Library
 
     func libraries() async throws -> [MediaLibrary] {
         try await requests.record()
+        await requests.librariesRequested()
         return [MediaLibrary(id: "movies", title: "Movies", kind: .movie)]
     }
 
