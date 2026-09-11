@@ -7,6 +7,15 @@ Neither tool removes `SUSPENDED`, writes `rollout-policy-v1`, resolves lease
 records, changes schedules, or stops writers. A feature merge does not enable
 global cleanup.
 
+An additive operational implementation is now available at
+`tools/apple-build-operations.py`. Unlike the two original v1 tools, it can
+reconcile **one explicitly released retained lease record**, represent an
+affirmatively retired missing owner, and prepare/install reviewed policy files
+**while suspension remains in place**. It never removes `SUSPENDED`. See
+[Operational lifecycle (v2)](#operational-lifecycle-v2) below. None of these
+capabilities installs itself, authorizes production deletion, or reports disk
+recovery from a code change.
+
 ## Compatibility and rollout
 
 Build clients use the unchanged v1 namespace and lease protocol from commit
@@ -218,6 +227,11 @@ outputs is **not** an eligible target. Its owner can instead release precise
 retired compiler files or clean compiler-only subtrees. This adapter does not
 solve shared dependency retention, absent-owner/orphan recovery, or release
 artifact retention by widening the deletion policy.
+
+When `operational-controls-v2.json` is installed, this older adapter refuses
+`apply` and requires an explicitly selected v2 campaign unit. This prevents the
+compatible v1 manifest envelope from bypassing operational protections. Its
+inventory and validation commands remain available.
 
 ### Supported limits and scaling
 
@@ -494,3 +508,318 @@ exercise no-follow traversal, changed ancestors/files, refreshed open-inode
 checks, late evidence/lease drift, unlocked capabilities, protected source and
 dependency data, per-removal expiry, short writes, sync/journal failures,
 interruptions, partial-progress evidence, and non-activating legacy refusals.
+
+## Operational lifecycle (v2)
+
+`tools/apple-build-operations.py` with `tools/lib/apple_build_operations.py`
+adds the missing administrative and missing-owner operations. It reuses the
+bounded compiler-only scanner, descriptor-relative remover, durable journal,
+full per-unlink v1 authentication, process/open-inode guards, and companion
+validator. The four frozen protocol files and their hashes above are unchanged.
+There is **no ignore list, force mode, PID-based auto-release, automatic
+partitioning, sweep, automatic resume, installation side effect, or suspension
+removal command**.
+
+The v1 companion's manifest **envelope** remains exactly
+`{"schema":1,"scope":"apple-owner-released-build-outputs-only","targets":[...]}`.
+Existing-owner targets keep the complete original target schema and real
+existing-worktree release requirement. A retired-owner target adds exactly
+`"ownership":"retired-v2"`; its `release_record` points to a reviewed schema-2
+retirement, and its `worktree` is the original historical identity, not a
+newly created or adopted directory. The old adapter rejects that extra field.
+Once operational controls are installed, the updated old adapter also rejects
+all `apply` calls, including otherwise valid existing-owner units.
+
+### Exact missing-owner provenance
+
+Operators supply, not generate through this tool, these private documents.
+All evidence references are `{path, sha256}` binding original **raw bytes**.
+Approvals are affirmative human review, not cryptographic identity proof; a
+same-UID agent fabricating JSON is not an approval. Review-only inventories,
+session metadata, similar slugs, old process observations, missing directories,
+or old `info.plist` files alone never constitute retirement.
+
+The historical-owner document has exactly:
+
+| Field | Required meaning |
+| --- | --- |
+| `schema` | Integer `2` |
+| `owner`, `session_id` | Original responsible lane owner and exact session UUID |
+| `worktree` | Original `{path, device, inode}`; path must currently be absent |
+| `repository` | Existing physical Git anchor `{path, device, inode}`, covered by the window's writer inventory |
+| `common_git` | Original repository's exact Git common-directory identity; must still match the anchor |
+| `head` | Original full 40-character commit; must still exist as a commit in that repository |
+| `workspace` | Exact original absolute workspace path below the original worktree |
+| `recorded_at` | UTC time of the historical observation, not a fabricated backdate |
+| `registry` | Preserved historical `git worktree list --porcelain -z` bytes; must contain that exact worktree/HEAD and repository anchor |
+| `evidence` | Nonempty durable evidence references establishing the original owner and identity |
+
+The current Git registry is inspected again: a missing-but-still-registered
+worktree is **not** retired. A recreated path, symlink alias, different
+repository/common directory, missing historical commit, or ambiguous registry
+refuses. Names/slugs are never matched. If trustworthy historical registry and
+identity evidence were not preserved, this interface refuses; do not reconstruct
+an imaginary registry to satisfy it.
+
+A retirement has exactly `schema:2`, `scope`, `historical_owner` (reference),
+`retired_at`, `targets`, `evidence`, and `approval`. Actual retirement must follow
+the historical observation and be at least **72 hours old**. That waiting period
+starts at the real retirement, not at the age of the cache or last successful
+retry. Each nominated target has exactly:
+
+```json
+{
+  "kind": "xcode-derived-data",
+  "identity": {"path": "<exact compiler root/file>", "device": 1, "inode": 2},
+  "store": {"path": "<direct app DerivedData store>", "device": 1, "inode": 3},
+  "info_sha256": "<raw SHA-256 of that store's info.plist>"
+}
+```
+
+Only exact compiler files/subtrees **below** that non-shared store qualify.
+`info.plist` must still have the identical bytes and exact historical
+`WorkspacePath`. No `.build` under a missing owner, whole DerivedData store,
+`SourcePackages`, dependency, log/result, unknown file, or protected artifact
+becomes eligible. Every entry's existing age, link, ownership, permissions,
+filesystem and suffix checks remain mandatory.
+
+Every schema-2 approval has exactly:
+
+```json
+{
+  "schema": 2,
+  "purpose": "<operation-specific purpose below>",
+  "payload_sha256": "<SHA-256 of canonical payload without its approval field>",
+  "approved_by": "<actual affirmative human approver>",
+  "approved_at": "<UTC actual approval time>",
+  "evidence": [{"path": "<private affirmative evidence>", "sha256": "<raw digest>"}]
+}
+```
+
+Purposes are `retire-missing-owner`, `bounded-campaign`, `resolve-exact-record`,
+`operational-rollout`, and `install-suspended-rollout`. The install approval
+binds the entire staged document, which has no embedded approval field.
+Canonical JSON is the existing `apple_maintenance_policy.canonical` encoding.
+Changing targets, provenance, scope, bytes, or approval invalidates that review.
+
+### Exact retained-record reconciliation
+
+```bash
+python3 -B tools/apple-build-operations.py resolve-record \
+  --request /private/exact-resolution.json --journal /private/resolution.jsonl
+```
+
+This is a **separately authorized administrative mutation**, not an inventory.
+It never runs automatically and does not infer release from a dead PID. The
+request has exactly `schema:2`, `host` (existing `host` command output),
+`record` (exact live record path/raw digest), `record_identity` (its exact
+`{path,device,inode}`), `registry_sha256`, `not_before`, `expires_at`,
+`owner_release`, and `approval`. The window is positive, current,
+and at most two hours. `registry_sha256` is
+`apple_build_operations.registry_digest()`: canonical sorted live-record
+`{path,sha256}` observations. Observing it is not permission to resolve anything.
+
+The `owner_release` reference names a document with exactly `schema:2`,
+`record_sha256`, the original `owner`, `cwd`, `request_pid`, `request_start`,
+`released_at`, `active_queued:"none"`,
+`disposition:"owner-relinquished-entire-lane"`, and nonempty `evidence`.
+It must establish actual affirmative relinquishment of the **entire lane**,
+including queued gaps and descendants. Human blanket cleanup permission, an
+idle session, or a later successful retry cannot supply this assertion.
+An administrator cannot use this interface to end an owner's active lane.
+
+The resolver requires the existing private `SUSPENDED` marker and acquires
+`policy.lock`, `coordination.lock`, then `registry.lock` exclusively,
+nonblocking, with inode checks. Old clients/finalizers use those same locks.
+It verifies the exact registry snapshot, original record bytes/inode and lock
+identity, original requester absence in a successful process-identity census,
+no open original proof inode, and no Apple build activity. **Any present
+requester PID, including a reused PID with a different start, refuses.**
+Unknown process/open-file results refuse. Evidence, records, deadlines and
+locks are rechecked after slow probes and journal synchronization.
+
+Before unlinking the one live record, it durably preserves its exact original
+bytes, request, owner release, approval, and their evidence under
+`apple-build-interlock-v1/resolutions-v2/<lease-id>/`. Then it records intent,
+revalidates, unlinks only that record, fsyncs the registry directory, and records
+the outcome. Other records are unchanged and continue to block v1 maintenance.
+Archives are outside `leases/`; readers do not skip or reinterpret any retained
+record. No record is rewritten to fabricate `release_requested`.
+
+An archive-write failure retains the live record. Cancellation after archive
+creation retains both archive and live record. A post-unlink fsync failure may
+leave the live record absent; the original and durable intent remain and the
+journal reports `removed:true` with `stopped`, not success. Existing archive or
+journal paths refuse reuse. Review the exact partial transaction separately;
+there is no bulk-clear or automatic recovery/resumption command.
+
+### Explicit bounded campaigns
+
+```bash
+python3 -B tools/apple-build-operations.py inventory-unit \
+  --retirement /private/retirement.json \
+  --release-record /private/existing-owner-release.json \
+  --output /private/unit-01.json
+
+python3 -B tools/apple-build-operations.py validate-unit \
+  --manifest /private/unit-01.json
+python3 -B tools/apple-build-operations.py validate-campaign \
+  --campaign /private/campaign.json --unit-id '<explicit-unit-UUID>'
+```
+
+The release and retirement switches are repeatable; supply whichever provenance
+types the selected unit actually needs. No directory discovery or automatic
+carving occurs. A campaign has exactly `schema:2`, `units`, `reviewed_at`, and
+`approval`. Each `units` entry is exactly
+`{"id":"<UUID>","manifest":{"path":"<unit manifest>","sha256":"<raw digest>"}}`.
+The human reviews that exact list. Duplicate IDs, duplicate/overlapping targets
+across units, changed manifests, protected evidence overlaps, and an unlisted
+selected unit refuse.
+
+Each execution unit retains **256 targets, 4,096 total entries, and 4 MiB per
+document**. A campaign contains at most **64 explicitly reviewed units**; it is
+an approval index, not an enlarged execution manifest. Every invocation selects
+one unit, requires its own exact approved window/controls, and stops at that
+unit's completion or first failure. It never advances to the next unit. Prior
+completed target absence does not invalidate the campaign's immutable manifest
+references, but a partial unit cannot be replayed against its original tree
+digest. Its remaining contents require a new review.
+
+The per-campaign representational ceiling is 16,384 nominated roots and 262,144
+entries, not guaranteed deletion capacity. A landscape with 155,017 individually
+nominated files needs more than one separately reviewed campaign; compiler-only
+subtrees can use fewer roots when the scanner proves every descendant eligible.
+Mixed stores cannot be called disposable to save approvals. No ceilings were
+raised in the adapter and no approvals are automatically split.
+
+### Reviewed rollout preparation and suspended installation
+
+```bash
+python3 -B tools/apple-build-operations.py stage-rollout \
+  --window /private/window-request.json --manifest /private/unit-01.json \
+  --controls /private/controls.json --output /private/staged-rollout.json \
+  --journal /private/staging.jsonl
+
+python3 -B tools/apple-build-operations.py install-prepared \
+  --stage /private/staged-rollout.json --approval /private/install-approval.json \
+  --journal /private/installation.jsonl
+```
+
+The window remains the complete v1 companion package described above, including
+Hozz and all current/legacy/manual cohorts, exact current registries, writer
+fingerprints, owner attestations and human approval. All owner attestations
+must report no active/queued lane during preparation or installation. A held
+kernel lock or **any retained record** refuses these operations. The commands
+do not edit writer code, stop writers, install executable bundles, update
+schedules, or obtain owner agreement on the operator's behalf.
+
+Controls have exactly `schema:2`, `window_sha256` (canonical package digest),
+`manifest_sha256` (canonical unit digest), `protected_roots` (nonempty exact
+identity list), `entrypoints`, `coverage_evidence`, `reviewed_at`, and `approval`.
+The protected list must cover actual active/pending/unknown work and all linked
+global outputs; ancestor/descendant overlap with a nominated target refuses.
+Coverage evidence must affirm completeness of old/current/legacy/scheduled/raw
+cleanup routes and full-lane writer protection, not just an idle process scan.
+
+The approved global cohort must fingerprint every path in
+`apple_build_operations.OPERATIONS_FILES` in the **actual executing bundle**,
+plus every additional cleanup route. This includes both new Python files, the
+scanner/remover, process guard, companion library and all four frozen clients.
+Every non-library global route must occur exactly once in `entrypoints`, with
+`path`, `sha256`, and `enforcement`. The only `operational-v2` entrypoint is the
+exact fingerprinted `tools/apple-build-operations.py`. Other cleanup routes
+must have `enforcement:"disabled"` and these exact refusal-stub bytes:
+
+```sh
+#!/bin/sh
+# Retired cleanup entrypoint; reviewed v2 rollout required.
+exit 75
+```
+
+An executable permission change, an unchecked checkbox, or an old v1-only
+script is not accepted as disabling a route. Source fingerprints cannot prove
+that an omitted manual command or schedule does not exist; affirmative complete
+owner/human census evidence remains necessary. Installation of these files alone
+cannot police an uncooperative same-user writer. When that prerequisite cannot
+be established, leave cleanup suspended.
+
+Preparation takes all three conflicting locks and writes an inactive staged
+document containing host identity, raw input references, suspension reference,
+and exact expected current policy-file digests (or `absent`). Installation
+requires a **new explicit install approval** for that stage and repeats current
+validation under the same locks. It journals originals and publication intent,
+then publishes the companion, operational controls, and the exact original
+frozen `rollout-policy-v1` token list with durable writes and compare-and-swap
+checks. The existing suspension marker is never removed or rewritten: it is the
+transaction's safety barrier across partial multi-file publication.
+
+Results are `prepared-inactive` or `installed-suspended`, always with
+`activation:"not-authorized"`, never “ready.” Missing inputs, stale evidence,
+unknown coverage, changed registries or target bytes, held locks, active/queued
+shipping, and partial writes/fsyncs refuse. A failed install can leave some
+policies published or an exact `.operations-*` candidate retained. The journal
+names published files and preserves originals; suspension remains. Do not erase
+that evidence or blindly retry a partially published stage.
+
+**Production activation still requires separate reviewed authorization** for
+the installed writer/route rollout and suspension transition under the
+conflicting policy lock, outside shipping. No command in this implementation
+performs that transition. The tests activate only their private temporary HOME
+under that lock, then acquire a real frozen-v1 exclusive lane.
+
+Once separately authorized and active, the operator explicitly acquires a v1
+exclusive lease through the frozen shell client and invokes only:
+
+```bash
+python3 -B /reviewed/bundle/tools/apple-build-operations.py apply-unit \
+  --campaign /private/campaign.json --unit-id '<explicit-unit-UUID>' \
+  --window-id '<approved-window-UUID>' --journal /private/deletion.jsonl
+```
+
+The command does not acquire a substitute lease when inherited descriptors are
+missing. Each unlink rechecks the actual inherited capabilities, exclusive
+kernel lock, single exact lease record, suspension, companion, writer and Git
+registry fingerprints, operational controls, campaign, evidence, all missing
+owner paths, current target provenance, target identity, open paths/inodes and
+deadline. Slow probes/fsyncs are followed by another check. Monotonic and UTC
+deadlines detect expiration/backward clock movement. A durable intent precedes
+every unlink; partial counts, failure and cancellation are recorded. Only the
+lane's actual owner can end its lease.
+
+### Operational fixture validation and measured scale
+
+```bash
+export GIT_CONFIG_PARAMETERS="'safe.bareRepository=all'"
+PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest \
+  tools.tests.test_apple_build_operations \
+  tools.tests.test_apple_build_cleanup \
+  tools.tests.test_apple_maintenance_policy
+PYTHONDONTWRITEBYTECODE=1 bash tools/tests/test-apple-build-interlock.sh
+```
+
+No Xcode/Swift build, package resolve, installation or device deployment is
+needed for these maintenance-only changes. Fixtures use actual temporary Git
+repositories and historical registered worktrees, then really remove the owned
+synthetic worktrees. They do not create/adopt fake replacement owners. All
+approvals/retirements are labeled synthetic. File ages are shifted **in test
+memory only** because ctime/birthtime cannot legitimately be backdated; there
+is no operational flag for lowering retention. Host-wide build activity and
+lsof observations are supplied by fixture seams, never used as fake production
+success. Other checks, real kernel locks, frozen lease authentication,
+publications, journals, fsyncs and unlinks run normally.
+
+The scale fixture nominates **328 tiny compiler files in 41 stores**, preserves
+one log per store, and executes **three independently approved units/windows**.
+It removes exactly **369 entries** (files plus compiler-only directories), with
+**785 real companion checks**. Observed runs took **87.081–103.103 seconds**,
+excluding fixture construction. This deliberately measures the actual per-unlink
+validation path rather than replacing the guard with a no-op.
+
+It is not a 155,017-file throughput claim. The existing repeated full evidence,
+writer/registry, process and open-use checks remain expensive. Production lsof
+and process census costs are not represented in that elapsed time and can
+dominate. Campaign indexing bounds execution and makes exact review units
+operational; it does not remove per-unlink safety costs or promise completion
+inside a two-hour window. Start with a separately approved small unit and stop
+on its deadline; never infer authorization for another unit from elapsed time,
+free-space pressure, or an incomplete previous attempt.

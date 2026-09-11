@@ -35,6 +35,7 @@ SCOPE = policy.SCOPE
 MINIMUM_RETENTION_SECONDS = 72 * 60 * 60
 MAX_TARGETS = 256
 MAX_TREE_ENTRIES = 4096
+OPERATIONAL_CONTROLS_NAME = "operational-controls-v2.json"
 TARGET_KINDS = {"worktree-apple-build", "xcode-derived-data"}
 # Mixed build roots are deliberately ineligible. Nominate narrower compiler
 # outputs instead of guessing which dependencies, sources or evidence to keep.
@@ -1057,6 +1058,15 @@ class RuntimeGuard:
             fail("approved maintenance window expired or clock moved backwards")
         self.last_time = now
 
+    def validate_scope(self, package: dict) -> None:
+        validate_runtime_scope(package, self.manifest)
+
+    def validate_owner(self, target: dict) -> None:
+        validate_identity(target["worktree"], "owner worktree identity")
+        validate_target_location(
+            target["kind"], Path(target["path"]), Path(target["worktree"]["path"])
+        )
+
     def check(self, target: dict | None = None) -> None:
         self.deadline_check()
         self.pinned.validate()
@@ -1086,14 +1096,11 @@ class RuntimeGuard:
         # to the original authorization, and policy.check rereads all mutable
         # policy/attestation/writer/registry inputs on EVERY call.
         if not self.scope_validated:
-            validate_runtime_scope(policy.document(data), self.manifest)
+            self.validate_scope(policy.document(data))
             self.scope_validated = True
         self.references.validate()
         if target is not None:
-            validate_identity(target["worktree"], "owner worktree identity")
-            validate_target_location(
-                target["kind"], Path(target["path"]), Path(target["worktree"]["path"])
-            )
+            self.validate_owner(target)
         require_no_build_activity()
         self.pinned.validate()
         self.deadline_check()
@@ -1223,6 +1230,9 @@ def apply_manifest(
     clock: Callable[[], dt.datetime] = now_utc,
     open_inventory: Callable = open_file_inventory,
 ) -> dict[str, Any]:
+    controls = lease.paths()["root"] / OPERATIONAL_CONTROLS_NAME
+    if controls.exists() or controls.is_symlink():
+        fail("operational controls are installed; use an explicitly approved v2 campaign unit")
     current_time = current_time or now_utc()
     manifest, manifest_data, entries_by_path = validate_manifest(
         manifest_path, current_time=current_time
