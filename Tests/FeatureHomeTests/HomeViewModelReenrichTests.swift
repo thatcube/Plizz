@@ -17,13 +17,53 @@ final class HomeViewModelReenrichTests: XCTestCase {
     private final class SourcesBox: @unchecked Sendable {
         private let lock = NSLock()
         private var map: [String: [MediaSourceRef]] = [:]
+        private var nextLookupGate: LookupGate?
         func set(_ newMap: [String: [MediaSourceRef]]) {
             lock.lock(); defer { lock.unlock() }
             map = newMap
         }
         func sources(for item: MediaItem) -> [MediaSourceRef] {
+            lock.lock()
+            let result = map[item.id] ?? []
+            let gate = nextLookupGate
+            nextLookupGate = nil
+            lock.unlock()
+            gate?.wait()
+            return result
+        }
+        func blockNextLookup(_ gate: LookupGate) {
             lock.lock(); defer { lock.unlock() }
-            return map[item.id] ?? []
+            nextLookupGate = gate
+        }
+    }
+
+    private final class LookupGate: @unchecked Sendable {
+        let started: XCTestExpectation
+        private let release = DispatchSemaphore(value: 0)
+        private let lock = NSLock()
+        private var mainThread = false
+        private var timedOut = false
+
+        init(started: XCTestExpectation) {
+            self.started = started
+        }
+
+        func wait() {
+            lock.lock()
+            mainThread = Thread.isMainThread
+            lock.unlock()
+            started.fulfill()
+            let result = release.wait(timeout: .now() + 5)
+            lock.lock()
+            timedOut = result == .timedOut
+            lock.unlock()
+        }
+
+        func open() { release.signal() }
+
+        var result: (ranOnMainThread: Bool, timedOut: Bool) {
+            lock.lock(); defer { lock.unlock() }
+            return (mainThread, timedOut)
         }
     }
 
@@ -61,7 +101,7 @@ final class HomeViewModelReenrichTests: XCTestCase {
                 MediaSourceRef(accountID: "b", itemID: "m1-on-b", providerKind: .plex)
             ]
         ])
-        vm.reenrich()
+        await vm.reenrich()
 
         let cwAfter = vm.state.value?.continueWatching ?? []
         XCTAssertEqual(cwAfter.count, 1, "Re-enrich must not add or drop cards, only fold sources")
@@ -81,7 +121,126 @@ final class HomeViewModelReenrichTests: XCTestCase {
         let before = vm.state.value
 
         // Index hasn't grown (box still empty): re-enrich must leave content identical.
-        vm.reenrich()
+        await vm.reenrich()
         XCTAssertEqual(before, vm.state.value)
+    }
+
+    func testSlowIdentityLookupDoesNotBlockTheMainActor() async {
+        let provider = FakeMediaProvider(allItems: [])
+        provider.continueWatchingItems = [MediaItem(id: "m1", title: "Movie", kind: .movie)]
+        let box = SourcesBox()
+        let vm = makeViewModel(provider: provider, box: box)
+        await vm.load()
+        let gate = LookupGate(started: expectation(description: "Identity lookup started"))
+        box.blockNextLookup(gate)
+        defer { gate.open() }
+
+        let pass = Task { await vm.reenrich() }
+        await fulfillment(of: [gate.started], timeout: 2)
+        XCTAssertFalse(gate.result.ranOnMainThread)
+        // Reaching here before releasing the worker proves MainActor remains usable.
+        vm.noteHomeNavigationInteraction()
+        gate.open()
+        await pass.value
+        XCTAssertFalse(gate.result.timedOut)
+    }
+
+    func testWatchMutationDuringMergeIsNotOverwritten() async {
+        let provider = FakeMediaProvider(allItems: [])
+        provider.continueWatchingItems = [MediaItem(id: "m1", title: "Movie", kind: .movie)]
+        let box = SourcesBox()
+        let vm = makeViewModel(provider: provider, box: box)
+        await vm.load()
+        box.set(["m1": [MediaSourceRef(accountID: "b", itemID: "twin", providerKind: .plex)]])
+        let gate = LookupGate(started: expectation(description: "Old snapshot merging"))
+        box.blockNextLookup(gate)
+        defer { gate.open() }
+
+        let pass = Task { await vm.reenrich() }
+        await fulfillment(of: [gate.started], timeout: 2)
+        vm.applyWatchedState(MediaItemMutation(
+            itemIDs: ["m1"], scopedItemIDs: ["a:m1"],
+            resumePosition: 120, playedPercentage: 0.1
+        ))
+        XCTAssertEqual(vm.state.value?.continueWatching.first?.resumePosition, 120)
+        gate.open()
+        await pass.value
+
+        XCTAssertEqual(vm.state.value?.continueWatching.first?.resumePosition, 120)
+        XCTAssertTrue(vm.state.value?.continueWatching.first?.sources.contains {
+            $0.accountID == "b"
+        } == true, "The retry must enrich the newer state, not simply drop the index update")
+    }
+
+    func testReloadDuringMergeCannotRestoreOldCards() async {
+        let provider = FakeMediaProvider(allItems: [])
+        provider.continueWatchingItems = [MediaItem(id: "m1", title: "Old", kind: .movie)]
+        let box = SourcesBox()
+        let vm = makeViewModel(provider: provider, box: box)
+        await vm.load()
+        box.set(["m1": [MediaSourceRef(accountID: "b", itemID: "old-twin", providerKind: .plex)]])
+        let gate = LookupGate(started: expectation(description: "Old content merging"))
+        box.blockNextLookup(gate)
+        defer { gate.open() }
+
+        let pass = Task { await vm.reenrich() }
+        await fulfillment(of: [gate.started], timeout: 2)
+        provider.continueWatchingItems = [MediaItem(id: "m2", title: "New", kind: .movie)]
+        await vm.load(showLoadingState: false)
+        let reloaded = vm.state.value
+        gate.open()
+        await pass.value
+
+        XCTAssertEqual(vm.state.value, reloaded)
+        XCTAssertEqual(vm.state.value?.continueWatching.map(\.id), ["m2"])
+    }
+
+    func testCancelledMergeDoesNotPublish() async {
+        let provider = FakeMediaProvider(allItems: [])
+        provider.continueWatchingItems = [MediaItem(id: "m1", title: "Movie", kind: .movie)]
+        let box = SourcesBox()
+        let vm = makeViewModel(provider: provider, box: box)
+        await vm.load()
+        let before = vm.state.value
+        box.set(["m1": [MediaSourceRef(accountID: "b", itemID: "twin", providerKind: .plex)]])
+        let gate = LookupGate(started: expectation(description: "Cancellable lookup started"))
+        box.blockNextLookup(gate)
+        defer { gate.open() }
+
+        let pass = Task { await vm.reenrich() }
+        await fulfillment(of: [gate.started], timeout: 2)
+        pass.cancel()
+        gate.open()
+        await pass.value
+
+        XCTAssertEqual(vm.state.value, before)
+    }
+
+    func testNewScheduledPassSupersedesRunningPassAndItsCallback() async {
+        let provider = FakeMediaProvider(allItems: [])
+        provider.continueWatchingItems = [MediaItem(id: "m1", title: "Movie", kind: .movie)]
+        let box = SourcesBox()
+        let vm = makeViewModel(provider: provider, box: box)
+        await vm.load()
+        let gate = LookupGate(started: expectation(description: "Superseded lookup started"))
+        box.blockNextLookup(gate)
+        defer { gate.open() }
+        let obsoleteCallback = expectation(description: "Cancelled pass must not settle")
+        obsoleteCallback.isInverted = true
+        vm.scheduleReenrich { obsoleteCallback.fulfill() }
+        await fulfillment(of: [gate.started], timeout: 2)
+
+        box.set(["m1": [MediaSourceRef(accountID: "b", itemID: "twin", providerKind: .plex)]])
+        let latestCallback = expectation(description: "Latest pass settled")
+        vm.scheduleReenrich { latestCallback.fulfill() }
+        await fulfillment(of: [latestCallback], timeout: 2)
+        let newest = vm.state.value
+        gate.open()
+        await fulfillment(of: [obsoleteCallback], timeout: 0.1)
+
+        XCTAssertEqual(vm.state.value, newest)
+        XCTAssertTrue(vm.state.value?.continueWatching.first?.sources.contains {
+            $0.accountID == "b"
+        } == true)
     }
 }

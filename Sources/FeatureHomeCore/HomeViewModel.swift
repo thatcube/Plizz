@@ -179,7 +179,11 @@ public final class HomeViewModel {
         }
     }
 
-    public private(set) var state: LoadState<Content> = .idle
+    public private(set) var state: LoadState<Content> = .idle {
+        didSet { stateRevision &+= 1 }
+    }
+    @ObservationIgnored private var stateRevision: UInt64 = 0
+    @ObservationIgnored private var reenrichGeneration: UInt64 = 0
 
     /// `true` while `state` holds a snapshot hydrated from `contentStore` on launch
     /// that has NOT yet been refreshed from the network this session. The first
@@ -1699,37 +1703,58 @@ public final class HomeViewModel {
     /// and re-sorting the feed-less loaded row is what used to shuffle the row on
     /// every index warm. State is only republished when something actually changed,
     /// so a re-enrich that surfaces no new source is a true no-op (no view churn).
-    public func reenrich() {
-        guard case let .loaded(current) = state else { return }
+    /// The merge and equality check run off MainActor. A content revision protects
+    /// newer reloads and watch mutations while that immutable snapshot is processed.
+    public func reenrich() async {
+        reenrichGeneration &+= 1
+        let generation = reenrichGeneration
         let serverInfoMap = accounts.sourceServerInfo()
-        let resolve: (String) -> SourceServerInfo? = { serverInfoMap[$0] }
         let sources = identitySources
 
-        var updated = current
-        // Re-merge folds any newly-discovered cross-server sources into the loaded
-        // cards. `MediaItemMerger.merge` is order-stable (first occurrence stays
-        // primary), so the Continue Watching order the initial load computed is
-        // preserved verbatim — we deliberately do NOT re-sort here. The recency sort
-        // anchors untimestamped "Next Up" cards from a per-*feed* carry-forward that
-        // only exists at load time (pre-interleave); re-sorting the interleaved,
-        // feed-less loaded row is exactly what used to make Continue Watching "shift
-        // around" on every background index warm. Enrich in place; never reorder.
-        updated.continueWatching = MediaItemMerger.merge(current.continueWatching, serverInfo: resolve, identitySources: sources)
-        updated.latest = MediaItemMerger.merge(current.latest, serverInfo: resolve, identitySources: sources)
-        updated.watchlist = MediaItemMerger.merge(current.watchlist, serverInfo: resolve, identitySources: sources)
+        while !Task.isCancelled, generation == reenrichGeneration {
+            guard case let .loaded(current) = state else { return }
+            let revision = stateRevision
+            // Identity graph traversal and title normalization can take seconds
+            // for a large library. Only the final publication belongs on MainActor.
+            let merge = Task.detached(priority: .utility) { () -> Content? in
+                let resolve: (String) -> SourceServerInfo? = { serverInfoMap[$0] }
+                var updated = current
+                guard !Task.isCancelled else { return nil }
+                updated.continueWatching = MediaItemMerger.merge(
+                    current.continueWatching, serverInfo: resolve, identitySources: sources
+                )
+                guard !Task.isCancelled else { return nil }
+                updated.latest = MediaItemMerger.merge(
+                    current.latest, serverInfo: resolve, identitySources: sources
+                )
+                guard !Task.isCancelled else { return nil }
+                updated.watchlist = MediaItemMerger.merge(
+                    current.watchlist, serverInfo: resolve, identitySources: sources
+                )
+                // Keep the existing order and avoid publishing an unchanged snapshot.
+                return updated == current ? nil : updated
+            }
+            let updated = await withTaskCancellationHandler {
+                await merge.value
+            } onCancel: {
+                merge.cancel()
+            }
 
-        // Republish only on a real change so an index warm that adds no new source
-        // to any visible card doesn't churn the view or disturb focus.
-        guard updated != current else { return }
-        state = .loaded(updated)
+            guard !Task.isCancelled, generation == reenrichGeneration else { return }
+            // A reload or watch mutation can land while the merge is running.
+            // Re-fold that newer content instead of restoring stale cards or progress.
+            guard stateRevision == revision else { continue }
+            if let updated { state = .loaded(updated) }
+            return
+        }
     }
 
     /// Coalesced entry point for the `identityIndexDidUpdate` notification. The
     /// index publishes once per warmed account, so on a multi-server boot this
     /// fires in a tight burst; debouncing collapses it to a single ``reenrich()``
-    /// once the burst settles, avoiding O(accounts × rows) redundant main-actor
+    /// once the burst settles, avoiding O(accounts × rows) redundant
     /// merges. A prior pending pass is cancelled so only the latest snapshot is
-    /// folded. Callers that need a synchronous fold (tests, explicit refresh) call
+    /// folded. Callers that need to await the fold (tests, explicit refresh) call
     /// ``reenrich()`` directly.
     public func scheduleReenrich(
         onSettled: @escaping @MainActor () -> Void = {}
@@ -1738,7 +1763,8 @@ public final class HomeViewModel {
         reenrichTask = Task { [weak self] in
             try? await Task.sleep(for: Self.reenrichDebounce)
             guard !Task.isCancelled, let self else { return }
-            self.reenrich()
+            await self.reenrich()
+            guard !Task.isCancelled else { return }
             onSettled()
         }
     }

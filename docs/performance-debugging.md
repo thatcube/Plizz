@@ -433,6 +433,26 @@ utilisation = "death by a thousand re-renders", not one big stall.
    `GeometryReader` do **not** inherit a `.move` transition — they snap to their
    final position while siblings slide. To animate such a subtree as one unit,
    keep it mounted and animate `.offset`/`.opacity` instead of insert/remove.
+5. **Keep scheduling-only activity out of render state.** Home's remote-move
+   handler previously wrote a `@State` timestamp used only by the share-refresh
+   idle gate. A physical-TV SwiftUI causes trace linked five Home invalidations
+   directly to `HomeView.lastInteractionAt.setter`; each propagated through
+   `ContentStateView`, the hero, and row construction during navigation.
+   `HomeNavigationActivity` now keeps that timestamp in a non-observable,
+   Home-owned reference. The ancestor still records every move and delays
+   watchlist refreshes; the share observer reads the latest timestamp when
+   checking its unchanged 30-second idle grace. Do not make this clock
+   observable or copy its timestamp back into a view's `@State`.
+6. **Debouncing does not move CPU work off MainActor.** A later Home hang report
+   identified `scheduleReenrich` calling the synchronous `reenrich` merge on the
+   main thread. Its identity traversal repeatedly reached title normalization,
+   blocking navigation for seconds even after the activity-clock fix.
+   Reenrichment now merges an immutable content copy on a utility worker and
+   publishes on MainActor only if its content revision is still current.
+   Concurrent reloads or watch mutations force a fresh fold; a superseding pass
+   or cancellation cannot publish stale results or call the old completion.
+   Keep that protection when changing the worker boundary, and retain the
+   order-stable merge rather than re-sorting Continue Watching.
 
 ### Profiling that ends in "no change" is a valid, valuable result
 
