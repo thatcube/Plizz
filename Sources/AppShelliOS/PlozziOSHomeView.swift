@@ -275,7 +275,7 @@ struct PlozziOSHomeView: View {
             play: { item, seconds in playForScreenshot(item, seconds: seconds) },
             dismiss: { playbackRequest = nil }
         ))
-        .confirmationDialog(
+        .alert(
             "Request as Administrator?",
             isPresented: Binding(
                 get: { heroRequestConfirmItem != nil },
@@ -285,8 +285,7 @@ struct PlozziOSHomeView: View {
                         heroRequestConfirmSeasons = nil
                     }
                 }
-            ),
-            titleVisibility: .visible
+            )
         ) {
             Button("Request as Administrator") {
                 guard let item = heroRequestConfirmItem,

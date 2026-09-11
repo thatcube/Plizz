@@ -1482,13 +1482,12 @@ private struct PlozziOSRequestPresentation: ViewModifier {
             } message: {
                 error.map { Text($0) } ?? Text(verbatim: "")
             }
-            .confirmationDialog(
+            .alert(
                 "Request as Administrator?",
                 isPresented: Binding(
                     get: { isEnabled && confirmationItem != nil },
                     set: { if isEnabled && !$0 { clearConfirmation() } }
-                ),
-                titleVisibility: .visible
+                )
             ) {
                 Button("Request as Administrator") {
                     guard let item = confirmationItem,
