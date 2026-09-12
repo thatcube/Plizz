@@ -157,6 +157,14 @@ changing the host or test target. Results are retained under
 `.build/focus-test-results/`; the runner requires an authoritative passing
 `xcresult` just like the package runner. Both runners execute in CI.
 
+`DetailTopNavigationHostedTests` pushes a full-height detail hero through native
+top tabs, the native sidebar, and a standalone navigation stack. It checks the
+physical top edge and horizontal gutter after navigation, late metadata, action
+focus changes, scrolling to Cast, and reopening. The shared
+`DetailTopSafeAreaBreakout` must remove the actual navigation inset rather than
+subtracting a fixed overscan margin. Its artwork-first reveal is checked with
+rendered pixels and live focus targets, including the Reduce Motion path.
+
 ## Guards that run before the compile
 
 Both are host-side Python (the tests run inside the tvOS Simulator sandbox and

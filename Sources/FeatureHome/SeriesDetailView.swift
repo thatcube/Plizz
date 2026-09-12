@@ -266,7 +266,7 @@ struct SeriesDetailView: View {
             .scrollClipDisabled()
             // Let the hero bleed into the top overscan inset instead of the
             // ScrollView reserving it as a blank bar above the backdrop.
-            .ignoresSafeArea(.container, edges: .top)
+            .modifier(DetailTopSafeAreaBreakout())
             // Re-run when the season set changes — not just once on first appear.
             // A seeded page first renders with empty `seasons` (children haven't
             // loaded yet); keying on the season ids re-runs this the moment they

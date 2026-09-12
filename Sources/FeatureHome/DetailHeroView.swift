@@ -1001,6 +1001,7 @@ struct DetailHeroView: View, Equatable {
             alignment: .bottomLeading
         )
         .modifier(SeriesHeroContentLiftModifier(model: seriesRecedeModel))
+        .modifier(DetailHeroContentReveal(isVisible: heroVisible, reduceMotion: reduceMotion))
         // The full-bleed backdrop lives in a `.background`, which by definition is
         // sized to the host and does NOT contribute to the host's measured size.
         // That is the fix: previously the backdrop was a ZStack *sibling* whose
@@ -1068,22 +1069,17 @@ struct DetailHeroView: View, Equatable {
                 .contentTransition(.opacity)
                 .allowsHitTesting(false)
                 .modifier(SeriesHeroContentLiftModifier(model: seriesRecedeModel))
+                .modifier(DetailHeroContentReveal(isVisible: heroVisible, reduceMotion: reduceMotion))
             }
         }
         .contextMenu {
             heroContextMenu
         }
-        // Normal detail opens fade the whole hero in. A live Home-trailer handoff
-        // must be fully opaque on its very first frame; fading the inherited video
-        // from zero exposes the navigation/container background as a dark flash.
-        .opacity(isContinuingHeroTrailer || heroVisible ? 1 : 0)
+        // Artwork (including an inherited trailer) is visible immediately. Only
+        // the foreground fades, keeping its focus targets and geometry stable.
         .onAppear {
             guard !heroVisible else { return }
-            if reduceMotion || isContinuingHeroTrailer {
-                heroVisible = true
-            } else {
-                withAnimation(.easeInOut(duration: 0.35)) { heroVisible = true }
-            }
+            heroVisible = true
         }
         // Cross-fade the hero text as the focused context changes, while the
         // backdrop swaps underneath it.
@@ -1109,13 +1105,6 @@ struct DetailHeroView: View, Equatable {
             if showsMoreMenu { heroActionRowFocus = .more }
         }
 
-    }
-
-    private var isContinuingHeroTrailer: Bool {
-        let heroItem = backdropItem ?? item
-        return heroBackground.settings.detailMode == .trailer
-            && heroTrailerController.isShowing(heroItem.id)
-            && heroTrailerController.isPlaying
     }
 
     /// The episode's own 16:9 still, inset opposite the text on an episode page.

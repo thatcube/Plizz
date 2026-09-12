@@ -742,12 +742,7 @@ public struct ItemDetailView: View {
             // — which on an episode page is the show breadcrumb above the title,
             // so the page opened focused on "leave" instead of "play".
             .defaultFocus($playFocused, true, priority: .userInitiated)
-            // Pin to the top on first load: the Play button is bottom-anchored in
-            // the full-screen hero, so initial focus on it makes tvOS auto-scroll
-            // the page down. Snap back to the hero top so focus stays on Play.
             .task {
-                try? await Task.sleep(nanoseconds: 50_000_000)
-                proxy.scrollTo(Self.topAnchorID, anchor: .top)
                 // An episode page puts a focusable breadcrumb above the title,
                 // and tvOS takes that topmost element on entry no matter what
                 // `defaultFocus` declares (tried at both `.automatic` and
@@ -1002,19 +997,6 @@ public struct ItemDetailView: View {
     /// series' key so a whole show remembers one preferred version.
     private func versionPreferenceKey(for item: MediaItem) -> String {
         DetailPlaybackSelection.versionPreferenceKey(for: item)
-    }
-}
-
-private struct DetailTopSafeAreaBreakout: ViewModifier {
-    func body(content: Content) -> some View {
-        #if os(tvOS)
-        // `ignoresSafeArea(.top)` also consumes tvOS's transient horizontal safe
-        // region during a cold NavigationStack push, briefly proposing a
-        // 2,408-point ScrollView. Pull only the known 60-point top inset outward.
-        content.padding(.top, -60)
-        #else
-        content.ignoresSafeArea(.container, edges: .top)
-        #endif
     }
 }
 
