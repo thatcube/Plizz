@@ -20,7 +20,7 @@ struct LiveChannelSessionReporting {
 /// AetherEngine adapter and its existing video surface.
 public struct LiveChannelPlayerView: View {
     private let channelID: String
-    private let title: String
+    private let title: String // l10n:content — provider-supplied channel name
     private let input: LiveChannelInput
     private let logoURL: URL?
     private let makeEngine: @MainActor () throws -> any LiveChannelEngine
@@ -73,7 +73,7 @@ public struct LiveChannelPlayerView: View {
 
     public init(
         channelID: String,
-        title: String,
+        title: String, // l10n:content — provider-supplied channel name
         input: LiveChannelInput,
         logoURL: URL?,
         makeEngine: @escaping @MainActor () throws -> any LiveChannelEngine,
@@ -145,7 +145,7 @@ public struct LiveChannelPlayerView: View {
 
     public init(
         channelID: String,
-        title: String,
+        title: String, // l10n:content — provider-supplied channel name
         streamURL: URL,
         logoURL: URL?,
         httpHeaders: [String: String] = [:],
@@ -897,7 +897,7 @@ private struct LiveChannelRevealSurface: View {
 }
 
 private struct LiveChannelOverlay: View {
-    let title: String
+    let title: String // l10n:content — provider-supplied channel name
     let logoURL: URL?
     let phase: LiveChannelPlaybackPhase
     let isAtLiveEdge: Bool
@@ -975,7 +975,7 @@ private struct LiveChannelOverlay: View {
 }
 
 private struct LiveChannelHeader: View {
-    let title: String
+    let title: String // l10n:content — provider-supplied channel name
     let logoURL: URL?
     let status: LocalizedStringResource
     let statusColor: Color

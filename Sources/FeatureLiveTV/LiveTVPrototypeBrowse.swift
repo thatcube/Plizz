@@ -896,7 +896,7 @@ struct PrototypeGuideRow: View {
         .focused(focus, equals: target)
         .disabled(railActive && returnTarget != target)
         .accessibilityLabel(Text(channel.name))
-        .accessibilityValue(guideGapState.map { Text($0.title) } ?? Text(""))
+        .accessibilityValue(guideGapState.map { Text($0.title) } ?? Text(verbatim: ""))
         .accessibilityHint(Text(selectionAction ?? "Play channel"))
         .accessibilityAddTraits(selectionMarked ? .isSelected : [])
         .accessibilityIdentifier("live-tv-channel-content-\(section.rawValue)-\(channel.number)-\(slotID ?? "whole")")

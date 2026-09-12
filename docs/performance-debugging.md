@@ -476,22 +476,20 @@ next agent doesn't re-chase a ghost.
 ### Home backdrop composition and comparison controls
 
 tvOS uses cached shading by default where it preserves the original treatment.
-iOS retains analytic shading by default. The color dissolve and animation
-isolation experiments remain off. These launch overrides do not change saved settings:
+iOS retains analytic shading by default. These launch overrides do not change saved settings:
 
 | Launch flag | Rendering change |
 | --- | --- |
 | `PLZHOME_CACHED_SCRIM=0` | Forces the original analytic shading for a control recording. |
 | `PLZHOME_CACHED_SCRIM=1` | Uses the pre-rendered alpha texture where eligible (also opt-in on iOS). |
-| `PLZHOME_OPAQUE_DISSOLVE=1` | Replaces the whole-backdrop alpha mask with the inverse fade into `AppBackground`'s opaque `backgroundBase`. |
 
-The options are independent. Compare each against the analytic reference before combining
-them, with the same artwork, theme, row population, and input cadence. Neither
+Compare cached shading against the analytic reference with the same artwork,
+theme, row population, and input cadence. The shading selection never
 changes the page scroll, recede distances, or 0.9/0.96-second animation choices.
 Local layer-count and screenshot improvements are not proof of Apple TV frame
 rate; confirm on the physical device before promoting an experiment.
 
-`HomeHeroLegibilityTexture` uses native-size 1920x1080 and 3840x2160 alpha assets,
+`HeroLegibilityTexture` uses native-size 1920x1080 and 3840x2160 alpha assets,
 not a runtime `drawingGroup`. The texture is tinted for opaque black/white in
 left-to-right layouts; other tones and right-to-left layouts retain the analytic
 `HeroLegibilityScrim` path. The RTL fallback preserves the platform's own leading
@@ -501,18 +499,11 @@ match Home's current leading/bottom treatment. Regenerate with
 verify with `python3 tools/generate_home_scrim.py --check` plus
 `python3 tools/test_generate_home_scrim.py`.
 
-The color dissolve is valid only over a known opaque page color. Keep the alpha
-mask on transparent or differently composed surfaces. Keep the rectangular clip
-after the color fade: the previous alpha mask also clipped child-layer overdraw,
-whereas an overlay alone does not. Hosted coverage reproduces this distinction
-with a synthetic layer extending one point below its host. **That fixture is not
-a reproduction of the reported on-device seam:** the bottom-edge line remained
-during physical Apple TV Down/Up navigation with the clip in place. The original
-mask was restored; the color dissolve remains an unaccepted, opt-in experiment.
-
-`HeroBackdropDissolve` explicitly animates its start position: static endpoint
-screenshots alone missed an earlier snapping regression. Hosted coverage checks dark/light pixels,
-intermediate fade frames, reversal, and the cached texture's RTL behavior.
+An opaque color-fade experiment did not replace the original alpha mask: it
+introduced a visible seam and differed during intermediate animation frames.
+Adding rectangular clipping fixed a synthetic overdraw fixture but not the
+reported device seam. The experiment and its runtime switches were removed
+before landing; the accepted renderer retains the original mask.
 
 #### Measure presentation separately from callbacks and startup
 
@@ -537,11 +528,8 @@ later-navigation measurements separate, record actual first-move timestamps and
 background curation activity, and reverse comparison order. Do not wait for
 background loading to finish in a test intended to cover startup. XCTest's
 quiescence waits can delay input even with no explicit settling delay; verify
-the actual navigation markers. A prestarted driver can wait for a unique
-`PLZPERF_LAUNCH_TOKEN` on the app's hero accessibility identifier, supplied as
-`PLOZZ_HOME_CAPTURE_LAUNCH_TOKEN` to the runner with
-`PLOZZ_HOME_CAPTURE_PHASE=startup`, but that handshake alone does not prove early
-input. This toolchain also returned no native metrics when the app process
+the actual navigation markers. An experimental prestarted-driver handshake did
+not prove early input and was removed. This toolchain also returned no native metrics when the app process
 changed after the test session started. Empty metrics are an invalid capture,
 not zero hitches or a successful performance result.
 
@@ -555,15 +543,10 @@ Keep that limitation separate from the native animation results above.
 
 #### Investigating a visible position jump
 
-`PLZHOME_MOTION_TRACE=1` enables a passive, one-shot capture of the UIKit hero
-artwork, foreground, logo and pills. It records model/presentation coordinates,
-the enclosing page's scroll offset, content height and inset, without publishing
-SwiftUI state or steering focus. It retains a short pre-transition history and
-20 seconds after the first recede, then writes
-`Library/Caches/plozz-home-motion.json`. This is geometry evidence, not a
-low-overhead FPS benchmark; file serialization happens after sampling stops.
-If no transition occurs within two minutes, sampling stops with an explicit
-diagnostic instead of leaving a display link running indefinitely.
+A temporary, passive geometry recorder sampled the hero's UIKit coordinates,
+page scroll offset, content height and inset without steering focus. Its file
+logger and runtime switch were removed before landing. Retain recordings as
+investigation artifacts, not as production instrumentation.
 
 A tvOS 27 capture found 40–60-point hero steps following delayed updates while
 hero heights and the top inset stayed constant. A separate Time Profiler capture
@@ -578,13 +561,13 @@ establish a fix for the remaining jumps. Native dismissal/focus verification
 also remained inconclusive. That experiment was removed rather than mixing it
 into subsequent motion comparisons.
 
-`PLZHOME_ISOLATED_MOTION=1` is a separate, off-by-default transaction-scope
-experiment. Its movement modifier explicitly interpolates the offset before
+An isolated-transaction experiment explicitly interpolated the offset before
 clearing child animations; clearing the transaction around an ordinary offset
 made UIKit content snap in the hosted comparison. It keeps the original native
 gradient mask, because rebuilding that gradient from an interpolated start
-position differed during the fade. Hosted tests compare rendered positions,
-UIKit geometry, mask pixels and reversal on tvOS 26 and 27.
+position differed during the fade. The shared movement modifier retained for
+production instead uses the original inherited animation transaction; hosted
+tests compare its rendered positions, UIKit geometry and reversal.
 
 Do not attribute improvements in an isolation-OFF control to that experimental
 path. One tvOS 27 control reported zero hitches in all twelve measured Down
@@ -595,8 +578,8 @@ busy-startup cases are fixed.
 A repeat with a focus assertion after every Down and Up still recorded occasional
 hitches: mean Down/Up ratios of 5.8/1.1 ms/s in the control. Isolation ON measured
 9.3/0.0 ms/s and more large sampled coordinate steps in that comparison, so it
-was not accepted as an overall improvement and remains off. Keep the successful
-cached-shading change separate from that unresolved experiment.
+was not accepted as an overall improvement. The isolated path was removed before
+landing. Keep the successful cached-shading change separate from that experiment.
 
 #### TV show detail backdrops
 

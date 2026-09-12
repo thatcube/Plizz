@@ -602,8 +602,8 @@ private struct LiveTVMultiviewPaneControl: View {
             }
             pictureControl
             .disabled(!isInteractive || (pane.preparation.current == nil && pane.preparation.failure != nil))
-            .accessibilityLabel(pane.channel?.name ?? String(localized: "Channel"))
-            .accessibilityValue(audible ? String(localized: "Audio on") : String(localized: "Muted"))
+            .accessibilityLabel(liveTVChannelLabel(pane.channel?.name))
+            .accessibilityValue(audible ? Text("Audio on") : Text("Muted"))
             .accessibilityIdentifier("live-multiview-pane-\(pane.id.uuidString)")
             .contextMenu {
                 #if !os(tvOS)
@@ -673,7 +673,7 @@ private struct LiveTVMultiviewCaption: View {
     var body: some View {
         HStack(spacing: 10) {
             if audible { Image(systemName: "speaker.wave.2.fill") }
-            Text(pane.channel?.name ?? String(localized: "Channel"))
+            liveTVChannelLabel(pane.channel?.name)
                 .lineLimit(1)
                 .minimumScaleFactor(0.65)
             Spacer(minLength: 0)
@@ -804,13 +804,14 @@ private struct LiveTVMultiviewToolbar: View {
                                 Button {
                                     coordinator.selectAudio(pane.id)
                                 } label: {
-                                    Label(
-                                        pane.channel?.name ?? String(localized: "Channel"),
-                                        systemImage: coordinator.audiblePaneID == pane.id ? "checkmark" : "speaker"
-                                    )
+                                    Label {
+                                        liveTVChannelLabel(pane.channel?.name)
+                                    } icon: {
+                                        Image(systemName: coordinator.audiblePaneID == pane.id ? "checkmark" : "speaker")
+                                    }
                                 }
                                 .disabled(pane.preparation.current == nil)
-                                .accessibilityLabel(pane.channel?.name ?? String(localized: "Channel"))
+                                .accessibilityLabel(liveTVChannelLabel(pane.channel?.name))
                                 .accessibilityIdentifier("live-multiview-listen-\(pane.id.uuidString)")
                             }
                         } label: {
@@ -851,6 +852,14 @@ private struct LiveTVMultiviewToolbar: View {
         #if os(tvOS)
         .focusSection()
         #endif
+    }
+}
+
+private func liveTVChannelLabel(_ name: String?) -> Text {
+    if let name {
+        Text(verbatim: name)
+    } else {
+        Text("Channel")
     }
 }
 

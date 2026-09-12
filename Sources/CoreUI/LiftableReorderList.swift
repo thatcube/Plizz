@@ -312,7 +312,10 @@ public struct LiftableReorderList<Element: Hashable>: View {
             Button("Hide", systemImage: "eye.slash") { perform(.hide, on: element) }
                 .disabled(requiredEnabled.contains(element))
         } else {
-            Button("Show", systemImage: "eye") { perform(.show, on: element) }
+            Button(
+                LocalizedStringResource("Show", comment: "Action verb: unhide a navigation item. Not the noun meaning a TV series."),
+                systemImage: "eye"
+            ) { perform(.show, on: element) }
         }
         Button("Move Up", systemImage: "arrow.up") { perform(.moveUp, on: element) }
             .disabled(edit(.moveUp, for: element) == nil)

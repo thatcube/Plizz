@@ -40,7 +40,11 @@ struct LiveTVSetupWelcome: View {
                         .accessibilityIdentifier("live-tv-setup-playlist")
                         LiveTVSetupChoice(
                             title: "Media server",
-                            detail: "Watch Live TV from your Jellyfin, Emby or Plex server.",
+                            detail: LocalizedStringResource(
+                                "liveTV.setup.server.detail",
+                                defaultValue: "Watch Live TV from Jellyfin or Emby. Plex supports guide browsing only.",
+                                comment: "Media-server setup choice. Plex Live TV currently supplies guide listings, not live playback; this is separate from generated channels using a Plex media library."
+                            ),
                             actionTitle: "Choose server",
                             symbol: "server.rack",
                             action: useServer

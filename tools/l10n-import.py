@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import re
 import shutil
@@ -111,7 +112,15 @@ def parse_args() -> argparse.Namespace:
             "each language file's infoPlist object."
         ),
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--source-delta",
+        action="store_true",
+        help="Import a hash-bound, reviewed delta for existing source-language keys only.",
+    )
+    args = parser.parse_args()
+    if args.source_delta and args.require_info_plist:
+        parser.error("--source-delta cannot change permission prompts")
+    return args
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -398,6 +407,7 @@ def validate_language(
     catalog_strings: dict[str, Any],
     allow_translated_state: bool,
     protected_terms: list[str] | None = None,
+    source_delta_catalog: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, int]]:
     document = load_json(path)
     language = document.get("language")
@@ -417,6 +427,26 @@ def validate_language(
         raise ImportErrorDetail(f"{path.name}: translations must be an object")
 
     expected_keys = set(catalog_strings)
+    if source_delta_catalog is not None:
+        if language != source_delta_catalog.get("sourceLanguage"):
+            raise ImportErrorDetail("source delta must use the catalog's source language")
+        canonical = json.dumps(
+            source_delta_catalog, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        if document.get("sourceCatalogSHA256") != hashlib.sha256(canonical).hexdigest():
+            raise ImportErrorDetail("source delta was produced from another source catalog")
+        delta_keys = document.get("deltaKeys")
+        if not translations or delta_keys != list(translations):
+            raise ImportErrorDetail("source delta must declare its exact nonempty ordered keys")
+        if not set(translations) <= expected_keys:
+            raise ImportErrorDetail("source delta contains unknown catalog keys")
+        if any(
+            unit.get("state") != "needs_review"
+            for localization in translations.values()
+            for _, unit in string_units(localization)
+        ):
+            raise ImportErrorDetail("source delta units must remain needs_review")
+        expected_keys = set(translations)
     actual_keys = set(translations)
     missing = expected_keys - actual_keys
     extra = actual_keys - expected_keys
@@ -433,6 +463,8 @@ def validate_language(
     unit_count = 0
     unchanged = 0
     for key, source_entry in catalog_strings.items():
+        if key not in expected_keys:
+            continue
         units, same = validate_localization(
             language,
             key,
@@ -550,6 +582,7 @@ def main() -> int:
                 strings,
                 args.allow_translated_state,
                 protected_terms,
+                source_delta_catalog=catalog if args.source_delta else None,
             )
             for key, localization in translations.items():
                 merged["strings"][key].setdefault("localizations", {})[

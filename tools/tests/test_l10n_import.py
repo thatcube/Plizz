@@ -4,10 +4,13 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "l10n-import.py"
@@ -45,6 +48,100 @@ def substitution_localization(
 
 
 class TranslationImportTests(unittest.TestCase):
+    def source_delta_fixture(self) -> tuple[dict, dict]:
+        catalog = {
+            "sourceLanguage": "en",
+            "strings": {
+                "%lld channels": {"localizations": {}},
+                "Unchanged": {"localizations": {"en": {"stringUnit": {"state": "new", "value": "Unchanged"}}}},
+            },
+        }
+        canonical = json.dumps(
+            catalog, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        document = {
+            "language": "en",
+            "sourceCatalogSHA256": hashlib.sha256(canonical).hexdigest(),
+            "deltaKeys": ["%lld channels"],
+            "translations": {
+                "%lld channels": {
+                    "variations": {"plural": {
+                        "one": unit("%lld channel"), "other": unit("%lld channels"),
+                    }},
+                },
+            },
+        }
+        return catalog, document
+
+    def validate_source_delta(self, catalog: dict, document: dict) -> dict:
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / f"{document['language']}.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            _, translations, _ = l10n_import.validate_language(
+                path, catalog["strings"], False, source_delta_catalog=catalog
+            )
+            return translations
+
+    def test_source_delta_preserves_unmentioned_source_entries(self) -> None:
+        catalog, document = self.source_delta_fixture()
+        before = json.dumps(catalog)
+        result = self.validate_source_delta(catalog, document)
+        self.assertEqual(list(result), ["%lld channels"])
+        self.assertEqual(json.dumps(catalog), before)
+
+    def test_source_delta_rejects_wrong_language_hash_keys_and_states(self) -> None:
+        for change, error in (
+            (lambda d: d.update(language="de"), "source language"),
+            (lambda d: d.update(sourceCatalogSHA256="stale"), "another source"),
+            (lambda d: d.update(deltaKeys=[]), "exact nonempty ordered keys"),
+            (lambda d: d.update(deltaKeys=["Unknown"], translations={"Unknown": unit("Unknown")}), "unknown catalog"),
+            (lambda d: d["translations"].update({"%lld channels": {"stringUnit": {"state": "translated", "value": "%lld channels"}}}), "remain needs_review"),
+            (lambda d: d["translations"].update({"%lld channels": unit("channels")}), "placeholder types changed"),
+        ):
+            with self.subTest(error=error):
+                catalog, document = self.source_delta_fixture()
+                change(document)
+                with self.assertRaisesRegex(l10n_import.ImportErrorDetail, error):
+                    self.validate_source_delta(catalog, document)
+
+    def test_translation_import_still_requires_full_coverage(self) -> None:
+        catalog, document = self.source_delta_fixture()
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "en.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            with self.assertRaisesRegex(l10n_import.ImportErrorDetail, "missing 1 key"):
+                l10n_import.validate_language(path, catalog["strings"], False)
+
+    def test_source_delta_application_preserves_other_languages_and_source_states(self) -> None:
+        catalog, document = self.source_delta_fixture()
+        catalog["strings"]["%lld channels"]["localizations"]["fr"] = unit("%lld chaînes")
+        document["sourceCatalogSHA256"] = hashlib.sha256(json.dumps(
+            catalog, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")).hexdigest()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            catalog_path = root / "Localizable.xcstrings"
+            catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+            (root / "en.json").write_text(json.dumps(document), encoding="utf-8")
+            args = SimpleNamespace(
+                catalog=catalog_path, input_dir=root, languages="en",
+                allow_translated_state=False, require_info_plist=False,
+                source_delta=True, apply=True,
+            )
+            with (
+                patch.object(l10n_import, "parse_args", return_value=args),
+                patch.object(l10n_import, "REPO", root),
+                patch.object(l10n_import, "INFO_CATALOGS", {}),
+                patch.object(l10n_import, "never_translate_terms", return_value=[]),
+                patch.object(l10n_import, "compile_catalog") as compile_catalog,
+            ):
+                self.assertEqual(l10n_import.main(), 0)
+            result = json.loads(catalog_path.read_text(encoding="utf-8"))
+            expected = json.loads(json.dumps(catalog))
+            expected["strings"]["%lld channels"]["localizations"]["en"] = document["translations"]["%lld channels"]
+            self.assertEqual(result, expected)
+            compile_catalog.assert_called_once_with(expected)
+
     def validate(self, localization: dict) -> None:
         l10n_import.validate_localization(
             "de",

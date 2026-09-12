@@ -27,7 +27,7 @@ struct PlozziOSLivePresentationControls: View {
                 if nativePlayerAvailable {
                     LiveAirPlayRoutePicker()
                         .frame(width: 44, height: 44)
-                        .accessibilityLabel("AirPlay")
+                        .accessibilityLabel(Text(verbatim: "AirPlay"))
                         .accessibilityValue(pictureInPicture.isAirPlayActive ? "Connected" : "Not connected")
                         .accessibilityIdentifier("live-channel-airplay")
                 }

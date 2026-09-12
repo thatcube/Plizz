@@ -79,7 +79,7 @@ private extension LiveChannelEngineSnapshot {
         "\(phase.diagnosticCode)/\(route.rawValue)/\(firstFrameReady)"
     }
 
-    var diagnosticDetail: String {
+    var diagnosticDetail: String { // l10n:content — developer-only structured log payload
         "phase=\(phase.diagnosticCode) route=\(route.rawValue) firstFrameReady=\(firstFrameReady)"
             + " position=\(number(position)) bufferedPosition=\(number(bufferedPosition))"
             + " behindLive=\(number(behindLiveSeconds))"

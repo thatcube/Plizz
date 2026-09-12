@@ -469,16 +469,10 @@ public struct HomeView: View {
                                 onFocusGained: {
                                     HomePerfDiagnostics.emitLine("HOME-TRANSITION hero-focus UP")
                                     if heroRecedeModel.isReceded {
-                                        HomeMotionDiagnostics.transition(receding: false)
                                         HomePerfDiagnostics.recordNavigationAnimation(receding: false)
                                     }
-                                    if HomeAnimationComparison.isolatesMotionTransactions {
-                                        heroRecedeModel.isReceded = false
-                                    }
                                     withAnimation(.smooth(duration: Self.recedeAnimationDuration)) {
-                                        if !HomeAnimationComparison.isolatesMotionTransactions {
-                                            heroRecedeModel.isReceded = false
-                                        }
+                                        heroRecedeModel.isReceded = false
                                         heroScrollProxy.scrollTo(Self.heroTopID, anchor: .top)
                                     }
                                 },
@@ -598,15 +592,10 @@ public struct HomeView: View {
                 } action: { _, shouldRecede in
                     HomePerfDiagnostics.emitLine("HOME-TRANSITION receded=\(shouldRecede)")
                     if shouldRecede {
-                        HomeMotionDiagnostics.transition(receding: true)
                         HomePerfDiagnostics.recordNavigationAnimation(receding: true)
                     }
-                    if HomeAnimationComparison.isolatesMotionTransactions {
+                    withAnimation(.smooth(duration: Self.recedeAnimationDuration)) {
                         heroRecedeModel.isReceded = shouldRecede
-                    } else {
-                        withAnimation(.smooth(duration: Self.recedeAnimationDuration)) {
-                            heroRecedeModel.isReceded = shouldRecede
-                        }
                     }
                 }
                 // When the hero is active, let it bleed into the top overscan
@@ -1830,11 +1819,7 @@ private struct HomeRowsRecedeModifier: ViewModifier {
     let lift: CGFloat
 
     func body(content: Content) -> some View {
-        content.modifier(HomeVerticalMotion(
-            y: active && model.isReceded ? -lift : 0,
-            duration: HomeHeroRecedeModel.animationDuration,
-            isolated: HomeAnimationComparison.isolatesMotionTransactions
-        ))
+        content.modifier(HomeVerticalMotion(y: active && model.isReceded ? -lift : 0))
     }
 }
 

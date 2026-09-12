@@ -2,6 +2,114 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "id": "release/036",
+      "version": "2026.9.10",
+      "build": 36,
+      "releasedAt": "2026-09-10",
+      "sections": [
+        {
+          "category": "New",
+          "items": [
+            {
+              "text": "Now Playing support adds playback controls to the Lock Screen, Control Center, and connected accessories",
+              "platforms": ["iOS"]
+            },
+            {
+              "text": "Now Playing support adds playback controls to Control Center and connected accessories",
+              "platforms": ["tvOS"]
+            },
+            {
+              "text": "Choose rating sources, their priority, and the maximum scores shown in the detail hero",
+              "platforms": ["iOS"]
+            },
+            {
+              "text": "Optionally keep video audio playing when locking the screen or leaving the app",
+              "platforms": ["iOS"]
+            },
+            {
+              "text": "Mark individual seasons watched or unwatched from the season row",
+              "platforms": ["tvOS"]
+            },
+            {
+              "text": "Optionally prevent accidental exits from top-level navigation with the Back button",
+              "platforms": ["tvOS"]
+            }
+          ]
+        },
+        {
+          "category": "Updated",
+          "items": [
+            "Home and show pages load with fewer server requests on Jellyfin and Emby",
+            "Home hero ratings are hidden by default and can be enabled in Customize Home",
+            "Avenir Next replaces Avenir for subtitles",
+            {
+              "text": "Detail pages put metadata, descriptions, and controls below the artwork for easier reading",
+              "platforms": ["iOS"]
+            },
+            {
+              "text": "Home and detail descriptions use two lines; tap More on detail pages for the full synopsis",
+              "platforms": ["iOS"]
+            },
+            {
+              "text": "Picture and sound badges take up less space alongside ratings",
+              "platforms": ["iOS"]
+            },
+            {
+              "text": "Download controls stay in the top-right corner of detail pages",
+              "platforms": ["iOS"]
+            },
+            {
+              "text": "Administrator requests use a centered confirmation alert",
+              "platforms": ["iOS"]
+            },
+            {
+              "text": "Nearby seasons load without waiting for slow artwork downloads",
+              "platforms": ["tvOS"]
+            },
+            {
+              "text": "Episode thumbnails are prepared sooner while respecting artwork and spoiler preferences",
+              "platforms": ["tvOS"]
+            }
+          ]
+        },
+        {
+          "category": "Fixed",
+          "items": [
+            "Continue Watching advances after episode completion instead of losing the show or burying its next episode",
+            "Closed network connections no longer cause the app to quit unexpectedly",
+            {
+              "text": "Long Play and Resume button labels no longer get cut off",
+              "platforms": ["iOS"]
+            },
+            {
+              "text": "Request Seasons appears in the detail hero when there is nothing to play or download",
+              "platforms": ["iOS"]
+            },
+            {
+              "text": "Opening an episode keeps focus on the matching card, even while a large show loads",
+              "platforms": ["tvOS"]
+            },
+            {
+              "text": "Moving down from Play reaches the episode browser instead of skipping past it",
+              "platforms": ["tvOS"]
+            },
+            {
+              "text": "Episode loading and retry states stay reachable, with unclipped focus highlights",
+              "platforms": ["tvOS"]
+            },
+            {
+              "text": "Profile avatars stay circular and are easier to see in the native sidebar",
+              "platforms": ["tvOS"]
+            },
+            {
+              "text": "Watchlist no longer hides top-level navigation",
+              "platforms": ["tvOS"]
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "release/035",
       "version": "2026.9.7",
       "build": 35,

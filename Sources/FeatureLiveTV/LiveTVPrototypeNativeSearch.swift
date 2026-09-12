@@ -32,6 +32,10 @@ struct PrototypeNativeSearch<Results: View>: UIViewControllerRepresentable {
     @Environment(\.locale) private var locale
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    private var searchPlaceholder: String {
+        String(localized: "Search channels", locale: locale) // l10n:content — UIKit String boundary, recomputed from the live SwiftUI locale
+    }
+
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeUIViewController(context: Context) -> UINavigationController {
@@ -41,7 +45,7 @@ struct PrototypeNativeSearch<Results: View>: UIViewControllerRepresentable {
         search.close = context.coordinator.closeAction
         search.reduceMotion = reduceMotion
         search.modalPresentationStyle = .custom
-        search.searchBar.placeholder = String(localized: "Search channels", locale: locale)
+        search.searchBar.placeholder = searchPlaceholder
         search.searchBar.text = query
         search.searchBar.autocorrectionType = .no
         search.searchBar.autocapitalizationType = .none
@@ -78,6 +82,9 @@ struct PrototypeNativeSearch<Results: View>: UIViewControllerRepresentable {
             return
         }
         if search.searchBar.text != query { search.searchBar.text = query }
+        if search.searchBar.placeholder != searchPlaceholder {
+            search.searchBar.placeholder = searchPlaceholder
+        }
         search.view.isUserInteractionEnabled = context.environment.isEnabled
         search.reduceMotion = reduceMotion
         if search.restoresGuideFocus != restoresGuideFocus {

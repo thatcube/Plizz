@@ -225,6 +225,10 @@ enum LibraryChannelAutomaticPlanner {
         var titles: Set<Int> = []
     }
 
+    private static func persistedName(_ resource: LocalizedStringResource) -> String {
+        String(localized: resource) // l10n:content — resolved only when writing a generated channel recipe snapshot
+    }
+
     static func groups(
         catalog: LibraryChannelAutomaticCatalog, profileID: String, policy: Policy = Policy()
     ) throws -> [Group] {
@@ -261,17 +265,17 @@ enum LibraryChannelAutomaticPlanner {
             }
             if let year = entry.year, (1880...2100).contains(year) {
                 let decade = year / 10 * 10
-                add("v1/decade/\(decade)", label: String(localized: "\(decade)s"), category: "decade", index: index, titleID: titleID)
+                add("v1/decade/\(decade)", label: persistedName("\(decade)s"), category: "decade", index: index, titleID: titleID)
             }
             if !policy.animationGenres.isDisjoint(with: entry.genres.map(normalized)) {
-                add("v1/animation", label: String(localized: "Animation"), category: "animation", index: index, titleID: titleID)
+                add("v1/animation", label: persistedName("Animation"), category: "animation", index: index, titleID: titleID)
             }
             if let rating = entry.item.rating.map(normalized) {
                 if policy.kidsRatings.contains(rating) {
-                    add("v1/kids", label: String(localized: "Kids"), category: "kids", index: index, titleID: titleID)
+                    add("v1/kids", label: persistedName("Kids"), category: "kids", index: index, titleID: titleID)
                 }
                 if policy.familyRatings.contains(rating) {
-                    add("v1/family", label: String(localized: "Family"), category: "family", index: index, titleID: titleID)
+                    add("v1/family", label: persistedName("Family"), category: "family", index: index, titleID: titleID)
                 }
             }
         }
@@ -292,11 +296,11 @@ enum LibraryChannelAutomaticPlanner {
         }
         var result: [Group] = []
         if !movies.isEmpty {
-            result.append(try group(key: "v1/movies", name: String(localized: "Movies"),
+            result.append(try group(key: "v1/movies", name: persistedName("Movies"),
                                     items: movies, catchall: true, symbol: "film"))
         }
         if !episodes.isEmpty {
-            result.append(try group(key: "v1/tv", name: String(localized: "TV Shows"),
+            result.append(try group(key: "v1/tv", name: persistedName("TV Shows"),
                                     items: episodes, catchall: true, symbol: "tv"))
         }
         // Rotate categories instead of letting a large genre list consume the entire lineup.

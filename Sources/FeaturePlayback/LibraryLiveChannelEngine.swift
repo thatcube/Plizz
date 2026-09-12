@@ -385,7 +385,7 @@ public final class LibraryLiveChannelEngine: LiveChannelEngine {
     private static func appError(_ error: any Error) -> AppError {
         if let error = error as? AppError { return error }
         if let error = error as? LibraryChannelError {
-            return .unknown(String(localized: error.message))
+            return .unknown(String(localized: error.message)) // l10n:content — AppError payload requires a resolved String
         }
         return .invalidResponse
     }

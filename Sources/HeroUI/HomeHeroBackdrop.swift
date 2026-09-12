@@ -16,8 +16,6 @@ private enum HomeBackdropCompositing {
     static let usesCachedScrim =
         ProcessInfo.processInfo.environment["PLZHOME_CACHED_SCRIM"] == "1"
     #endif
-    static let usesOpaqueDissolve =
-        ProcessInfo.processInfo.environment["PLZHOME_OPAQUE_DISSOLVE"] == "1"
 }
 
 /// Shared Home **hero** backdrop, designed around the Apple TV app's "parallax
@@ -167,7 +165,6 @@ public struct HomeHeroBackdrop: View {
     }
 
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.themePalette) private var palette
     private var isLight: Bool { colorScheme == .light }
 
     /// Height fraction at which the bottom melt BEGINS. Theme-aware: light mode
@@ -193,11 +190,7 @@ public struct HomeHeroBackdrop: View {
         dissolvedSurface
             .frame(maxWidth: .infinity, alignment: artworkAlignment)
             // Keep the translation inside the safe-area breakout.
-            .modifier(HomeVerticalMotion(
-                y: -recedeLift,
-                duration: 0.96,
-                isolated: HomeAnimationComparison.isolatesMotionTransactions
-            ))
+            .modifier(HomeVerticalMotion(y: -recedeLift))
             .animation(.smooth(duration: 0.96), value: recedeLift)
             .animation(.smooth(duration: 0.96), value: receded)
             .ignoresSafeArea(
@@ -207,34 +200,8 @@ public struct HomeHeroBackdrop: View {
             )
     }
 
-    @ViewBuilder
     private var dissolvedSurface: some View {
-        if HomeAnimationComparison.isolatesMotionTransactions {
-            if HomeBackdropCompositing.usesOpaqueDissolve {
-                let start = receded ? recededMeltStart : meltStart
-                motionContent
-                    .modifier(HeroBackdropDissolve(start: start, background: palette.backgroundBase))
-                    .animation(.smooth(duration: 0.96), value: start)
-            } else {
-                motionContent.mask(dissolveMask)
-                    .animation(.smooth(duration: 0.96), value: receded)
-            }
-        } else if HomeBackdropCompositing.usesOpaqueDissolve {
-            motionContent.modifier(HeroBackdropDissolve(
-                start: receded ? recededMeltStart : meltStart,
-                background: palette.backgroundBase
-            ))
-        } else {
-            motionContent.mask(dissolveMask)
-        }
-    }
-
-    private var motionContent: some View {
-        backdropSurface.transaction {
-            if HomeAnimationComparison.isolatesMotionTransactions {
-                $0.animation = nil
-            }
-        }
+        backdropSurface.mask(dissolveMask)
     }
 
     private var backdropSurface: some View {
@@ -900,7 +867,6 @@ final class HeroWipeContainerView: UIView {
         super.init(frame: .zero)
         clipsToBounds = true
         backgroundColor = .clear
-        HomeMotionDiagnostics.register(self, role: "artwork")
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }

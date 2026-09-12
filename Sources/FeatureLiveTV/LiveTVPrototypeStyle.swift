@@ -96,13 +96,13 @@ struct PrototypeScrollFade: Equatable {
 }
 
 extension LiveTVPrototypeSource {
-    var title: LocalizedStringResource {
+    var title: Text {
         switch self {
-        case .iptv: "IPTV"
-        case .jellyfin: "Jellyfin"
-        case .plex: "Plex"
-        case .emby: "Emby"
-        case .plozz: "Plozz channels"
+        case .iptv: Text(verbatim: "IPTV")
+        case .jellyfin: Text(verbatim: "Jellyfin")
+        case .plex: Text(verbatim: "Plex")
+        case .emby: Text(verbatim: "Emby")
+        case .plozz: Text("Plozz channels")
         }
     }
 }

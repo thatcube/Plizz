@@ -108,6 +108,34 @@ final class LibraryChannelHistorySettingsTests: XCTestCase {
         XCTAssertNil(settings.authorizationID)
     }
 
+    func testBackgroundDefaultsNotificationDoesNotBlockItsWriter() async {
+        let suite = "library-channel-history-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let key = SettingsKey.scoped("com.plozz.liveTV.libraryChannelHistory", namespace: "one")
+        let settings = LibraryChannelHistorySettings(defaults: defaults, namespace: "one")
+        let changed = expectation(description: "History setting refreshes on the main actor")
+        withObservationTracking {
+            _ = settings.isEnabled
+        } onChange: {
+            changed.fulfill()
+        }
+        let writerFinished = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            let writer = UserDefaults(suiteName: suite)!
+            writer.set(true, forKey: key)
+            NotificationCenter.default.post(name: UserDefaults.didChangeNotification, object: writer)
+            writerFinished.signal()
+        }
+
+        // A notification must not synchronously wait for the main actor while
+        // that actor waits for concurrent preferences work to finish.
+        XCTAssertEqual(writerFinished.wait(timeout: .now() + 2), .success)
+        await fulfillment(of: [changed], timeout: 2)
+        XCTAssertTrue(settings.isEnabled)
+        XCTAssertNotNil(settings.authorizationID)
+    }
+
     func testIsolatedSettingsAreNotRetainedByTheirDefaultsObserver() {
         let suite = "library-channel-history-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!

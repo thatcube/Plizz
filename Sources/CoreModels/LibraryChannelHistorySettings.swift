@@ -56,9 +56,15 @@ private final class LibraryChannelHistoryDefaultsObservation {
     init(onChange: @escaping @MainActor @Sendable () -> Void) {
         // A different UserDefaults instance can write the same persistent domain.
         token = NotificationCenter.default.addObserver(
-            forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+            forName: UserDefaults.didChangeNotification, object: nil, queue: nil
         ) { _ in
-            MainActor.assumeIsolated { onChange() }
+            if Thread.isMainThread {
+                MainActor.assumeIsolated { onChange() }
+            } else {
+                // NotificationCenter waits for queued observers. A main-queue
+                // observer deadlocks a writer when main is waiting for that work.
+                Task { @MainActor in onChange() }
+            }
         }
     }
 

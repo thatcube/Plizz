@@ -896,12 +896,6 @@ struct HomeHeroView: View {
     /// Constant identity for the single focusable action row. Never changes — so
     /// focus is retained across a page (item id changes).
     static let actionRowFocusID = "home-hero-action-row"
-    private static let actionRowAccessibilityID: String = {
-        guard let token = ProcessInfo.processInfo.environment["PLZPERF_LAUNCH_TOKEN"] else {
-            return actionRowFocusID
-        }
-        return "\(actionRowFocusID).\(token)"
-    }()
 
     /// Reserved focus-region size for the env-gated UIKit foreground path
     /// (``HeroForegroundConfig``). When the UIKit view draws the pill visuals, the
@@ -1098,11 +1092,7 @@ struct HomeHeroView: View {
         // of this column or the rows below it. Padding-based lifts on a non-lazy
         // stack re-run full layout every animation frame, which is what made the
         // slow recede stutter; a transform is free at any duration.
-        .modifier(HomeVerticalMotion(
-            y: receded ? -Self.recedeContentLift : 0,
-            duration: HomeHeroRecedeModel.animationDuration,
-            isolated: HomeAnimationComparison.isolatesMotionTransactions
-        ))
+        .modifier(HomeVerticalMotion(y: receded ? -Self.recedeContentLift : 0))
         // Cap the overview to the button-row width: adopt the pills' measured width.
         .onPreferenceChange(HeroButtonsWidthKey.self) { width in
             if width > 0 { actionButtonsWidth = width }
@@ -1155,11 +1145,7 @@ struct HomeHeroView: View {
         .padding(.leading, PlozzTheme.Metrics.heroLeadingPadding + navigationContentInset)
         // Lower the whole UIKit column (visuals + focus overlay) by `uikitContentDrop`.
         .padding(.bottom, Self.contentBottomInset - Self.uikitContentDrop)
-        .modifier(HomeVerticalMotion(
-            y: receded ? -Self.recedeContentLift : 0,
-            duration: HomeHeroRecedeModel.animationDuration,
-            isolated: HomeAnimationComparison.isolatesMotionTransactions
-        ))
+        .modifier(HomeVerticalMotion(y: receded ? -Self.recedeContentLift : 0))
     }
 
     /// SwiftUI-only counterpart to `HeroForegroundModelBuilder.titleText`: same
@@ -1543,7 +1529,7 @@ struct HomeHeroView: View {
                     }
                     .accessibilityElement(children: .ignore)
                     .accessibilityAddTraits(.isButton)
-                    .accessibilityIdentifier(Self.actionRowAccessibilityID)
+                    .accessibilityIdentifier(Self.actionRowFocusID)
                     .accessibilityLabel(accessibilityLabel(for: item))
                     .accessibilityAction { activateSelected() }
                     .modifier(HeroActionAccessibility(actions: a11yActions))

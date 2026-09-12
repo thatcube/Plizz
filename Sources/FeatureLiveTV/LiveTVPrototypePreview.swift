@@ -142,6 +142,7 @@ struct PrototypePreviewHero: View {
     let watch: () -> Void
     var watchTitle: LocalizedStringResource?
     @Environment(\.themePalette) private var palette
+    @Environment(\.locale) private var locale
 
     var body: some View {
         VStack(alignment: .leading, spacing: layout.compact ? PrototypeLayout.smallGap : PrototypeLayout.rowGap) {
@@ -158,7 +159,7 @@ struct PrototypePreviewHero: View {
                 HStack(spacing: PrototypeLayout.gap) {
                     Text(channel.category).lineLimit(1)
                     if let program {
-                        Text("\(program.start, format: .dateTime.hour().minute()) – \(program.end, format: .dateTime.hour().minute())")
+                        Text(verbatim: "\(program.start.formatted(.dateTime.hour().minute().locale(locale))) – \(program.end.formatted(.dateTime.hour().minute().locale(locale)))")
                             .monospacedDigit().lineLimit(1)
                     }
                 }
@@ -196,7 +197,9 @@ struct PrototypeSearchSummary: View {
     var body: some View {
         HStack(spacing: PrototypeLayout.smallGap) {
             Text("\(channelCount) channels")
-            if let category { Text("in \(category)") }
+            if let category {
+                Text("in \(category)", comment: "Search summary: channels in the named category or genre. %@ is a category, not a time duration.")
+            }
         }
         .font(.subheadline)
         .foregroundStyle(palette.secondaryText)
