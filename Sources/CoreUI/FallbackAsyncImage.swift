@@ -484,9 +484,6 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
         Group {
             if let image {
                 content(Image(uiImage: image))
-                    #if os(tvOS)
-                    .modifier(NativeResolvedArtwork(image: image))
-                    #endif
             } else if resolved {
                 placeholder()
             } else {

@@ -81,7 +81,6 @@ private struct DetailArtworkTracking: ViewModifier {
 
 private struct NativeArtworkAnchor: UIViewRepresentable {
     let reference: DetailTransitionSourceReference
-    @Environment(\.nativeCardArtwork) private var artwork
 
     func makeUIView(context: Context) -> UIView {
         let view = UIView()
@@ -92,9 +91,6 @@ private struct NativeArtworkAnchor: UIViewRepresentable {
 
     func updateUIView(_ view: UIView, context: Context) {
         reference.nativeArtworkView = view
-        artwork?.clippingView = view
-        artwork?.clippingRadius = reference.cornerRadius
-        artwork?.owner?.setNeedsLayout()
     }
 }
 

@@ -16,17 +16,6 @@ public struct PlozzGlassCardModifier: ViewModifier {
 
     @Environment(\.plozzReduceTransparency) private var reduceTransparency
     @Environment(\.themePalette) private var palette
-    #if os(tvOS)
-    @Environment(\.nativeCardArtwork) private var nativeArtwork
-    #endif
-
-    private var drawsNativeSurface: Bool {
-        #if os(tvOS)
-        nativeArtwork != nil
-        #else
-        false
-        #endif
-    }
 
     public init(cornerRadius: CGFloat, isFocused: Bool, glassAtRest: Bool = true) {
         self.cornerRadius = cornerRadius
@@ -64,15 +53,7 @@ public struct PlozzGlassCardModifier: ViewModifier {
     public func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
 
-        if drawsNativeSurface {
-            content
-                .overlay {
-                    if glassAtRest, let border = palette.raised.border {
-                        shape.strokeBorder(border, lineWidth: palette.raised.borderWidth)
-                    }
-                }
-                .clipShape(shape)
-        } else if reduceTransparency {
+        if reduceTransparency {
             // Reduce Transparency on: never lean on translucency. At REST use the
             // shared elevation surface (identical to the glass branch below and to
             // every other card), so a card looks the same regardless of this

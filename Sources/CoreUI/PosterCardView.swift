@@ -169,9 +169,6 @@ public struct PosterCardView: View {
 
     public var body: some View {
         cardBody
-            #if os(tvOS)
-            .environment(\.nativeCardArtworkAllowed, !hideThumbnail || showsSpoilerSafePoster)
-            #endif
             // Hand this card's focus to the shared chrome drawn on its artwork
             // (progress bar, resume chip) so it settles at rest and comes to full
             // strength on focus. No-op off tvOS.
@@ -1468,23 +1465,11 @@ private struct CardFocusOwner: ViewModifier {
 
     func body(content: Content) -> some View {
         if style.usesSystemEffect {
-            content
-                .environment(\.systemCardFocusContext, SystemCardFocusContext(
-                    requestsFocus: isFocused.focusState.wrappedValue,
-                    isEnabled: isEnabled && parentEnabled,
-                    onFocus: { focused in
-                        if isFocused.observed.wrappedValue != focused {
-                            isFocused.observed.wrappedValue = focused
-                        }
-                    },
-                    action: action
-                ))
+            Button(action: action) { content }
+                .buttonStyle(.borderless)
+                .buttonBorderShape(.roundedRectangle(radius: cornerRadius))
                 .focused(isFocused.focusState)
-                .accessibilityElement(children: .combine)
-                .accessibilityAddTraits(.isButton)
-                .accessibilityAction {
-                    if isEnabled && parentEnabled { action() }
-                }
+                .disabled(!isEnabled || !parentEnabled)
         } else {
             content
                 .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))

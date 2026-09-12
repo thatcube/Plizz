@@ -205,31 +205,20 @@ released after returning, on a memory warning, or with the page's lifetime.
 Card focus has three independent options: System (native tvOS projection),
 Highlight (custom sheen/lean) and Outline (custom glass). Absent per-profile
 preferences use System; saved `highlight` and `outlined` values are not migrated.
-The System path uses `UIButton(type: .system)` with `setImage(_:for:)` and
-standard press handling. It does not override the built-in image view's focus
-effect or stack a separate button configuration treatment with it.
-No additional focusable image view, app-supplied scale, sheen, arrival lean,
-halo or settling task is added.
-Resolved artwork is composed into the button's image; only captions, badges and other live decorations stay in
-`overlayContentView` via `UIHostingConfiguration`. Drawing the opaque artwork in
-that overlay masks the native image's lighting. Artwork composition is reused
-until its decoded source or layout changes, not repeated per focus event.
-Spoiler-blurred artwork is excluded from transfer so its masking stays intact.
-Do not substitute SwiftUI
-`hoverEffect(.lift)` or `.highlight`: those omit the white ring from tvOS
-**Focus Style > High Contrast**, a separate setting from Increase Contrast.
-System skips SwiftUI rasterization so native focus and artwork anchors stay live.
-The horizontal rail, native button, image view and image overlay must not clip
-focus overflow. Rounded corners remain part of the artwork crop, not a clip on
-the outer focus container.
+The System path uses SwiftUI's native `.borderless` media button with Apple's
+`.hoverEffect(.highlight)` applied to its artwork. Despite the cross-platform
+API name, Apple documents its tvOS behavior as focus projection, specular light
+and remote-driven parallax. It is not the app's custom Highlight option and is
+not the scale-only `.lift` effect.
+There is no UIKit control wrapper, carrier bitmap, secondary focus image view,
+app-supplied focus scale, sheen, tilt or animation. Artwork remains live in its
+original SwiftUI rendering path. System skips card rasterization, and horizontal
+rails do not clip focus overflow. Rounded corners belong to the artwork, not to
+an outer focus-effect clip.
 Captions reserve clearance without an additional custom focus animation.
 
-Media-card focus uses `PlozzCardFocus`: native UIKit notifications update ordinary
-visual state, never the `FocusState` used for commands. Writing a native blur
-notification back to `FocusState` can clear the entire scope after UIKit has
-already moved to the next card, returning focus to the hero/default target.
-Explicit requests are consumed once and may wait for attachment/layout, but are
-not replayed during ordinary redraws. Raw `FocusState` surfaces with independent
+Media-card focus uses `PlozzCardFocus`, a wrapper around SwiftUI's `FocusState`;
+there is no bidirectional UIKit notification bridge. Surfaces with independent
 focus chrome, such as multiview picture controls, retain ordinary SwiftUI focus.
 `SystemDirectionalFocusTests` drives real remote arrows through production media
 rows with a preferred hero above, including horizontal scrolling, direction

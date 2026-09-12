@@ -167,9 +167,6 @@ public struct EpisodeColumnCard: View, Equatable {
             synopsisAtRest = true
         }
         .mediaItemContextMenu(for: item)
-        #if os(tvOS)
-        .environment(\.nativeCardArtworkAllowed, presentation.artworkTreatment == .visible && !presentation.isUpcoming)
-        #endif
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(presentation.accessibilityLabel)
     }
