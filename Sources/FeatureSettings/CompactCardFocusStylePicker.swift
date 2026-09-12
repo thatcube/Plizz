@@ -3,7 +3,7 @@ import SwiftUI
 import CoreModels
 import CoreUI
 
-/// The compact, in-Settings picker for what focus does to a card: a two-up row of
+/// The compact, in-Settings picker for what focus does to a card: a three-up row of
 /// preview cards (`PreviewCard` + `CardFocusStyleSwatch`) that share the detail
 /// pane's width, mirroring `CompactCardStylePicker` and
 /// `CompactWatchIndicatorPicker` so the three controls in the Cards pane read as

@@ -1624,14 +1624,14 @@ private struct LibraryCardView: View {
         }
         .padding(metrics.cardInset)
         .plozzGlassCard(cornerRadius: metrics.landscapeCardCornerRadius, isFocused: surfaceFocused)
-        .focusableCard(isFocused: $isFocused, cornerRadius: metrics.landscapeCardCornerRadius, action: action)
         .plozzCardRasterize(reduceTransparency: reduceTransparency)
-        .shadow(color: .black.opacity(isFocused ? 0.36 : 0.15), radius: isFocused ? 20 : 8, y: isFocused ? 10 : 4)
+        .plozzRestingCardShadow(isFocused: isFocused)
         .plozzCardFocusLift(
             isFocused: isFocused,
             cornerRadius: metrics.landscapeCardCornerRadius,
             outlineScale: PlozzTheme.Metrics.mediumFocusedCardScale
         )
+        .focusableCard(isFocused: $isFocused, cornerRadius: metrics.landscapeCardCornerRadius, action: action)
         .plozzCardFocusTransition(isFocused: isFocused)
     }
 
@@ -1663,7 +1663,7 @@ private struct LibraryCardView: View {
                 isFocused: isFocused
             )
             .frame(width: width)
-            .offset(y: isFocused ? 0 : -push)
+            .offset(y: focusStyle.usesSystemEffect || isFocused ? 0 : -push)
         }
         .padding(.horizontal, metrics.borderlessCardSideMargin)
         .focusableCard(isFocused: $isFocused, cornerRadius: metrics.landscapeCardCornerRadius, action: action)

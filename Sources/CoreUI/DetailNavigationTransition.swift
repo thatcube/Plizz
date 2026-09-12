@@ -53,6 +53,20 @@ public struct DetailTransitionArtworkLayout: Equatable {
     }
 }
 
+public extension View {
+    /// Measure the clipped artwork slot, not an aspect-fill image overflowing it.
+    func recordDetailTransitionArtwork(_ reference: DetailTransitionSourceReference) -> some View {
+        onGeometryChange(for: DetailTransitionArtworkLayout.self) {
+            DetailTransitionArtworkLayout(
+                frame: $0.frame(in: .named(reference.coordinateSpace)),
+                intrinsicSize: $0.size
+            )
+        } action: {
+            reference.recordArtworkFrame($0.frame, intrinsicSize: $0.intrinsicSize)
+        }
+    }
+}
+
 struct DetailTransitionSourceGeometry: Equatable {
     let frame: CGRect
     let cornerRadius: CGFloat
@@ -106,40 +120,6 @@ public final class DetailTransitionSourceReference {
         let unscaledWidth = intrinsicArtworkSize?.width ?? view?.bounds.width ?? frame.width
         let scale = unscaledWidth > 0 ? frame.width / unscaledWidth : 1
         return DetailTransitionSourceGeometry(frame: frame, cornerRadius: cornerRadius * scale)
-    }
-
-    func settledReturnGeometry(in window: UIWindow) async -> DetailTransitionSourceGeometry? {
-        if isFocused == nil { return geometry(in: window) }
-        let started = ContinuousClock.now
-        let deadline = started + .milliseconds(700)
-        var previous: DetailTransitionSourceGeometry?
-        var stableSamples = 0
-        repeat {
-            do { try await Task.sleep(for: .milliseconds(16)) }
-            catch is CancellationError { return nil }
-            catch {
-                PlozzLog.app.error("Return-card geometry wait failed: \(String(describing: error))")
-                return nil
-            }
-            window.layoutIfNeeded()
-            guard let current = geometry(in: window) else { return nil }
-            // A focus ease starts slowly: two nearly-identical early frames
-            // are not its endpoint. Observe the actual settled visual frame.
-            if isFocused == true, started.duration(to: .now) >= .milliseconds(200),
-               let previous,
-               abs(current.frame.minX - previous.frame.minX) < 0.1,
-               abs(current.frame.minY - previous.frame.minY) < 0.1,
-               abs(current.frame.width - previous.frame.width) < 0.1,
-               abs(current.frame.height - previous.frame.height) < 0.1 {
-                stableSamples += 1
-                if stableSamples >= 4 { return current }
-            } else {
-                stableSamples = 0
-            }
-            previous = current
-        } while ContinuousClock.now < deadline
-        PlozzLog.app.debug("Return-card geometry did not settle; using a nonspatial return")
-        return nil
     }
 
     func restoreFocus(in window: UIWindow, preferred: (any UIFocusEnvironment)?) {
@@ -291,17 +271,19 @@ public enum DetailTransitionNavigation {
         guard suppressed[key] == nil else { return }
         if pending[key]?.itemKey == item.stablePresentationID { return }
         pending.removeValue(forKey: key)?.discard()
-        let screen = artworkSnapshot ?? DetailTransitionSnapshot.image(of: window)
+        let screen = artworkSnapshot.map(DetailTransitionSurface.init(image:))
+            ?? DetailTransitionSnapshot.surface(of: window)
         let geometry = source?.geometry(in: window)
         let frame = geometry?.frame
-        let card = frame.flatMap { DetailTransitionSnapshot.crop(screen, to: $0) }
+        let card = frame.map { DetailTransitionSnapshot.surface(of: window, frame: $0) }
         let entry = PendingDetailEntrance(
             window: window, itemKey: item.stablePresentationID,
-            source: card == nil ? nil : source, cardImage: card, sourceFrame: frame,
+            source: card == nil ? nil : source, card: card, sourceFrame: frame,
             sourceCornerRadius: geometry?.cornerRadius ?? 0, screen: screen
         )
         pending[key] = entry
         entry.overlay.destination.image = cachedDestinationArtwork(for: item)
+        entry.start()
         // A direct-play route must never leave a prepared navigation cover behind.
         entry.expiry = Task { @MainActor [weak entry] in
             do { try await Task.sleep(for: .seconds(1)) }
@@ -351,32 +333,53 @@ final class PendingDetailEntrance {
     let source: DetailTransitionSourceReference?
     let sourceFrame: CGRect?
     let sourceCornerRadius: CGFloat
-    let cardImage: UIImage?
+    let card: DetailTransitionSurface?
     weak var focusedItem: (any UIFocusEnvironment)?
     let overlay: DetailTransitionOverlay
     let inputGuard: DetailTransitionInputGuard
     var expiry: Task<Void, Never>?
+    var animator: UIViewPropertyAnimator?
+    private(set) var landedAt: CFTimeInterval?
+    var onLanded: (() -> Void)?
+    let windowSize: CGSize
 
     init(
         window: UIWindow, itemKey: String, source: DetailTransitionSourceReference?,
-        cardImage: UIImage?, sourceFrame: CGRect?, sourceCornerRadius: CGFloat, screen: UIImage
+        card: DetailTransitionSurface?, sourceFrame: CGRect?, sourceCornerRadius: CGFloat,
+        screen: DetailTransitionSurface
     ) {
         self.itemKey = itemKey
         self.source = source
         self.sourceFrame = sourceFrame
         self.sourceCornerRadius = sourceCornerRadius
-        self.cardImage = cardImage
+        self.card = card
+        windowSize = window.bounds.size
         focusedItem = UIFocusSystem.focusSystem(for: window)?.focusedItem
-        overlay = DetailTransitionOverlay(screen: screen, card: cardImage)
+        overlay = DetailTransitionOverlay(screen: screen, card: card)
         overlay.frame = window.bounds
         window.addSubview(overlay)
         inputGuard = DetailTransitionInputGuard()
         window.addGestureRecognizer(inputGuard)
     }
 
+    func start() {
+        overlay.configureOpening(sourceFrame: sourceFrame, cornerRadius: sourceCornerRadius)
+        animator = overlay.animateOpening(duration: DetailEntranceTiming().zoom) { [weak self] in
+            guard let self else { return }
+            landedAt = CACurrentMediaTime()
+            animator = nil
+            onLanded?()
+        }
+        // Submit motion before the router constructs or loads the destination.
+        CATransaction.flush()
+    }
+
     func discard() {
         expiry?.cancel()
         expiry = nil
+        animator?.stopAnimation(true)
+        animator = nil
+        onLanded = nil
         overlay.removeFromSuperview()
         inputGuard.view?.removeGestureRecognizer(inputGuard)
     }
@@ -388,7 +391,7 @@ public final class TVDetailEntranceSession {
     public private(set) var isClosing = false
     public private(set) var blocksNavigation = true
     /// Retained only for the return transition, never as the detail backdrop.
-    public private(set) var fallbackArtwork: UIImage?
+    private(set) var returnArtwork: DetailTransitionSurface?
     public let timing: DetailEntranceTiming
     @ObservationIgnored private var hasStarted = false
     @ObservationIgnored private weak var window: UIWindow?
@@ -400,6 +403,10 @@ public final class TVDetailEntranceSession {
     @ObservationIgnored private var animator: UIViewPropertyAnimator?
     @ObservationIgnored private var sequence: Task<Void, Never>?
     @ObservationIgnored private var earlyDestinationArtwork: UIImage?
+    @ObservationIgnored private var opening: PendingDetailEntrance?
+    @ObservationIgnored private var activationGeometry: DetailTransitionSourceGeometry?
+    @ObservationIgnored private var activationWindowSize: CGSize?
+    @ObservationIgnored private var artworkHasLanded = false
 
     public init(timing: DetailEntranceTiming = DetailEntranceTiming()) {
         self.timing = timing
@@ -436,55 +443,51 @@ public final class TVDetailEntranceSession {
         stage = .artwork
         let pending = DetailTransitionNavigation.take(in: window)
         source = pending?.source
-        sourceKey = source?.itemKey
-        fallbackArtwork = pending?.cardImage
+        sourceKey = pending?.itemKey
+        returnArtwork = pending?.card
+        activationGeometry = pending?.sourceFrame.map {
+            DetailTransitionSourceGeometry(frame: $0, cornerRadius: pending?.sourceCornerRadius ?? 0)
+        }
+        activationWindowSize = pending?.windowSize
         returnFocus = pending?.focusedItem
         let cover = pending?.overlay
-            ?? DetailTransitionOverlay(screen: DetailTransitionSnapshot.image(of: window), card: nil)
+            ?? DetailTransitionOverlay(screen: DetailTransitionSnapshot.surface(of: window), card: nil)
         cover.frame = window.bounds
         if cover.superview == nil { window.addSubview(cover) }
         overlay = cover
         inputGuard = pending?.inputGuard ?? installInputGuard(in: window)
-        cover.configureOpening(
-            sourceFrame: pending?.sourceFrame,
-            cornerRadius: pending?.sourceCornerRadius ?? 0
-        )
         cover.destination.image = earlyDestinationArtwork ?? cover.destination.image
         earlyDestinationArtwork = nil
-        let animation = UIViewPropertyAnimator(duration: timing.zoom, curve: .easeInOut)
-        animation.addAnimations {
-            cover.cardContainer.frame = cover.bounds
-            cover.cardContainer.layer.cornerRadius = 0
+        if let pending {
+            opening = pending
+            pending.onLanded = { [weak self] in self?.land() }
+            if pending.landedAt != nil { land() }
+        } else {
+            cover.configureOpening(sourceFrame: nil, cornerRadius: 0)
+            animator = cover.animateOpening(duration: timing.zoom) { [weak self] in self?.land() }
         }
-        // The thumbnail is gone in the first third, not held until the card lands.
-        // The destination image travels in the same frame, then dissolves into
-        // the real page's shaded artwork over the final quarter.
-        UIView.animateKeyframes(withDuration: timing.zoom, delay: 0, options: [.calculationModeLinear]) {
-            UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.3) {
-                cover.card.alpha = 0
-                cover.screen.alpha = 0
-                cover.destination.alpha = 1
-            }
-            UIView.addKeyframe(withRelativeStartTime: 0.75, relativeDuration: 0.25) {
-                cover.destination.alpha = 0
-            }
-        }
-        animation.addCompletion { [weak self, weak cover] position in
-            guard let self, !self.isClosing, position == .end else { return }
-            cover?.removeFromSuperview()
-            self.overlay = nil
-            self.animator = nil
-            self.startForegroundSequence()
-        }
-        animator = animation
-        animation.startAnimation()
     }
 
-    private func startForegroundSequence() {
+    private func land() {
+        guard !isClosing else { return }
+        artworkHasLanded = true
+        let elapsed = opening?.landedAt.map { CACurrentMediaTime() - $0 } ?? 0
+        opening?.onLanded = nil
+        opening = nil
+        let cover = overlay
+        UIView.animate(withDuration: 0.1, animations: { cover?.alpha = 0 }) { [weak self] _ in
+            cover?.removeFromSuperview()
+            if self?.overlay === cover { self?.overlay = nil }
+        }
+        animator = nil
+        startForegroundSequence(pause: max(0, timing.artworkPause - elapsed))
+    }
+
+    private func startForegroundSequence(pause: TimeInterval) {
         sequence = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                try await Task.sleep(for: .seconds(timing.artworkPause))
+                try await Task.sleep(for: .seconds(pause))
                 stage = .logo
                 try await Task.sleep(for: .seconds(timing.stagger))
                 stage = .metadata
@@ -509,7 +512,7 @@ public final class TVDetailEntranceSession {
         guard !isClosing else { return }
         guard let window, hasStarted, !UIAccessibility.isReduceMotionEnabled else {
             finishImmediately()
-            fallbackArtwork = nil
+            returnArtwork = nil
             source = nil
             dismiss()
             return
@@ -518,59 +521,66 @@ public final class TVDetailEntranceSession {
         blocksNavigation = true
         sequence?.cancel()
         sequence = nil
-        let interrupted = overlay != nil
-        let screen = DetailTransitionSnapshot.image(of: window)
+        let interrupted = !artworkHasLanded
+        let screen = DetailTransitionSnapshot.surface(of: window)
+        opening?.onLanded = nil
+        opening?.animator?.stopAnimation(true)
+        opening = nil
         animator?.stopAnimation(true)
         animator = nil
         overlay?.removeFromSuperview()
-        let cover = DetailTransitionOverlay(screen: screen, card: fallbackArtwork)
+        let cover = DetailTransitionOverlay(screen: screen, card: returnArtwork)
         cover.frame = window.bounds
+        cover.backgroundColor = .clear
         cover.cardContainer.frame = cover.bounds
         cover.card.alpha = 0
         window.addSubview(cover)
         overlay = cover
         if inputGuard == nil { inputGuard = installInputGuard(in: window) }
+        // The source is hidden until the native pop, so its visibility is not
+        // a prerequisite. Its captured focused shape is already the right target.
+        let validSource = source != nil && source?.itemKey == sourceKey
+            && activationWindowSize == window.bounds.size
+        let target = validSource ? activationGeometry : nil
+        let animation = UIViewPropertyAnimator(duration: timing.reverse, curve: .easeInOut)
+        if let target, returnArtwork != nil, !interrupted {
+            cover.cardContainer.addSubview(cover.screen)
+            cover.screen.frame = cover.cardContainer.bounds
+            cover.screen.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            cover.layoutIfNeeded()
+            animation.addAnimations {
+                cover.cardContainer.frame = target.frame
+                cover.cardContainer.layer.cornerRadius = target.cornerRadius
+                cover.screen.alpha = 0
+                cover.card.alpha = 1
+            }
+        } else {
+            animation.addAnimations { cover.alpha = 0 }
+        }
+        animation.addCompletion { [self, cover] _ in
+            cover.removeFromSuperview()
+            overlay = nil
+            animator = nil
+            releaseInput()
+            returnArtwork = nil
+            source = nil
+            activationGeometry = nil
+            activationWindowSize = nil
+            stage = .complete
+            isClosing = false
+            blocksNavigation = false
+            sequence = nil
+        }
+        animator = animation
+        animation.startAnimation()
+        CATransaction.flush()
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) { dismiss() }
-        sequence = Task { @MainActor [self] in
-            // Let the popped stack restore its source's real, current geometry.
+        sequence = Task { @MainActor [weak self] in
             await Task.yield()
-            window.layoutIfNeeded()
-            let validSource = source?.itemKey == sourceKey ? source : nil
-            validSource?.restoreFocus(in: window, preferred: returnFocus)
-            let settled = await validSource?.settledReturnGeometry(in: window)
-            guard !Task.isCancelled, isClosing else { return }
-            let target = validSource?.itemKey == sourceKey ? settled : nil
-            let animation = UIViewPropertyAnimator(duration: timing.reverse, curve: .easeInOut)
-            if let target, fallbackArtwork != nil, !interrupted {
-                // Both layers travel together, crossfading rather than stretching either image.
-                cover.cardContainer.addSubview(cover.screen)
-                cover.screen.frame = cover.cardContainer.bounds
-                cover.screen.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-                animation.addAnimations {
-                    cover.cardContainer.frame = target.frame
-                    cover.cardContainer.layer.cornerRadius = target.cornerRadius
-                    cover.screen.alpha = 0
-                    cover.card.alpha = 1
-                }
-            } else {
-                animation.addAnimations { cover.alpha = 0 }
-            }
-            animation.addCompletion { [self, cover] _ in
-                cover.removeFromSuperview()
-                overlay = nil
-                animator = nil
-                releaseInput()
-                fallbackArtwork = nil
-                source = nil
-                stage = .complete
-                isClosing = false
-                blocksNavigation = false
-                sequence = nil
-            }
-            animator = animation
-            animation.startAnimation()
+            guard let self, isClosing, source?.itemKey == sourceKey else { return }
+            source?.restoreFocus(in: window, preferred: returnFocus)
         }
     }
 
@@ -585,6 +595,9 @@ public final class TVDetailEntranceSession {
         if !wasStarted, let window { DetailTransitionNavigation.take(in: window)?.discard() }
         sequence?.cancel()
         sequence = nil
+        opening?.onLanded = nil
+        opening?.animator?.stopAnimation(true)
+        opening = nil
         animator?.stopAnimation(true)
         animator = nil
         overlay?.removeFromSuperview()
@@ -712,15 +725,16 @@ private final class DetailEntranceAnchorView: UIView {
 
 @MainActor
 final class DetailTransitionOverlay: UIView {
-    let screen: UIImageView
-    let card: UIImageView
+    let screen: DetailTransitionSurface
+    let card: DetailTransitionSurface
     let destination = UIImageView()
     let cardContainer = UIView()
 
-    init(screen: UIImage, card: UIImage?) {
-        self.screen = UIImageView(image: screen)
-        self.card = UIImageView(image: card)
+    init(screen: DetailTransitionSurface, card: DetailTransitionSurface?) {
+        self.screen = screen
+        self.card = card ?? DetailTransitionSurface()
         super.init(frame: .zero)
+        backgroundColor = .black
         isUserInteractionEnabled = false
         accessibilityElementsHidden = true
         self.screen.contentMode = .scaleAspectFill
@@ -738,6 +752,7 @@ final class DetailTransitionOverlay: UIView {
         cardContainer.addSubview(destination)
         self.card.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         destination.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        self.card.alpha = 1
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -756,10 +771,92 @@ final class DetailTransitionOverlay: UIView {
         card.frame = cardContainer.bounds
         destination.frame = cardContainer.bounds
     }
+
+    func animateOpening(duration: TimeInterval, completion: @escaping () -> Void) -> UIViewPropertyAnimator {
+        layoutIfNeeded()
+        let animation = UIViewPropertyAnimator(duration: duration, curve: .easeInOut)
+        animation.addAnimations {
+            self.cardContainer.frame = self.bounds
+            self.cardContainer.layer.cornerRadius = 0
+        }
+        UIView.animateKeyframes(withDuration: duration, delay: 0, options: [.calculationModeLinear]) {
+            UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.3) {
+                self.card.alpha = 0
+                self.screen.alpha = 0
+                self.destination.alpha = 1
+            }
+        }
+        animation.addCompletion { position in
+            if position == .end { completion() }
+        }
+        animation.startAnimation()
+        return animation
+    }
+}
+
+/// A render-server snapshot avoids rasterizing the complete Home hierarchy on
+/// the main thread. Uniform scaling crops the snapshot instead of stretching it.
+@MainActor
+final class DetailTransitionSurface: UIView {
+    private let capturedView: UIView
+    let captureSize: CGSize
+    let image: UIImage?
+
+    init() {
+        capturedView = UIView()
+        captureSize = .zero
+        image = nil
+        super.init(frame: .zero)
+        clipsToBounds = true
+    }
+
+    init(image: UIImage) {
+        self.image = image
+        capturedView = UIImageView(image: image)
+        captureSize = image.size
+        super.init(frame: .zero)
+        clipsToBounds = true
+        addSubview(capturedView)
+    }
+
+    init(snapshot: UIView, size: CGSize) {
+        image = nil
+        capturedView = snapshot
+        captureSize = size
+        super.init(frame: .zero)
+        clipsToBounds = true
+        addSubview(capturedView)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard captureSize.width > 0, captureSize.height > 0 else { return }
+        let scale = max(bounds.width / captureSize.width, bounds.height / captureSize.height)
+        capturedView.bounds = CGRect(origin: .zero, size: captureSize)
+        capturedView.center = CGPoint(x: bounds.midX, y: bounds.midY)
+        capturedView.transform = CGAffineTransform(scaleX: scale, y: scale)
+    }
 }
 
 @MainActor
 enum DetailTransitionSnapshot {
+    static func surface(of window: UIWindow, frame: CGRect? = nil) -> DetailTransitionSurface {
+        let frame = frame ?? window.bounds
+        let root = window.rootViewController?.viewIfLoaded ?? window
+        let rect = root.convert(frame, from: window)
+        if let snapshot = root.resizableSnapshotView(
+            from: rect, afterScreenUpdates: false, withCapInsets: .zero
+        ) {
+            return DetailTransitionSurface(snapshot: snapshot, size: frame.size)
+        }
+        PlozzLog.app.debug("No rendered transition snapshot; using the neutral surface without blocking navigation")
+        let result = DetailTransitionSurface()
+        result.backgroundColor = window.backgroundColor ?? .black
+        return result
+    }
+
     static func image(of window: UIWindow) -> UIImage {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1

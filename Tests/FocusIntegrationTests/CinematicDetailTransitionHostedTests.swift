@@ -11,22 +11,22 @@ final class CinematicDetailTransitionHostedTests: XCTestCase {
         let fixture = try await makeFixture()
         defer { fixture.close() }
         let sourceFrame = try XCTUnwrap(fixture.model.source.visibleFrame(in: fixture.window))
-        fixture.model.open(in: fixture.window, usesCard: true)
+        fixture.model.source.prepare(for: fixture.model.item)
         let initial = try XCTUnwrap(fixture.window.subviews.compactMap { $0 as? DetailTransitionOverlay }.first)
-        // Preparation covers navigation synchronously, before the destination appears.
-        XCTAssertEqual(initial.screen.alpha, 1)
-        try await waitUntil { fixture.model.session != nil }
-        let session = try XCTUnwrap(fixture.model.session)
+        // Motion must already be running before the destination is constructed.
         try await waitUntil {
             guard let frame = initial.cardContainer.layer.presentation()?.frame else { return false }
             return frame.width > sourceFrame.width + 30 && frame.width < fixture.window.bounds.width - 30
         }
+        fixture.model.path.append(1)
+        try await waitUntil { fixture.model.session != nil }
+        let session = try XCTUnwrap(fixture.model.session)
         XCTAssertEqual(initial.card.contentMode, .scaleAspectFill)
         XCTAssertTrue(session.blocksNavigation)
         try await waitUntil { self.overlays(in: fixture.window).isEmpty }
         XCTAssertEqual(session.stage, .artwork)
         XCTAssertTrue(session.blocksNavigation)
-        XCTAssertNotNil(session.fallbackArtwork)
+        XCTAssertNotNil(session.returnArtwork)
         let hidden = try pixel(fixture.window, at: try XCTUnwrap(fixture.model.frames[.logo]))
         XCTAssertGreaterThan(hidden[2], hidden[0] + 40)
         try await waitUntil { session.stage == .complete && fixture.model.stages.last == .complete }
@@ -54,7 +54,7 @@ final class CinematicDetailTransitionHostedTests: XCTestCase {
         try await waitUntil { self.overlays(in: fixture.window).isEmpty }
         XCTAssertTrue(fixture.model.path.isEmpty)
         XCTAssertTrue(inputGuards(in: fixture.window).isEmpty)
-        XCTAssertNil(session.fallbackArtwork)
+        XCTAssertNil(session.returnArtwork)
         XCTAssertFalse(session.blocksNavigation)
         XCTAssertNotNil(fixture.model.source.visibleFrame(in: fixture.window))
         fixture.model.source.restoreFocus(in: fixture.window, preferred: nil)
@@ -69,7 +69,7 @@ final class CinematicDetailTransitionHostedTests: XCTestCase {
         fixture.model.open(in: fixture.window, usesCard: false)
         try await waitUntil { fixture.model.session != nil }
         let session = try XCTUnwrap(fixture.model.session)
-        XCTAssertNil(session.fallbackArtwork)
+        XCTAssertNil(session.returnArtwork)
         try await waitUntil { self.overlays(in: fixture.window).isEmpty }
         XCTAssertEqual(session.stage, .artwork)
         try await waitUntil { session.stage == .complete && fixture.model.stages.last == .complete }
@@ -92,7 +92,7 @@ final class CinematicDetailTransitionHostedTests: XCTestCase {
         XCTAssertTrue(fixture.model.path.isEmpty)
         XCTAssertTrue(inputGuards(in: fixture.window).isEmpty)
         XCTAssertFalse(fixture.model.stages.contains(.logo))
-        XCTAssertNil(session.fallbackArtwork)
+        XCTAssertNil(session.returnArtwork)
     }
 
     func testSourceReplacementUsesNonspatialReturnInsteadOfTheWrongCard() async throws {
@@ -141,6 +141,43 @@ final class CinematicDetailTransitionHostedTests: XCTestCase {
         XCTAssertTrue(blocker.allowedTouchTypes.contains(NSNumber(value: UITouch.TouchType.indirect.rawValue)))
     }
 
+    func testLateDestinationDoesNotRestartTheAlreadyRunningZoom() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.close() }
+        fixture.model.source.prepare(for: fixture.model.item)
+        let pendingCover = try XCTUnwrap(overlays(in: fixture.window).first)
+        try await Task.sleep(for: .milliseconds(650))
+        XCTAssertEqual(pendingCover.cardContainer.layer.presentation()?.frame.width ?? 0, 1920, accuracy: 1)
+        fixture.model.path.append(1)
+        try await waitUntil { fixture.model.session != nil }
+        let session = try XCTUnwrap(fixture.model.session)
+        try await waitUntil { self.overlays(in: fixture.window).isEmpty }
+        XCTAssertNotNil(session.returnArtwork)
+        XCTAssertEqual(pendingCover.cardContainer.frame, fixture.window.bounds)
+        session.close { fixture.model.path.removeLast() }
+        let reverse = try XCTUnwrap(overlays(in: fixture.window).first)
+        XCTAssertLessThan(reverse.cardContainer.frame.width, 1920, "Back must assign its zoom target synchronously.")
+        try await waitUntil { self.overlays(in: fixture.window).isEmpty }
+    }
+
+    func testBackStartsShrinkingEvenWhileSourceFocusIsUnavailable() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.close() }
+        let original = try XCTUnwrap(fixture.model.source.geometry(in: fixture.window))
+        fixture.model.open(in: fixture.window, usesCard: true)
+        try await waitUntil { fixture.model.session?.stage == .complete }
+        let session = try XCTUnwrap(fixture.model.session)
+        fixture.model.source.isFocused = false
+        fixture.model.source.view = nil
+        session.close { fixture.model.path.removeLast() }
+        let reverse = try XCTUnwrap(overlays(in: fixture.window).first)
+        XCTAssertEqual(reverse.cardContainer.frame, original.frame)
+        XCTAssertEqual(reverse.cardContainer.layer.cornerRadius, original.cornerRadius)
+        XCTAssertEqual(reverse.backgroundColor, .clear, "The returning Home page must show outside the shrinking artwork.")
+        try await waitUntil { self.overlays(in: fixture.window).isEmpty }
+        XCTAssertTrue(inputGuards(in: fixture.window).isEmpty)
+    }
+
     func testDirectPlaybackDoesNotPrepareOrRunADetailEntrance() async throws {
         let fixture = try await makeFixture()
         defer { fixture.close() }
@@ -150,7 +187,7 @@ final class CinematicDetailTransitionHostedTests: XCTestCase {
         try await waitUntil { fixture.model.session?.stage == .complete }
         XCTAssertTrue(overlays(in: fixture.window).isEmpty)
         XCTAssertTrue(inputGuards(in: fixture.window).isEmpty)
-        XCTAssertNil(fixture.model.session?.fallbackArtwork)
+        XCTAssertNil(fixture.model.session?.returnArtwork)
     }
 
     func testCoveredParentCannotDiscardItsChildsPreparedTransition() async throws {
@@ -216,6 +253,7 @@ final class CinematicDetailTransitionHostedTests: XCTestCase {
                 window.rootViewController = host
                 window.makeKeyAndVisible()
                 host.view.layoutIfNeeded()
+                try await Task.sleep(for: .milliseconds(150))
                 defer {
                     DetailTransitionNavigation.take(in: window)?.discard()
                     window.isHidden = true
@@ -234,9 +272,8 @@ final class CinematicDetailTransitionHostedTests: XCTestCase {
                 XCTAssertLessThan(artwork.maxY, wholeCard.maxY - 10, "The transition must not enlarge the caption")
                 source.prepare(for: item)
                 let cover = try XCTUnwrap(overlays(in: window).first)
-                let image = try XCTUnwrap(cover.card.image)
-                XCTAssertEqual(image.size.width, artwork.width, accuracy: 1)
-                XCTAssertEqual(image.size.height, artwork.height, accuracy: 1)
+                XCTAssertEqual(cover.card.captureSize.width, artwork.width, accuracy: 1)
+                XCTAssertEqual(cover.card.captureSize.height, artwork.height, accuracy: 1)
             }
         }
     }
@@ -270,6 +307,7 @@ final class CinematicDetailTransitionHostedTests: XCTestCase {
             .first { $0.activationState == .foregroundActive })
         let fixture = CinematicFixtureWindow(scene: scene)
         try await waitUntil { fixture.model.source.visibleFrame(in: fixture.window) != nil }
+        try await Task.sleep(for: .milliseconds(150))
         return fixture
     }
 

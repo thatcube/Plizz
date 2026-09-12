@@ -183,10 +183,37 @@ first third of the zoom and is never reused as a loading backdrop. The resolved
 detail image joins the expansion as soon as it is available. Reverse endpoints
 are compared against rendered focused-artwork pixels for framed/borderless and
 outlined/highlight cards; corner radii scale with the artwork and use continuous
-corners. Back restores card focus under the cover before measuring its settled
-geometry, with a bounded nonspatial fallback if the source cannot settle.
+corners. The source's focused rectangle and radius are captured at activation;
+Back starts toward that shape immediately while native focus restores underneath.
+A replaced source or changed window size uses a nonspatial fallback. A temporarily
+unrealized source still returns to its captured shape without waiting for focus.
 Episode previews stay drawn but cannot take entry focus during a whole-show
 entrance; episode-context opens retain their existing initial-focus behavior.
+
+Opening motion starts in the card/router activation, before creating the detail
+page, and a late destination adopts that in-flight entrance instead of replaying
+it. Render-server snapshots avoid a full-window bitmap draw on the main thread.
+The hosted tests also delay destination mounting and withhold return focus to
+verify that neither creates a new pre-animation wait.
+
+Card focus has three independent options: System (native tvOS projection),
+Highlight (custom sheen/lean) and Outline (custom glass). Absent per-profile
+preferences use System; saved `highlight` and `outlined` values are not migrated.
+The System path must not instantiate custom focus growth, sheen, lean, halo or
+settling tasks. Resting surfaces and shadows remain unchanged. Projection is
+outside rasterization, inside the focus owner, and uses the platform's explicit
+border shape so circular portraits do not acquire a square plate. Captions
+reserve clearance without adding another focus animation.
+
+Hosted coverage includes actual projected circular artwork, framed/borderless
+return geometry and loading-row overflow. These are correctness checks, **not
+Apple TV performance evidence**. Before calling System an improvement, compare
+all three options on the same physical TV, profile, warm artwork and navigation
+sequence (horizontal/vertical moves and rapid reversals). Use the
+[performance playbook](performance-debugging.md) to compare hitch ratio, frame
+times, main-thread stalls and memory, while checking clipping, captions and
+Reduce Motion. Keep Home movement/backdrop timings and networking fixed in the
+comparison; do not remove either custom option based on simulator results.
 
 ## Guards that run before the compile
 

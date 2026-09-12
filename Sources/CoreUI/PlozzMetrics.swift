@@ -194,7 +194,7 @@ public struct PlozzMetrics: Equatable, Sendable {
     /// own offset must both come from here, or the card's footprint changes with
     /// focus and the whole row shifts.
     public func focusCaptionPush(for focusStyle: CardFocusStyle) -> CGFloat {
-        guard !focusStyle.drawsFocusOutline else { return focusCaptionPush }
+        guard focusStyle == .highlight else { return focusCaptionPush }
         return (focusCaptionPush * PlozzTheme.Metrics.highlightCaptionPushRatio).rounded()
     }
 

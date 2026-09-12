@@ -164,14 +164,21 @@ public struct PlozzCardButtonStyle: ButtonStyle {
         let cornerRadius: CGFloat
         let focusedScale: CGFloat
         @Environment(\.isFocused) private var isFocused
+        @Environment(\.plozzCardFocusStyle) private var focusStyle
 
         var body: some View {
-            configuration.label
-                .plozzGlassCard(cornerRadius: cornerRadius, isFocused: isFocused)
-                .shadow(color: .black.opacity(isFocused ? 0.36 : 0), radius: 20, y: 10)
-                .scaleEffect(isFocused ? (configuration.isPressed ? focusedScale * 0.97 : focusedScale) : 1)
-                .animation(.easeOut(duration: 0.18), value: isFocused)
-                .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            if focusStyle.usesSystemEffect {
+                configuration.label
+                    .plozzGlassCard(cornerRadius: cornerRadius, isFocused: false)
+                    .plozzSystemCardProjection(cornerRadius: cornerRadius)
+            } else {
+                configuration.label
+                    .plozzGlassCard(cornerRadius: cornerRadius, isFocused: isFocused)
+                    .shadow(color: .black.opacity(isFocused ? 0.36 : 0), radius: 20, y: 10)
+                    .scaleEffect(isFocused ? (configuration.isPressed ? focusedScale * 0.97 : focusedScale) : 1)
+                    .animation(.easeOut(duration: 0.18), value: isFocused)
+                    .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            }
         }
     }
 }
@@ -213,7 +220,7 @@ public extension View {
         focusedScale: CGFloat = PlozzTheme.Metrics.mediumFocusedCardScale
     ) -> some View {
         buttonStyle(PlozzCardButtonStyle(cornerRadius: cornerRadius, focusedScale: focusedScale))
-            .focusEffectDisabled()
+            .plozzCardFocusEffect()
     }
 
     /// Flattens a card's layer tree to reduce GPU offscreen render passes.
@@ -256,6 +263,7 @@ public struct PlozzFocusableCardModifier: ViewModifier {
     @FocusState private var focused: Bool
     @Environment(\.themePalette) private var palette
     @Environment(\.plozzReduceTransparency) private var reduceTransparency
+    @Environment(\.plozzCardFocusStyle) private var focusStyle
 
     public init(
         cornerRadius: CGFloat,
@@ -267,17 +275,24 @@ public struct PlozzFocusableCardModifier: ViewModifier {
 
     public func body(content: Content) -> some View {
         #if os(tvOS)
-        content
-            .background { surface }
-            .focusable(true)
-            .focused($focused)
-            .focusEffectDisabled()
-            // Read-only cards lift too. Focus should always be legible as
-            // movement, not just a change of surface — otherwise the information
-            // sections read as inert while every other card on the page responds.
-            .scaleEffect(focused ? PlozzTheme.Metrics.readOnlyFocusedCardScale : 1)
-            .zIndex(focused ? 1 : 0)
-            .animation(.easeOut(duration: 0.18), value: focused)
+        if focusStyle.usesSystemEffect {
+            content
+                .background { surface }
+                .plozzSystemCardProjection(cornerRadius: cornerRadius)
+                .focusable(true)
+                .focused($focused)
+                .plozzCardFocusEffect()
+                .zIndex(focused ? 1 : 0)
+        } else {
+            content
+                .background { surface }
+                .focusable(true)
+                .focused($focused)
+                .focusEffectDisabled()
+                .scaleEffect(focused ? PlozzTheme.Metrics.readOnlyFocusedCardScale : 1)
+                .zIndex(focused ? 1 : 0)
+                .animation(.easeOut(duration: 0.18), value: focused)
+        }
         #else
         content.background { surface }
         #endif
@@ -292,7 +307,7 @@ public struct PlozzFocusableCardModifier: ViewModifier {
         let surfaceCorner = cornerRadius
         let shape = RoundedRectangle(cornerRadius: surfaceCorner, style: .continuous)
 
-        if focused {
+        if focused && !focusStyle.usesSystemEffect {
             if reduceTransparency {
                 // Reduce Transparency: the glass path falls back to a solid WHITE
                 // lift, which whites-out a text card (light content text becomes

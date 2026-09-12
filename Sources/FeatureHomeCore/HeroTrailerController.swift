@@ -260,6 +260,7 @@ public final class HeroTrailerController {
     /// Captures the currently displayed video frame for a seamless layer handoff.
     /// Failure is harmless (the detail layer falls back to its normal background).
     public func captureHandoffFrame() async {
+        let capturedItem = player.currentItem
         let itemTime = player.currentTime()
         // Fast path: use the live decoded pixel buffer when available.
         if let videoOutput,
@@ -274,10 +275,9 @@ public final class HeroTrailerController {
             }
         }
 
-        // Reliable fallback: generate the exact current frame from the already
-        // loaded asset before pushing detail. Navigation waits for this one frame,
-        // eliminating the race where a missing live-output snapshot exposed art.
-        guard let asset = player.currentItem?.asset else {
+        // Decode concurrently with navigation; ignore a frame from a player item
+        // that was replaced while the generator was working.
+        guard let asset = capturedItem?.asset else {
             handoffImage = nil
             return
         }
@@ -293,8 +293,11 @@ public final class HeroTrailerController {
         )
         do {
             let generated = try await generator.image(at: itemTime)
+            guard player.currentItem === capturedItem else { return }
             handoffImage = UIImage(cgImage: generated.image)
         } catch {
+            guard player.currentItem === capturedItem else { return }
+            PlozzLog.app.debug("Hero trailer handoff frame unavailable: \(String(describing: error))")
             handoffImage = nil
         }
     }

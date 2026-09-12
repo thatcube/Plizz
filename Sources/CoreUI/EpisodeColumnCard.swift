@@ -38,6 +38,7 @@ public struct EpisodeColumnCard: View, Equatable {
     @State private var synopsisAtRest = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.plozzWatchStatusIndicator) private var watchStatusIndicator
+    @Environment(\.plozzCardFocusStyle) private var focusStyle
     @Environment(\.themePalette) private var palette
 
     private let metrics = PlozzMetrics.standard
@@ -140,7 +141,7 @@ public struct EpisodeColumnCard: View, Equatable {
                 )
                 .padding(.top, 10)
             }
-            .offset(y: reduceMotion || isFocused ? 0 : -metrics.focusCaptionPush)
+            .offset(y: reduceMotion || focusStyle.usesSystemEffect || isFocused ? 0 : -metrics.focusCaptionPush)
         }
         .frame(width: Self.artworkSize.width, alignment: .leading)
         .padding(.horizontal, Self.sideMargin)

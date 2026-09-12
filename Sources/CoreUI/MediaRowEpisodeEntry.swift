@@ -78,6 +78,7 @@ struct EpisodeRowEntryPlaceholder: View {
     var isFocused = false
     @Environment(\.themePalette) private var palette
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.plozzCardFocusStyle) private var focusStyle
     private let metrics = PlozzMetrics.standard
 
     var body: some View {
@@ -126,7 +127,7 @@ struct EpisodeRowEntryPlaceholder: View {
                 .frame(height: 24, alignment: .leading)
             }
             .padding(.top, metrics.landscapeCaptionTopSpacing + metrics.focusCaptionPush)
-            .offset(y: reduceMotion || isFocused ? 0 : -metrics.focusCaptionPush)
+            .offset(y: reduceMotion || focusStyle.usesSystemEffect || isFocused ? 0 : -metrics.focusCaptionPush)
         }
         .frame(width: EpisodeColumnCard.artworkSize.width, alignment: .leading)
         .padding(.horizontal, EpisodeColumnCard.sideMargin)

@@ -286,32 +286,27 @@ struct HomeTab: View {
                     // server picker), so best-source selection still happens there and
                     // at play time (requestPlay).
                     let item = $0
-                    Task { @MainActor in
-                        if heroTrailerController.isShowing(item.id), heroTrailerController.isPlaying {
+                    let handsOffTrailer = heroTrailerController.isShowing(item.id)
+                        && heroTrailerController.isPlaying
+                    #if os(tvOS)
+                    DetailTransitionNavigation.prepare(
+                        for: item,
+                        artworkSnapshot: handsOffTrailer ? heroTrailerController.handoffImage : nil
+                    )
+                    #endif
+                    if handsOffTrailer {
+                        Task { @MainActor in
                             await heroTrailerController.captureHandoffFrame()
                         }
-                        if heroTrailerController.isShowing(item.id),
-                           heroTrailerController.isPlaying {
-                            #if os(tvOS)
-                            DetailTransitionNavigation.prepare(
-                                for: item,
-                                artworkSnapshot: heroTrailerController.handoffImage
-                            )
-                            #endif
-                            // A system NavigationStack push snapshots/composites
-                            // the newly-created detail hierarchy before its video
-                            // layer is live, which exposes a backdrop for a few
-                            // frames. A playing hero trailer is a visual continuity
-                            // handoff, not a spatial page move: atomically replace
-                            // only the foreground metadata. Pop remains animated.
-                            var transaction = Transaction()
-                            transaction.disablesAnimations = true
-                            withTransaction(transaction) {
-                                navigate(item)
-                            }
-                        } else {
+                        // Keep the live player handoff, but never make navigation
+                        // or the first animation frame wait for video decoding.
+                        var transaction = Transaction()
+                        transaction.disablesAnimations = true
+                        withTransaction(transaction) {
                             navigate(item)
                         }
+                    } else {
+                        navigate(item)
                     }
                 },
                 onPlayItem: { requestPlay($0) },

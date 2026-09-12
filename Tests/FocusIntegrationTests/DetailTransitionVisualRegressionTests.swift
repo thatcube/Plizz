@@ -122,7 +122,7 @@ final class DetailTransitionVisualRegressionTests: XCTestCase {
         let session = TVDetailEntranceSession()
         session.attach(to: fixture.window, enabled: true)
         session.finishImmediately()
-        XCTAssertNotNil(session.fallbackArtwork, "The small image is retained only for returning to the card.")
+        XCTAssertNotNil(session.returnArtwork, "The small snapshot is retained only for returning to the card.")
         let host = UIHostingController(rootView: HeroBackdropLayer(
             references: [], height: 1080, scrimTone: .black, ignoresOverscan: false
         ).environment(\.detailEntranceSession, session))
@@ -146,11 +146,15 @@ final class DetailTransitionVisualRegressionTests: XCTestCase {
     func testRealPosterReturnMatchesItsFocusedPaintedArtwork() async throws {
         let scene = try await activeScene()
         let artwork = try await seedArtwork(color: .red, size: CGSize(width: 200, height: 300))
-        for style in [CardStyle.framed, .borderless] {
-            for focusStyle in [CardFocusStyle.outlined, .highlight] {
+        let layouts: [(CardStyle, PosterCardView.Style)] = [
+            (.framed, .poster), (.borderless, .poster),
+            (.framed, .landscape), (.borderless, .landscape)
+        ]
+        for (style, shape) in layouts {
+            for focusStyle in CardFocusStyle.allCases {
                 let model = RealPosterReturnModel(artwork: artwork)
                 let host = UIHostingController(rootView: RealPosterReturnRoot(
-                    model: model, style: style, focusStyle: focusStyle
+                    model: model, style: style, focusStyle: focusStyle, shape: shape
                 ))
                 let previous = scene.windows.first(where: \.isKeyWindow)
                 let window = UIWindow(windowScene: scene)
@@ -167,7 +171,22 @@ final class DetailTransitionVisualRegressionTests: XCTestCase {
                 }
                 try await waitUntil { self.sourceView(in: host.view)?.reference?.isFocused == true }
                 let source = try XCTUnwrap(sourceView(in: host.view)?.reference)
-                _ = await source.settledReturnGeometry(in: window)
+                try await Task.sleep(for: .milliseconds(600))
+                let before = XCTAttachment(image: DetailTransitionSnapshot.image(of: window))
+                before.name = "focused-source-\(style)-\(shape)-\(focusStyle)"
+                before.lifetime = .keepAlways
+                add(before)
+                let initialPainted = try redArtworkBounds(in: window)
+                let initialGeometry = try XCTUnwrap(source.geometry(in: window))
+                if focusStyle == .system {
+                    let restingWidth: CGFloat = shape == .poster
+                        ? (style == .framed ? 216 : 220)
+                        : (style == .framed ? 480 : 500)
+                    XCTAssertGreaterThan(
+                        initialPainted.width, restingWidth,
+                        "The framed/rasterized System path must actually project its artwork."
+                    )
+                }
                 source.prepare(for: model.item)
                 model.path.append(1)
                 try await waitUntil { model.session != nil }
@@ -179,8 +198,16 @@ final class DetailTransitionVisualRegressionTests: XCTestCase {
                 let target = cover.cardContainer.frame
                 let radius = cover.cardContainer.layer.cornerRadius
                 try await waitUntil { cover.superview == nil && source.isFocused == true }
-                try await Task.sleep(for: .milliseconds(150))
+                try await Task.sleep(for: .milliseconds(600))
                 let painted = try redArtworkBounds(in: window)
+                let after = XCTAttachment(image: DetailTransitionSnapshot.image(of: window))
+                after.name = "focused-return-\(style)-\(shape)-\(focusStyle)"
+                after.lifetime = .keepAlways
+                add(after)
+                let geometry = XCTAttachment(string: "Before: geometry \(initialGeometry), pixels \(initialPainted)\nAfter: geometry \(String(describing: source.geometry(in: window))), pixels \(painted)")
+                geometry.name = "native-geometry-\(style)-\(shape)-\(focusStyle)"
+                geometry.lifetime = .keepAlways
+                add(geometry)
                 XCTAssertEqual(target.minX, painted.minX, accuracy: 2, "\(style), \(focusStyle)")
                 XCTAssertEqual(target.minY, painted.minY, accuracy: 2, "\(style), \(focusStyle)")
                 XCTAssertEqual(target.width, painted.width, accuracy: 2, "\(style), \(focusStyle)")
@@ -188,6 +215,93 @@ final class DetailTransitionVisualRegressionTests: XCTestCase {
                 XCTAssertEqual(radius, try XCTUnwrap(source.geometry(in: window)).cornerRadius, accuracy: 0.5)
             }
         }
+    }
+
+    func testNativeCircularTileHasNoSquareFocusPlate() async throws {
+        let scene = try await activeScene()
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        var focused = false
+        let host = UIHostingController(rootView: CircularFocusTile(
+            diameter: 200, focusPadding: 20, action: {},
+            onFocusChange: { focused = $0 },
+            avatar: { Color(uiColor: .red) }, caption: { _ in Text("Circular portrait") }
+        )
+        .environment(\.plozzCardFocusStyle, .system)
+        .environment(\.themePalette, .dark)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.black))
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previous?.makeKeyAndVisible()
+        }
+        try await waitUntil { focused }
+        try await Task.sleep(for: .milliseconds(700))
+        let image = DetailTransitionSnapshot.image(of: window)
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "native-circular-focus"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        let painted = try redArtworkBounds(in: window)
+        XCTAssertEqual(painted.width, painted.height, accuracy: 2)
+        XCTAssertGreaterThan(painted.width, 200, "The OS must apply focus projection, not merely a no-op.")
+        let cgImage = try XCTUnwrap(image.cgImage)
+        for corner in [
+            CGPoint(x: painted.minX + 4, y: painted.minY + 4),
+            CGPoint(x: painted.maxX - 4, y: painted.minY + 4)
+        ] {
+            let sample = try XCTUnwrap(cgImage.cropping(to: CGRect(origin: corner, size: CGSize(width: 1, height: 1))))
+            var bytes = [UInt8](repeating: 0, count: 4)
+            try bytes.withUnsafeMutableBytes {
+                let context = try XCTUnwrap(CGContext(
+                    data: $0.baseAddress, width: 1, height: 1, bitsPerComponent: 8,
+                    bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                ))
+                context.draw(sample, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+            }
+            XCTAssertLessThan(bytes.prefix(3).max() ?? 255, 20, "Native focus must not add a square plate behind the portrait.")
+        }
+    }
+
+    func testSystemFocusSurvivesRapidHorizontalAndVerticalReversals() async throws {
+        let scene = try await activeScene()
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let host = NativeFocusGridHost()
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previous?.makeKeyAndVisible()
+        }
+        host.view.layoutIfNeeded()
+        let system = try XCTUnwrap(UIFocusSystem.focusSystem(for: window))
+        try await waitUntil { system.focusedItem != nil }
+        let frames = host.cards.map { $0.view.frame }
+        for index in [1, 0, 1, 3, 1, 0, 2, 0, 2, 3, 2, 0] {
+            host.preferredIndex = index
+            system.requestFocusUpdate(to: host)
+            system.updateFocusIfNeeded()
+            try await waitUntil {
+                guard let item = system.focusedItem,
+                      let owner = TVNavigationExitProtectionFocus.containingView(of: item) else { return false }
+                return owner.isDescendant(of: host.cards[index].view)
+            }
+            try await Task.sleep(for: .milliseconds(30))
+            XCTAssertEqual(host.cards.map { $0.view.frame }, frames, "Projection must not change the grid's layout.")
+        }
+        try await Task.sleep(for: .milliseconds(650))
+        let attachment = XCTAttachment(image: DetailTransitionSnapshot.image(of: window))
+        attachment.name = "native-focus-after-rapid-reversals"
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     private func sourceView(in view: UIView) -> DetailTransitionSourceView? {
@@ -211,7 +325,9 @@ final class DetailTransitionVisualRegressionTests: XCTestCase {
         for y in 0..<height {
             for x in 0..<width {
                 let index = (y * width + x) * 4
-                if bytes[index] > 180, bytes[index + 1] < 60, bytes[index + 2] < 60 {
+                if bytes[index] > 150,
+                   Int(bytes[index]) > Int(bytes[index + 1]) + 60,
+                   Int(bytes[index]) > Int(bytes[index + 2]) + 60 {
                     minX = min(minX, x); maxX = max(maxX, x)
                     minY = min(minY, y); maxY = max(maxY, y)
                 }
@@ -351,6 +467,45 @@ final class DetailTransitionVisualRegressionTests: XCTestCase {
     }
 }
 
+@MainActor
+private final class NativeFocusGridHost: UIViewController {
+    let cards = (0..<4).map { UIHostingController(rootView: NativeFocusTestCard(index: $0)) }
+    var preferredIndex = 0
+
+    override var preferredFocusEnvironments: [any UIFocusEnvironment] { [cards[preferredIndex]] }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        for (index, card) in cards.enumerated() {
+            addChild(card)
+            view.addSubview(card.view)
+            card.view.backgroundColor = .clear
+            card.view.frame = CGRect(x: 250 + (index % 2) * 620, y: 80 + (index / 2) * 440, width: 540, height: 380)
+            card.didMove(toParent: self)
+        }
+    }
+}
+
+private struct NativeFocusTestCard: View {
+    let index: Int
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(spacing: 28) {
+            Color(uiColor: .red)
+                .frame(width: 440, height: 248)
+                .clipShape(RoundedRectangle(cornerRadius: 28))
+                .plozzFocusHalo(cornerRadius: 28, focusScale: 1.1, isFocused: focused)
+            Text(verbatim: "Native card \(index)")
+                .foregroundStyle(.white)
+        }
+        .focusableCard(isFocused: $focused, cornerRadius: 28, action: {})
+        .plozzCardFocusTransition(isFocused: focused)
+        .environment(\.plozzCardFocusStyle, .system)
+    }
+}
+
 @MainActor @Observable
 private final class RealPosterReturnModel {
     let item: MediaItem
@@ -366,11 +521,12 @@ private struct RealPosterReturnRoot: View {
     @Bindable var model: RealPosterReturnModel
     let style: CardStyle
     let focusStyle: CardFocusStyle
+    var shape = PosterCardView.Style.poster
 
     var body: some View {
         NavigationStack(path: $model.path) {
-            PosterCardView(item: model.item, enablesAsyncArtworkFallback: false) { model.path.append(1) }
-                .frame(width: 240)
+            PosterCardView(item: model.item, style: shape, enablesAsyncArtworkFallback: false) { model.path.append(1) }
+                .frame(width: shape == .poster ? 240 : 520)
                 .environment(\.plozzCardStyle, style)
                 .environment(\.plozzCardFocusStyle, focusStyle)
                 .environment(\.plozzReduceTransparency, true)

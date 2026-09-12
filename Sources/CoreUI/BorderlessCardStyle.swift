@@ -24,7 +24,7 @@ public extension View {
     ///
     /// When the profile has turned the focus outline **off**
     /// (`CardFocusStyle.highlight`) there is no halo at all: the tile takes tvOS's
-    /// native treatment instead, growing by whatever the halo used to add to its
+    /// custom Highlight treatment instead, growing by whatever the halo used to add to its
     /// size and catching a specular sweep (see `plozzCardFocusLift`). Callers don't
     /// choose — they keep asking for a halo and get whichever the profile wants.
     ///
@@ -53,7 +53,9 @@ private struct FocusHaloModifier: ViewModifier {
     @Environment(\.themePalette) private var palette
 
     func body(content: Content) -> some View {
-        if focusStyle.drawsFocusOutline {
+        if focusStyle.usesSystemEffect {
+            content.plozzSystemCardProjection(cornerRadius: cornerRadius)
+        } else if focusStyle.drawsFocusOutline {
             outlined(content)
         } else {
             // No halo: the tile grows into the space the halo occupied and

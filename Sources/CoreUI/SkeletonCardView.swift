@@ -150,7 +150,7 @@ public struct SkeletonCardView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     // The real caption rides up to the resting gap when unfocused (a pure
                     // offset, never a layout change); a skeleton is always at rest.
-                    .offset(y: -captionPush)
+                    .offset(y: focusStyle.usesSystemEffect ? 0 : -captionPush)
             }
         }
         .padding(.horizontal, metrics.borderlessCardSideMargin)

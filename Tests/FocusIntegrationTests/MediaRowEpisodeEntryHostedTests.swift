@@ -51,7 +51,7 @@ final class MediaRowEpisodeEntryHostedTests: XCTestCase {
         await waitUntil { UIApplication.shared.connectedScenes.contains { $0.activationState == .foregroundActive } }
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive })
-        for style in [CardFocusStyle.highlight, .outlined] {
+        for style in CardFocusStyle.allCases {
             let model = EpisodeEntryFixture()
             model.focusStyle = style
             let host = EpisodeEntryHost(model: model)

@@ -51,7 +51,7 @@ public final class CardStyleSettingsModel {
         didSet { store.save(style) }
     }
 
-    /// What focus does to a card: outline it, or grow and glisten it.
+    /// Native System focus or either of the custom Highlight/Outline effects.
     public var focusStyle: CardFocusStyle {
         didSet { focusStore.save(focusStyle) }
     }

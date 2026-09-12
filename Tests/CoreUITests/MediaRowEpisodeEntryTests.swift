@@ -32,7 +32,7 @@ final class MediaRowEpisodeEntryPolicyTests: XCTestCase {
     @MainActor
     final class EpisodeRowEntryPlaceholderRenderingTests: XCTestCase {
         func testStatusStaysBelowAnOpaqueThumbnailInEveryFocusStyle() throws {
-            for focusStyle in [CardFocusStyle.highlight, .outlined] {
+            for focusStyle in CardFocusStyle.allCases {
                 for phase in [
                     MediaRowEpisodeEntry.Phase.loading, .ready, .empty, .failed
                 ] {

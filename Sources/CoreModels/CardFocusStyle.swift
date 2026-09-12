@@ -12,12 +12,9 @@ import Foundation
 /// Only the tvOS shell reads it — iOS has no focus engine — but it lives here
 /// with every other card preference so the two shells share one settings model.
 public enum CardFocusStyle: String, CaseIterable, Identifiable, Codable, Sendable {
-    /// The default, and so the first option offered. tvOS's native treatment: no
-    /// outline or halo at all. The card simply grows — far enough that it still
-    /// covers the ground an outline would have (see
-    /// `PlozzTheme.Metrics.highlightFocusScale`) — catches the light as focus
-    /// lands, leans in the direction focus travelled, and settles gently back
-    /// when it loses focus.
+    /// The platform owns projection, lighting, motion and accessibility behavior.
+    case system
+    /// Plozz's custom growth, specular sweep and arrival lean.
     case highlight
     /// A focused card lights its glass surface, and an artwork-only card blooms a
     /// glass halo around its edge.
@@ -28,10 +25,17 @@ public enum CardFocusStyle: String, CaseIterable, Identifiable, Codable, Sendabl
     /// Whether this style draws a focus outline (a glass frame or halo) at all.
     /// The single question every card asks, so no view has to switch on the case.
     public var drawsFocusOutline: Bool { self == .outlined }
+    public var usesSystemEffect: Bool { self == .system }
 
     /// Short, user-facing option label for the Settings picker.
     public var displayName: LocalizedStringResource {
         switch self {
+        case .system:
+            return LocalizedStringResource(
+                "cardFocusStyle.system",
+                defaultValue: "System",
+                comment: "Card focus-style option using the native tvOS focus effect, rather than Plozz's custom effects."
+            )
         case .outlined:
             return LocalizedStringResource(
                 "cardFocusStyle.outlined",
@@ -50,6 +54,12 @@ public enum CardFocusStyle: String, CaseIterable, Identifiable, Codable, Sendabl
     /// Tiny line shown beneath the picker, updated live as focus moves.
     public var detail: LocalizedStringResource {
         switch self {
+        case .system:
+            return LocalizedStringResource(
+                "cardFocusStyle.detail.system",
+                defaultValue: "Native Apple TV focus.",
+                comment: "One-line explanation shown under the System card focus-style option. No claim of improved performance."
+            )
         case .outlined:
             return LocalizedStringResource(
                 "cardFocusStyle.detail.outlined",
@@ -65,7 +75,6 @@ public enum CardFocusStyle: String, CaseIterable, Identifiable, Codable, Sendabl
         }
     }
 
-    /// New installs get the native treatment: it's the one that looks like the
-    /// rest of the platform, and it's cheaper to draw.
-    public static let `default`: CardFocusStyle = .highlight
+    /// Only an absent preference uses this default; saved custom styles stay intact.
+    public static let `default`: CardFocusStyle = .system
 }

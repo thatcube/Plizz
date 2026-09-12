@@ -22,41 +22,8 @@ import CoreModels
 /// Cards that draw an outline *around* their artwork rather than lighting their
 /// own surface go through `plozzFocusHalo`, which routes to the same lift.
 ///
-/// ## Do NOT reach for tvOS's own focus effect here (tried 2026-08-25, reverted)
-///
-/// The obvious idea is that the system already does this: SwiftUI's
-/// `.hoverEffect(.highlight)` is documented on tvOS as a projection effect with a
-/// specular highlight and motion-driven parallax, so a focused card would tilt
-/// under a finger moving on the remote's touch surface — the one thing this file
-/// can't reproduce. It was implemented (`.contentShape(.hoverEffect, …)` for the
-/// shape, with `.focusEffectDisabled()` gated off so it wasn't suppressed) and
-/// then removed, because on real cards it brings a whole geometry with it and
-/// none of it is separable:
-///
-/// - **It is clipped to its container.** The tilt can't move outside whatever
-///   bounds the card sits in, so in a rail it wiggles inside an invisible box
-///   instead of leaning out over its neighbours.
-/// - **It adds its own growth**, on top of the card's, and the amount is neither
-///   documented nor configurable.
-/// - **It squares off round tiles.** A cast/artist avatar gets a square-ish
-///   focus plate with a faint outline and the circle sitting inside it, even
-///   with a circular hover content shape.
-///
-/// None of that can be turned off piecemeal: `.highlight` is atomic, there is no
-/// shape-taking `hoverEffect` overload on tvOS, `UIHoverStyle`/`UIShape` are not
-/// available on tvOS at all, the visionOS `HoverEffectContent` builder (which
-/// would expose the effect's phase so we could drive our own transforms) is
-/// unavailable here, and `.focusEffectDisabled()` is all-or-nothing. So it is
-/// the system's entire focus treatment or none of it — and this app already has
-/// its own card geometry (concentric radii, halo, caption push) that the
-/// system's disagrees with.
-///
-/// Nor is there a way to build the tilt by hand: `UIMotionEffect` is unavailable
-/// on tvOS, `adjustsImageWhenAncestorFocused` only covers a `UIImageView`'s own
-/// image, and reading the touch surface through GameController routes the remote
-/// away from the focus engine. **Finger-tracking tilt is therefore off the table
-/// for our cards.** What this file does instead — grow, sweep, settle — is
-/// driven purely by focus, which is the input we actually have.
+/// System is a separate path: the OS projection replaces this entire custom
+/// effect, outside artwork clipping/rasterization and without custom growth.
 ///
 /// ## What this costs, per card (keep it this way)
 ///
@@ -116,7 +83,7 @@ public extension View {
         outlineScale: CGFloat,
         outlineReach: CGFloat = 0
     ) -> some View {
-        modifier(CardFocusLiftModifier(
+        modifier(CardFocusTreatmentModifier(
             isFocused: isFocused,
             cornerRadius: cornerRadius,
             outlineScale: outlineScale,
@@ -137,11 +104,30 @@ public extension View {
         focusedZIndex: Double = 2,
         animates: Bool = true
     ) -> some View {
-        modifier(CardFocusTransitionModifier(
+        modifier(CardFocusTransitionSelector(
             isFocused: isFocused,
             focusedZIndex: focusedZIndex,
             animates: animates
         ))
+    }
+}
+
+private struct CardFocusTreatmentModifier: ViewModifier {
+    let isFocused: Bool
+    let cornerRadius: CGFloat
+    let outlineScale: CGFloat
+    let outlineReach: CGFloat
+    @Environment(\.plozzCardFocusStyle) private var focusStyle
+
+    func body(content: Content) -> some View {
+        if focusStyle.usesSystemEffect {
+            content.plozzSystemCardProjection(cornerRadius: cornerRadius)
+        } else {
+            content.modifier(CardFocusLiftModifier(
+                isFocused: isFocused, cornerRadius: cornerRadius,
+                outlineScale: outlineScale, outlineReach: outlineReach
+            ))
+        }
     }
 }
 
@@ -178,7 +164,7 @@ private struct CardFocusLiftModifier: ViewModifier {
     /// `task`, which runs after the tilt has been committed.
     @State private var arrival = 0
 
-    private var isHighlight: Bool { !focusStyle.drawsFocusOutline }
+    private var isHighlight: Bool { focusStyle == .highlight }
     private var leansOnArrival: Bool { isHighlight && !reduceMotion }
 
     /// Whether this card's size is worth measuring.
@@ -431,6 +417,23 @@ private struct CardFocusSheen: View {
 
 // MARK: - Transition
 
+private struct CardFocusTransitionSelector: ViewModifier {
+    let isFocused: Bool
+    let focusedZIndex: Double
+    let animates: Bool
+    @Environment(\.plozzCardFocusStyle) private var focusStyle
+
+    func body(content: Content) -> some View {
+        if focusStyle.usesSystemEffect {
+            content.zIndex(isFocused ? focusedZIndex : 0)
+        } else {
+            content.modifier(CardFocusTransitionModifier(
+                isFocused: isFocused, focusedZIndex: focusedZIndex, animates: animates
+            ))
+        }
+    }
+}
+
 private struct CardFocusTransitionModifier: ViewModifier {
     let isFocused: Bool
     let focusedZIndex: Double
@@ -444,10 +447,10 @@ private struct CardFocusTransitionModifier: ViewModifier {
     /// Identifies the current settle, so an older one can't clear a newer one.
     @State private var settleGeneration = 0
 
-    private var isHighlight: Bool { !focusStyle.drawsFocusOutline && !reduceMotion }
+    private var isHighlight: Bool { focusStyle == .highlight && !reduceMotion }
 
     private var animation: Animation? {
-        guard animates, !reduceMotion else { return nil }
+        guard animates, !reduceMotion, !focusStyle.usesSystemEffect else { return nil }
         return PlozzTheme.Metrics.cardFocusAnimation(
             isFocused: isFocused,
             focusStyle: focusStyle,

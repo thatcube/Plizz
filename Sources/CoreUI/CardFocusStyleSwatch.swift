@@ -222,7 +222,22 @@ public struct CardFocusStyleSwatch: View {
     }
 
     public var body: some View {
-        CardFocusMini(style: style)
+        Group {
+            if style.usesSystemEffect {
+                Image(systemName: "appletv")
+                    .font(.system(size: 64, weight: .regular))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(
+                        LinearGradient(
+                            colors: [CardFocusPreviewColors.bgTop, CardFocusPreviewColors.bgBottom],
+                            startPoint: .top, endPoint: .bottom
+                        )
+                    )
+            } else {
+                CardFocusMini(style: style)
+            }
+        }
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)

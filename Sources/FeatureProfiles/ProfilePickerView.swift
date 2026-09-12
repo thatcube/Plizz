@@ -311,7 +311,7 @@ private struct ProfileTile: View {
             ProfileTileLabel(profile: profile)
         }
         .buttonStyle(ProfileTileButtonStyle())
-        .focusEffectDisabled()
+        .plozzCardFocusEffect()
     }
 }
 
@@ -401,7 +401,7 @@ private struct AddProfileTile: View {
             AddProfileTileLabel(title: title, systemImage: systemImage, isProminent: isProminent)
         }
         .buttonStyle(ProfileTileButtonStyle())
-        .focusEffectDisabled()
+        .plozzCardFocusEffect()
     }
 }
 

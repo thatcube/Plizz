@@ -183,14 +183,14 @@ struct MusicCard: View {
         }
         .padding(metrics.cardInset)
         .plozzGlassCard(cornerRadius: metrics.landscapeCardCornerRadius, isFocused: surfaceFocused)
-        .focusableCard(isFocused: $isFocused, cornerRadius: metrics.landscapeCardCornerRadius, action: action)
         .plozzCardRasterize(reduceTransparency: reduceTransparency)
-        .shadow(color: .black.opacity(isFocused ? 0.36 : 0.15), radius: isFocused ? 20 : 8, y: isFocused ? 10 : 4)
+        .plozzRestingCardShadow(isFocused: isFocused)
         .plozzCardFocusLift(
             isFocused: isFocused,
             cornerRadius: metrics.landscapeCardCornerRadius,
             outlineScale: PlozzTheme.Metrics.mediumFocusedCardScale
         )
+        .focusableCard(isFocused: $isFocused, cornerRadius: metrics.landscapeCardCornerRadius, action: action)
         .plozzCardFocusTransition(isFocused: isFocused)
     }
 
@@ -218,7 +218,7 @@ struct MusicCard: View {
             // Push the caption down on focus with a pure transform (see
             // `borderlessCaptionSpacing`) so the footprint stays fixed and focusing
             // a tile never shifts the grid/row.
-            .offset(y: isFocused ? 0 : -captionPush)
+            .offset(y: focusStyle.usesSystemEffect || isFocused ? 0 : -captionPush)
         }
         .padding(.horizontal, metrics.borderlessCardSideMargin)
         .focusableCard(isFocused: $isFocused, cornerRadius: metrics.landscapeCardCornerRadius, action: action)

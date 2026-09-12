@@ -7,11 +7,8 @@ import MetadataKit
 /// progress bar, and title/subtitle. The standard building block of Home rows
 /// and library grids.
 ///
-/// Both styles drive focus through a plain `.focusable` view (never a `Button`,
-/// whose tvOS focus *platter* paints a stark white plate over our glass) plus an
-/// `.onTapGesture` select handler. The focus visual is entirely our own
-/// Twozz-ported liquid-glass lift: a theme-tinted glass surface with a
-/// focused-only drop shadow and a series-aware title treatment for episodes.
+/// Both card layouts keep one focus owner and one select handler. System focus
+/// uses tvOS projection; Highlight and Outline retain their custom treatment.
 public struct PosterCardView: View {
     public enum Style { case poster, landscape }
 
@@ -234,6 +231,9 @@ public struct PosterCardView: View {
                     cornerRadius: PlozzTheme.Metrics.posterArtCornerRadius,
                     isEnabled: MediaArtworkPlaceholder.Symbol(for: item) == .playback
                 )
+                #if os(tvOS)
+                .recordDetailTransitionArtwork(detailTransitionSource)
+                #endif
 
             captionBlock(inset: metrics.posterCaptionInset, spacing: 2)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -243,19 +243,19 @@ public struct PosterCardView: View {
             innerCornerRadius: PlozzTheme.Metrics.posterArtCornerRadius,
             isFocused: surfaceFocused
         )
-        .focusableCard(isFocused: $isFocused, cornerRadius: metrics.posterCardCornerRadius, action: selectCard)
         .plozzCardRasterize(reduceTransparency: reduceTransparency)
         // Resting posters carry a soft drop shadow so they read as raised cards
         // (essential in Light mode against a white background); the focused card
         // deepens it. Resting cards now wear the cheap frosted `.ultraThinMaterial`
         // (no live-glass per-frame cost), so the surface returns without the scroll
         // lag that a live resting `.glassEffect` caused.
-        .shadow(color: .black.opacity(isFocused ? 0.36 : 0.15), radius: isFocused ? 20 : 8, y: isFocused ? 10 : 4)
+        .plozzRestingCardShadow(isFocused: isFocused)
         .plozzCardFocusLift(
             isFocused: isFocused,
             cornerRadius: metrics.posterCardCornerRadius,
             outlineScale: PlozzTheme.Metrics.focusedCardScale
         )
+        .focusableCard(isFocused: $isFocused, cornerRadius: metrics.posterCardCornerRadius, action: selectCard)
         .plozzCardFocusTransition(isFocused: isFocused)
     }
 
@@ -285,6 +285,9 @@ public struct PosterCardView: View {
                     cornerRadius: PlozzTheme.Metrics.mediumMediaCornerRadius,
                     isEnabled: MediaArtworkPlaceholder.Symbol(for: item) == .playback
                 )
+                #if os(tvOS)
+                .recordDetailTransitionArtwork(detailTransitionSource)
+                #endif
 
             // Series-artwork cards say everything on the artwork itself — the show
             // as its logo, the episode and time in the chip — so there is no
@@ -301,14 +304,14 @@ public struct PosterCardView: View {
             innerCornerRadius: PlozzTheme.Metrics.mediumMediaCornerRadius,
             isFocused: surfaceFocused
         )
-        .focusableCard(isFocused: $isFocused, cornerRadius: metrics.landscapeCardCornerRadius, action: selectCard)
         .plozzCardRasterize(reduceTransparency: reduceTransparency)
-        .shadow(color: .black.opacity(isFocused ? 0.36 : 0.15), radius: isFocused ? 20 : 8, y: isFocused ? 10 : 4)
+        .plozzRestingCardShadow(isFocused: isFocused)
         .plozzCardFocusLift(
             isFocused: isFocused,
             cornerRadius: metrics.landscapeCardCornerRadius,
             outlineScale: PlozzTheme.Metrics.mediumFocusedCardScale
         )
+        .focusableCard(isFocused: $isFocused, cornerRadius: metrics.landscapeCardCornerRadius, action: selectCard)
         .plozzCardFocusTransition(isFocused: isFocused)
     }
 
@@ -342,7 +345,7 @@ public struct PosterCardView: View {
                 // gap when unfocused, dropping back down on focus. Because it's an
                 // offset (like `scaleEffect`), the card's footprint is identical in both
                 // states, so focusing one card can't shift the row or the page.
-                .offset(y: isFocused ? 0 : -captionPush)
+                .offset(y: focusStyle.usesSystemEffect || isFocused ? 0 : -captionPush)
             }
         }
         .padding(.horizontal, metrics.borderlessCardSideMargin)
@@ -382,6 +385,9 @@ public struct PosterCardView: View {
                 cornerRadius: borderlessCornerRadius,
                 isEnabled: MediaArtworkPlaceholder.Symbol(for: item) == .playback
             )
+            #if os(tvOS)
+            .recordDetailTransitionArtwork(detailTransitionSource)
+            #endif
             .plozzFocusHalo(
                 cornerRadius: borderlessCornerRadius,
                 focusScale: borderlessFocusScale,
@@ -687,16 +693,6 @@ public struct PosterCardView: View {
     @ViewBuilder
     private var artwork: some View {
         resolvedArtwork
-            #if os(tvOS)
-            .onGeometryChange(for: DetailTransitionArtworkLayout.self) {
-                DetailTransitionArtworkLayout(
-                    frame: $0.frame(in: .named(detailTransitionSource.coordinateSpace)),
-                    intrinsicSize: $0.size
-                )
-            } action: {
-                detailTransitionSource.recordArtworkFrame($0.frame, intrinsicSize: $0.intrinsicSize)
-            }
-            #endif
     }
 
     private var transitionArtworkCornerRadius: CGFloat {
@@ -1419,14 +1415,8 @@ private struct FolderNavigationBadge: View {
 }
 
 public extension View {
-    /// Makes a card a focusable, tappable surface **without** wrapping it in a
-    /// `Button`. On tvOS a `Button` (even `.buttonStyle(.plain)`) paints the
-    /// system focus *platter* — a stark white plate behind the focused card that
-    /// `.focusEffectDisabled()` can't fully remove and that buries our own glass
-    /// focus treatment (most visible on dark and Pure Black themes). Following Twozz's
-    /// card pattern, we instead drive focus with `.focusable` + `.onTapGesture`
-    /// (the select-press fires the tap) and disable the system focus effect, so
-    /// the only focus visuals are the ones we draw via `plozzGlassCard`.
+    /// One focus owner and select handler, with native effects enabled only for
+    /// System. Call after rasterizing the artwork so projection is not flattened.
     func focusableCard(
         isFocused: FocusState<Bool>.Binding,
         cornerRadius: CGFloat,
@@ -1437,7 +1427,7 @@ public extension View {
         contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .focusable(isEnabled)
             .focused(isFocused)
-            .focusEffectDisabled()
+            .plozzCardFocusEffect()
             .onTapGesture(perform: action)
             .disabled(!isEnabled)
             .accessibilityAddTraits(.isButton)

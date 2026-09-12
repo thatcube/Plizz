@@ -837,7 +837,7 @@ public struct MediaRowView: View {
                     showsStatus: true, isFocused: entryPlaceholderFocused
                 )
                 .focusable(episodeEntry?.isEnabled != false)
-                .focusEffectDisabled()
+                .plozzCardFocusEffect()
                 .focused($entryPlaceholderFocused)
                 .onTapGesture {
                     guard episodeEntry?.isEnabled != false else { return }
