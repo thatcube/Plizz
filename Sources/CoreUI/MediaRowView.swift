@@ -363,6 +363,7 @@ public struct MediaRowView: View {
     /// card. `PosterCardView` ignores `isEnabled`, so this affects focusability
     /// only, never appearance.
     private func cardIsDisabled(_ item: MediaItem) -> Bool {
+        if episodeEntry?.isEnabled == false { return true }
         // While the page is covered, the only focusable card is the one focus
         // will be restored to. The system re-establishes focus by geometry as
         // the page reappears, and leaving the other cards focusable let it land
@@ -513,7 +514,7 @@ public struct MediaRowView: View {
                     .background {
                         #if os(tvOS)
                         if episodeEntry != nil {
-                            NativeFocusRegionObserver(isEnabled: !isCovered) {
+                            NativeFocusRegionObserver(isEnabled: !isCovered && episodeEntry?.isEnabled != false) {
                                 if showsEntryPlaceholder {
                                     pendingEntryHandoff = true
                                     reportEpisodeEntry()
@@ -835,10 +836,11 @@ public struct MediaRowView: View {
                     phase: episodeEntry?.phase ?? .loading,
                     showsStatus: true, isFocused: entryPlaceholderFocused
                 )
-                .focusable()
+                .focusable(episodeEntry?.isEnabled != false)
                 .focusEffectDisabled()
                 .focused($entryPlaceholderFocused)
                 .onTapGesture {
+                    guard episodeEntry?.isEnabled != false else { return }
                     if episodeEntry?.phase == .failed { episodeEntry?.onRetry?() }
                 }
                 .accessibilityIdentifier("episode-entry-placeholder")
@@ -874,7 +876,8 @@ public struct MediaRowView: View {
         guard episodeEntry != nil, !focusEngaged else { return }
         if entryLayout != layout { entryLayout = layout }
         guard episodeEntry?.phase == .ready,
-              let target = gateTarget, itemIDSet.contains(target), !isCovered else { return }
+              let target = gateTarget, itemIDSet.contains(target), !isCovered,
+              episodeEntry?.isEnabled != false else { return }
         if MediaRowEpisodeEntryPolicy.targetReady(target, layout: layout) {
             guard pendingEntryHandoff else { return }
             // The real target is already laid out. Remove the loading leaf and
@@ -1022,7 +1025,7 @@ public struct MediaRowView: View {
     /// runloop tick so SwiftUI has installed the focusable cards before we move
     /// focus onto one.
     private func applyInitialFocus(using proxy: ScrollViewProxy) {
-        guard !isCovered else { return }
+        guard !isCovered, episodeEntry?.isEnabled != false else { return }
         if episodeEntry != nil, initialFocusID != nil,
            !didApplyInitialFocus, showsEntryPlaceholder {
             didApplyInitialFocus = true

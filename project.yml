@@ -469,6 +469,10 @@ targets:
         product: CoreUI
       - package: Plozz
         product: CoreModels
+      - package: Plozz
+        product: FeatureHome
+      - package: Plozz
+        product: FeatureHomeCore
 
 schemes:
   PlozzHomeRemoteTests:

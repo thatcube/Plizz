@@ -12,17 +12,20 @@ public struct MediaRowEpisodeEntry {
 
     public let phase: Phase
     public let isActive: Bool
+    public let isEnabled: Bool
     public let onPlaceholderFocus: (@MainActor () -> Void)?
     public let onRetry: (@MainActor () -> Void)?
 
     public init(
         phase: Phase,
         isActive: Bool,
+        isEnabled: Bool = true,
         onPlaceholderFocus: (@MainActor () -> Void)? = nil,
         onRetry: (@MainActor () -> Void)? = nil
     ) {
         self.phase = phase
         self.isActive = isActive
+        self.isEnabled = isEnabled
         self.onPlaceholderFocus = onPlaceholderFocus
         self.onRetry = onRetry
     }

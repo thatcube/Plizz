@@ -130,10 +130,11 @@ public struct HeroBackdropLayer<Video: View>: View {
             previewVariant: .heroPreview,
             asyncFallbackURL: asyncFallbackURL,
             preferredArtworkWait: ArtworkFirstPaintResolver.focalArtworkWait,
-            pinIdentity: pinIdentity
-        ) {
-            placeholder
-        }
+            onResolveReference: resolvedArtwork,
+            pinIdentity: pinIdentity,
+            content: ArtworkFillImage.init,
+            placeholder: { ambientPlaceholder }
+        )
         .opacity(stillImageOpacity)
         .frame(height: height)
         .frame(maxWidth: .infinity)
@@ -205,24 +206,16 @@ public struct HeroBackdropLayer<Video: View>: View {
         )
     }
 
-    /// A cinematic open can keep its selected artwork visible until the real
-    /// backdrop arrives. Other entry points retain the ambient fallback; the
-    /// source snapshot never changes the normal artwork-resolution policy.
-    @ViewBuilder
-    private var placeholder: some View {
+    private func resolvedArtwork(_ reference: ArtworkReference?) {
         #if os(tvOS)
-        if let image = detailEntrance?.fallbackArtwork {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-        } else {
-            ambientPlaceholder
-        }
-        #else
-        ambientPlaceholder
+        guard let reference, let detailEntrance,
+              let image = ArtworkImageCache.shared.cachedImage(for: reference, variant: .heroBackdrop)
+                ?? ArtworkImageCache.shared.cachedImage(for: reference, variant: .heroPreview) else { return }
+        detailEntrance.resolvedDestinationArtwork(image)
         #endif
     }
 
+    /// Never put the outgoing thumbnail back under the incoming detail artwork.
     private var ambientPlaceholder: some View {
         LinearGradient(
             colors: [

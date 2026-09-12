@@ -10,6 +10,43 @@ import UIKit
 #if os(tvOS)
 @MainActor
 final class MediaRowEpisodeEntryHostedTests: XCTestCase {
+    func testEntranceGateKeepsTheEpisodePreviewOutOfFocusUntilEnabled() async throws {
+        let image = try await seedImage()
+        let model = EpisodeEntryFixture()
+        model.items = [MediaItem(id: "episode-998", title: "Episode", kind: .episode, posterURL: image)]
+        model.phase = .ready
+        model.entryEnabled = false
+        let host = EpisodeEntryHost(model: model)
+        await waitUntil { UIApplication.shared.connectedScenes.contains { $0.activationState == .foregroundActive } }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive })
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previous?.makeKeyAndVisible()
+        }
+        await waitUntil { model.appeared && host.heroIsFocused }
+        let height = host.row.view.bounds.height
+        let system = try XCTUnwrap(UIFocusSystem.focusSystem(for: window))
+        host.prefersRow = true
+        system.requestFocusUpdate(to: host)
+        system.updateFocusIfNeeded()
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertTrue(host.heroIsFocused)
+        XCTAssertTrue(model.events.isEmpty)
+        model.entryEnabled = true
+        host.row.view.layoutIfNeeded()
+        system.requestFocusUpdate(to: host)
+        system.updateFocusIfNeeded()
+        await waitUntil { model.events.contains("episode-998") }
+        XCTAssertEqual(host.row.view.bounds.height, height, accuracy: 0.5)
+    }
+
     func testFocusedLoadingCardKeepsItsLeadingOverflow() async throws {
         await waitUntil { UIApplication.shared.connectedScenes.contains { $0.activationState == .foregroundActive } }
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
@@ -240,6 +277,7 @@ private final class EpisodeEntryFixture {
     var items: [MediaItem] = []
     var phase = MediaRowEpisodeEntry.Phase.loading
     var active = true
+    var entryEnabled = true
     var resumeTarget = "episode-998"
     var focusStyle = CardFocusStyle.highlight
     @ObservationIgnored var appeared = false
@@ -255,7 +293,7 @@ private struct EpisodeEntryFixtureView: View {
             onFocusEntered: { model.active = false },
             onFocusChange: { if let item = $0 { model.events.append(item.id) } },
             episodeEntry: MediaRowEpisodeEntry(
-                phase: model.phase, isActive: model.active,
+                phase: model.phase, isActive: model.active, isEnabled: model.entryEnabled,
                 onPlaceholderFocus: {
                     model.events.append("placeholder")
                     model.active = false

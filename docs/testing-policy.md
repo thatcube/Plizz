@@ -177,6 +177,17 @@ the pause. Reduce Motion bypasses the custom sequence and its input wait.
 Source snapshots are per-activation, not per-frame; full-window covers are
 released after the zoom, and the small return-card image is scoped to its page.
 
+`DetailTransitionVisualRegressionTests` uses the production show page and real
+poster cards. It asserts that the outgoing thumbnail is transparent within the
+first third of the zoom and is never reused as a loading backdrop. The resolved
+detail image joins the expansion as soon as it is available. Reverse endpoints
+are compared against rendered focused-artwork pixels for framed/borderless and
+outlined/highlight cards; corner radii scale with the artwork and use continuous
+corners. Back restores card focus under the cover before measuring its settled
+geometry, with a bounded nonspatial fallback if the source cannot settle.
+Episode previews stay drawn but cannot take entry focus during a whole-show
+entrance; episode-context opens retain their existing initial-focus behavior.
+
 ## Guards that run before the compile
 
 Both are host-side Python (the tests run inside the tvOS Simulator sandbox and

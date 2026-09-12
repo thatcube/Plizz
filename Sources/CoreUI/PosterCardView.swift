@@ -183,8 +183,9 @@ public struct PosterCardView: View {
                 DetailTransitionSourceAnchor(
                     reference: detailTransitionSource,
                     itemKey: item.stablePresentationID,
-                    cornerRadius: cardStyle == .borderless
-                        ? borderlessCornerRadius : PlozzTheme.Metrics.posterArtCornerRadius
+                    cornerRadius: transitionArtworkCornerRadius,
+                    isFocused: isFocused,
+                    focus: $isFocused
                 )
             }
             #endif
@@ -687,12 +688,22 @@ public struct PosterCardView: View {
     private var artwork: some View {
         resolvedArtwork
             #if os(tvOS)
-            .onGeometryChange(for: CGRect.self) {
-                $0.frame(in: .named(detailTransitionSource.coordinateSpace))
+            .onGeometryChange(for: DetailTransitionArtworkLayout.self) {
+                DetailTransitionArtworkLayout(
+                    frame: $0.frame(in: .named(detailTransitionSource.coordinateSpace)),
+                    intrinsicSize: $0.size
+                )
             } action: {
-                detailTransitionSource.recordArtworkFrame($0)
+                detailTransitionSource.recordArtworkFrame($0.frame, intrinsicSize: $0.intrinsicSize)
             }
             #endif
+    }
+
+    private var transitionArtworkCornerRadius: CGFloat {
+        if cardStyle == .borderless { return borderlessCornerRadius }
+        return style == .poster
+            ? PlozzTheme.Metrics.posterArtCornerRadius
+            : PlozzTheme.Metrics.mediumMediaCornerRadius
     }
 
     private func selectCard() {

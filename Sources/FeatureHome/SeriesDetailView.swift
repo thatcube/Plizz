@@ -53,6 +53,9 @@ struct SeriesDetailView: View {
     let initialEpisode: MediaItem?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    #if os(tvOS)
+    @Environment(\.detailEntranceSession) private var detailEntrance
+    #endif
 
     /// Which season's episodes the rail is currently showing. Driven by season
     /// tab focus; seeded to the "next up" season on first appearance.
@@ -588,7 +591,7 @@ struct SeriesDetailView: View {
                         leadingInset: PlozzTheme.Metrics.heroLeadingPadding,
                         seriesRecedeModel: recedeModel,
                         revealsSeriesCastWithoutBrowser: revealsCastWithoutBrowser,
-                        suppressesFocus: hasChildOnTop,
+                        suppressesFocus: hasChildOnTop || holdsHeroFocusDuringEntrance,
                         onCastFocusEntered: {
                             seasonBarEngaged = false
                             // Cast/Related sit BELOW the browser, so the page
@@ -1156,6 +1159,7 @@ struct SeriesDetailView: View {
             episodeEntry: MediaRowEpisodeEntry(
                 phase: episodeEntryPhase,
                 isActive: browserEntry == .hero || seasonBarEngaged,
+                isEnabled: !holdsHeroFocusDuringEntrance,
                 onPlaceholderFocus: {
                     // Entering a loading slot is not an explicit choice of a
                     // season. Let the arriving resume answer select the right one.
@@ -1209,6 +1213,15 @@ struct SeriesDetailView: View {
             return .loading
         }
         return currentEpisodes.isEmpty && upcomingPlaceholders.isEmpty ? .empty : .ready
+    }
+
+    private var holdsHeroFocusDuringEntrance: Bool {
+        #if os(tvOS)
+        initialEpisode == nil && detailEntrance?.blocksNavigation == true
+            && detailEntrance?.isClosing != true
+        #else
+        false
+        #endif
     }
 
     private func enterEpisodeBrowser(isPlaceholder: Bool, onFocusEntered: () -> Void) {
