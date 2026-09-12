@@ -207,9 +207,13 @@ Highlight (custom sheen/lean) and Outline (custom glass). Absent per-profile
 preferences use System; saved `highlight` and `outlined` values are not migrated.
 The System path must not instantiate custom focus growth, sheen, lean, halo or
 settling tasks. System uses a native UIKit focus owner and
-`UIImageView.adjustsImageWhenAncestorFocused`; the live SwiftUI content sits in
-its `overlayContentView` via `UIHostingConfiguration`. Its alpha-shaped carrier
-is cached and capped, not a per-focus screenshot. Do not substitute SwiftUI
+`UIImageView.adjustsImageWhenAncestorFocused`. Resolved artwork is composed into
+the native image; only captions, badges and other live decorations stay in
+`overlayContentView` via `UIHostingConfiguration`. Drawing the opaque artwork in
+that overlay masks the native image's lighting. Artwork composition is reused
+until its decoded source or layout changes, not repeated per focus event.
+Spoiler-blurred artwork is excluded from transfer so its masking stays intact.
+Do not substitute SwiftUI
 `hoverEffect(.lift)` or `.highlight`: those omit the white ring from tvOS
 **Focus Style > High Contrast**, a separate setting from Increase Contrast.
 System skips SwiftUI rasterization so native focus and artwork anchors stay live.

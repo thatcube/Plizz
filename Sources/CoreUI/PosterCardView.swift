@@ -169,6 +169,9 @@ public struct PosterCardView: View {
 
     public var body: some View {
         cardBody
+            #if os(tvOS)
+            .environment(\.nativeCardArtworkAllowed, !hideThumbnail || showsSpoilerSafePoster)
+            #endif
             // Hand this card's focus to the shared chrome drawn on its artwork
             // (progress bar, resume chip) so it settles at rest and comes to full
             // strength on focus. No-op off tvOS.

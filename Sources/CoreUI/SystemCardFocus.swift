@@ -64,6 +64,133 @@ public extension View {
 #if os(tvOS)
 import UIKit
 
+/// Transfer resolved image pixels into UIImageView, leaving only captions and
+/// badges in its overlay. Opaque artwork in that overlay hides native lighting.
+@MainActor
+final class NativeCardArtwork {
+    weak var owner: UIView?
+    weak var clippingView: UIView?
+    var clippingRadius: CGFloat = 0
+
+    struct Picture {
+        let identity: String
+        let frame: CGRect
+        let render: (CGSize) -> UIImage?
+        let didRender: () -> Void
+    }
+
+    private struct Entry {
+        weak var view: UIView?
+        let source: UIImage
+        let render: (CGSize) -> UIImage?
+        let didRender: () -> Void
+    }
+    private var entries: [ObjectIdentifier: Entry] = [:]
+
+    func register(_ view: UIView, source: UIImage, render: @escaping (CGSize) -> UIImage?, didRender: @escaping () -> Void) {
+        entries[ObjectIdentifier(view)] = Entry(view: view, source: source, render: render, didRender: didRender)
+        owner?.setNeedsLayout()
+    }
+
+    func remove(_ view: UIView) {
+        entries.removeValue(forKey: ObjectIdentifier(view))
+        owner?.setNeedsLayout()
+    }
+
+    func pictures(in content: UIView) -> [Picture] {
+        entries.values.compactMap { entry in
+            guard let view = entry.view, view.isDescendant(of: content), !view.bounds.isEmpty else { return nil }
+            let frame = view.convert(view.bounds, to: content)
+            guard frame.width.isFinite, frame.height.isFinite,
+                  frame.width > 0, frame.height > 0 else { return nil }
+            return Picture(
+                identity: "\(ObjectIdentifier(view))-\(ObjectIdentifier(entry.source))-\(frame)",
+                frame: frame, render: entry.render, didRender: entry.didRender
+            )
+        }.sorted {
+            if $0.frame.size == $1.frame.size { return $0.identity < $1.identity }
+            return $0.frame.width * $0.frame.height > $1.frame.width * $1.frame.height
+        }
+    }
+}
+
+private struct NativeCardArtworkKey: EnvironmentKey {
+    static let defaultValue: NativeCardArtwork? = nil
+}
+private struct NativeCardArtworkAllowedKey: EnvironmentKey {
+    static let defaultValue = true
+}
+extension EnvironmentValues {
+    var nativeCardArtwork: NativeCardArtwork? {
+        get { self[NativeCardArtworkKey.self] }
+        set { self[NativeCardArtworkKey.self] = newValue }
+    }
+    var nativeCardArtworkAllowed: Bool {
+        get { self[NativeCardArtworkAllowedKey.self] }
+        set { self[NativeCardArtworkAllowedKey.self] = newValue }
+    }
+}
+
+struct NativeResolvedArtwork: ViewModifier {
+    let image: UIImage
+    @Environment(\.nativeCardArtwork) private var artwork
+    @Environment(\.nativeCardArtworkAllowed) private var allowed
+    @Environment(\.self) private var environment
+    @State private var renderedIdentity: ObjectIdentifier?
+
+    func body(content: Content) -> some View {
+        if let artwork, allowed {
+            content
+                .opacity(renderedIdentity == ObjectIdentifier(image) ? 0 : 1)
+                .background {
+                    NativeArtworkRegistration(
+                        artwork: artwork, image: image,
+                        render: { size in
+                            let renderer = ImageRenderer(content: content
+                                .environment(\.self, environment)
+                                .frame(width: size.width, height: size.height)
+                                .clipped())
+                            renderer.scale = 1
+                            return renderer.uiImage
+                        },
+                        didRender: { renderedIdentity = ObjectIdentifier(image) }
+                    )
+                }
+        } else {
+            content
+        }
+    }
+}
+
+private struct NativeArtworkRegistration: UIViewRepresentable {
+    let artwork: NativeCardArtwork
+    let image: UIImage
+    let render: (CGSize) -> UIImage?
+    let didRender: () -> Void
+
+    final class Marker: UIView {
+        weak var artwork: NativeCardArtwork?
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            artwork?.owner?.setNeedsLayout()
+        }
+    }
+
+    func makeUIView(context: Context) -> Marker {
+        let view = Marker()
+        view.isUserInteractionEnabled = false
+        view.accessibilityElementsHidden = true
+        return view
+    }
+    func updateUIView(_ view: Marker, context: Context) {
+        view.artwork = artwork
+        artwork.register(view, source: image, render: render, didRender: didRender)
+    }
+    static func dismantleUIView(_ view: Marker, coordinator: ()) {
+        view.artwork?.remove(view)
+    }
+}
+
 struct SystemCardFocusContext {
     var requestsFocus: Bool
     var isEnabled: Bool
@@ -100,8 +227,17 @@ private struct SystemCardRepresentable<Content: View>: UIViewRepresentable {
     let cornerRadius: CGFloat
     let focusContext: SystemCardFocusContext
 
+    @MainActor final class Coordinator {
+        let artwork = NativeCardArtwork()
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeUIView(context: Context) -> SystemCardControl {
-        SystemCardControl(configuration: configuration(in: context))
+        let view = SystemCardControl(configuration: configuration(in: context))
+        view.artwork = context.coordinator.artwork
+        context.coordinator.artwork.owner = view
+        return view
     }
 
     func updateUIView(_ view: SystemCardControl, context: Context) {
@@ -125,12 +261,14 @@ private struct SystemCardRepresentable<Content: View>: UIViewRepresentable {
         UIHostingConfiguration {
             content
                 .environment(\.self, context.environment)
+                .environment(\.nativeCardArtwork, context.coordinator.artwork)
         }
         .margins(.all, 0)
     }
 
-    static func dismantleUIView(_ view: SystemCardControl, coordinator: ()) {
+    static func dismantleUIView(_ view: SystemCardControl, coordinator: Coordinator) {
         view.focusContext = nil
+        coordinator.artwork.owner = nil
     }
 }
 
@@ -143,14 +281,10 @@ private final class SystemCardControl: UIControl {
     var focusContext: SystemCardFocusContext?
     var cornerRadius: CGFloat = 0
     var surfaceColor: UIColor = .black
+    var artwork: NativeCardArtwork?
     private var carrierKey = ""
     private var selecting = false
     private var pendingFocusRequest = false
-    private static let carriers: NSCache<NSString, UIImage> = {
-        let cache = NSCache<NSString, UIImage>()
-        cache.totalCostLimit = 8 * 1024 * 1024
-        return cache
-    }()
 
     override var canBecomeFocused: Bool { isEnabled }
 
@@ -209,20 +343,40 @@ private final class SystemCardControl: UIControl {
             PlozzLog.app.error("System focus requires an RGB-compatible theme surface")
             return
         }
-        let key = "\(bounds.size)-\(cornerRadius)-\(red),\(green),\(blue),\(alpha)" as NSString
-        if carrierKey != key as String {
-            carrierKey = key as String
-            if let image = Self.carriers.object(forKey: key) {
-                focusImageView.image = image
-            } else {
+        let pictures = artwork?.pictures(in: hostedContent) ?? []
+        let clip = artwork?.clippingView.map { $0.convert($0.bounds, to: hostedContent) }
+        let key = "\(bounds.size)-\(cornerRadius)-\(red),\(green),\(blue),\(alpha)-\(String(describing: clip))"
+            + pictures.map(\.identity).joined(separator: "|")
+        if carrierKey != key {
+            var rendered: [(NativeCardArtwork.Picture, UIImage)] = []
+            for picture in pictures {
+                guard let image = picture.render(picture.frame.size) else {
+                    PlozzLog.app.error("Native focus artwork composition failed; retaining the live artwork")
+                    continue
+                }
+                rendered.append((picture, image))
+            }
+            carrierKey = key
                 let format = UIGraphicsImageRendererFormat()
                 format.scale = 1
-                let image = UIGraphicsImageRenderer(size: bounds.size, format: format).image { _ in
+                let image = UIGraphicsImageRenderer(size: bounds.size, format: format).image { context in
                     color.setFill()
-                    UIBezierPath(roundedRect: CGRect(origin: .zero, size: bounds.size), cornerRadius: cornerRadius).fill()
+                    let shape = UIBezierPath(roundedRect: CGRect(origin: .zero, size: bounds.size), cornerRadius: cornerRadius)
+                    shape.fill()
+                    shape.addClip()
+                    if let clip {
+                        UIBezierPath(roundedRect: clip, cornerRadius: artwork?.clippingRadius ?? 0).addClip()
+                    }
+                    for (picture, image) in rendered {
+                        context.cgContext.saveGState()
+                        context.cgContext.clip(to: picture.frame)
+                        image.draw(in: picture.frame)
+                        context.cgContext.restoreGState()
+                    }
                 }
-                Self.carriers.setObject(image, forKey: key, cost: Int(bounds.width * bounds.height * 4))
                 focusImageView.image = image
+            for (picture, _) in rendered {
+                DispatchQueue.main.async { picture.didRender() }
             }
         }
         applyPendingFocusRequest()
