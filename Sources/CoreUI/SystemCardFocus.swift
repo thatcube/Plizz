@@ -1,34 +1,24 @@
 import CoreModels
-import CoreNetworking
 import SwiftUI
 
-/// Native focus notifications update visual state, not FocusState commands.
+/// A shared binding for the platform's focus state.
 @propertyWrapper
 public struct PlozzCardFocus: DynamicProperty {
     @FocusState private var requested: Bool
-    @State private var observed = false
-    @Environment(\.plozzCardFocusStyle) private var style
 
     public init() {}
 
     public var wrappedValue: Bool {
-        get {
-            #if os(tvOS)
-            style.usesSystemEffect ? observed : requested
-            #else
-            requested
-            #endif
-        }
+        get { requested }
         nonmutating set { requested = newValue }
     }
 
     public var projectedValue: Binding {
-        Binding(focusState: $requested, observed: $observed)
+        Binding(focusState: $requested)
     }
 
     public struct Binding {
         public let focusState: FocusState<Bool>.Binding
-        let observed: SwiftUI.Binding<Bool>
     }
 }
 
@@ -38,10 +28,11 @@ public extension View {
         modifier(CardFocusEffectAvailability())
     }
 
-    /// Native tvOS projection, outside the visual's clip/rasterization boundary.
+    /// Mark the artwork for the native button's automatic focus treatment.
     func plozzSystemCardProjection(cornerRadius: CGFloat) -> some View {
         #if os(tvOS)
-        modifier(SystemCardProjection(cornerRadius: cornerRadius))
+        contentShape(.hoverEffect, RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .hoverEffect(.automatic)
         #else
         self
         #endif
@@ -55,204 +46,13 @@ public extension View {
         _ fallback: Style, cornerRadius: CGFloat, contentSuppliesProjection: Bool = false
     ) -> some View {
         modifier(CardFocusButtonStyle(
-            fallback: fallback, cornerRadius: cornerRadius,
-            contentSuppliesProjection: contentSuppliesProjection
+            fallback: fallback, cornerRadius: cornerRadius
         ))
     }
 }
 
 #if os(tvOS)
 import UIKit
-
-struct SystemCardFocusContext {
-    var requestsFocus: Bool
-    var isEnabled: Bool
-    var onFocus: (Bool) -> Void
-    var action: () -> Void
-}
-
-private struct SystemCardFocusContextKey: EnvironmentKey {
-    static let defaultValue: SystemCardFocusContext? = nil
-}
-
-extension EnvironmentValues {
-    var systemCardFocusContext: SystemCardFocusContext? {
-        get { self[SystemCardFocusContextKey.self] }
-        set { self[SystemCardFocusContextKey.self] = newValue }
-    }
-}
-
-private struct SystemCardProjection: ViewModifier {
-    let cornerRadius: CGFloat
-    @Environment(\.systemCardFocusContext) private var focusContext
-
-    func body(content: Content) -> some View {
-        if let focusContext {
-            SystemCardRepresentable(content: content, cornerRadius: cornerRadius, focusContext: focusContext)
-        } else {
-            content
-        }
-    }
-}
-
-private struct SystemCardRepresentable<Content: View>: UIViewRepresentable {
-    let content: Content
-    let cornerRadius: CGFloat
-    let focusContext: SystemCardFocusContext
-
-    func makeUIView(context: Context) -> SystemCardControl {
-        SystemCardControl(configuration: configuration(in: context))
-    }
-
-    func updateUIView(_ view: SystemCardControl, context: Context) {
-        view.hostedContent.configuration = configuration(in: context)
-        view.isEnabled = focusContext.isEnabled
-        view.cornerRadius = cornerRadius
-        view.surfaceColor = UIColor(context.environment.themePalette.raised.fill)
-        view.setNeedsLayout()
-        view.updateFocusContext(focusContext)
-    }
-
-    func sizeThatFits(_ proposal: ProposedViewSize, uiView: SystemCardControl, context: Context) -> CGSize? {
-        let size = uiView.hostedContent.sizeThatFits(CGSize(
-            width: proposal.width ?? UIView.layoutFittingExpandedSize.width,
-            height: proposal.height ?? UIView.layoutFittingExpandedSize.height
-        ))
-        return size
-    }
-
-    private func configuration(in context: Context) -> any UIContentConfiguration {
-        UIHostingConfiguration {
-            content
-                .environment(\.self, context.environment)
-        }
-        .margins(.all, 0)
-    }
-
-    static func dismantleUIView(_ view: SystemCardControl, coordinator: ()) {
-        view.focusContext = nil
-    }
-}
-
-/// UIKit owns focus, including tvOS's High Contrast ring and default motion.
-/// The hosting configuration remains live inside the native image's overlay.
-@MainActor
-private final class SystemCardControl: UIControl {
-    let focusImageView = UIImageView()
-    let hostedContent: UIView & UIContentView
-    var focusContext: SystemCardFocusContext?
-    var cornerRadius: CGFloat = 0
-    var surfaceColor: UIColor = .black
-    private var carrierKey = ""
-    private var selecting = false
-    private var pendingFocusRequest = false
-    private static let carriers: NSCache<NSString, UIImage> = {
-        let cache = NSCache<NSString, UIImage>()
-        cache.totalCostLimit = 8 * 1024 * 1024
-        return cache
-    }()
-
-    override var canBecomeFocused: Bool { isEnabled }
-
-    init(configuration: any UIContentConfiguration) {
-        hostedContent = configuration.makeContentView()
-        super.init(frame: .zero)
-        focusImageView.adjustsImageWhenAncestorFocused = true
-        focusImageView.masksFocusEffectToContents = true
-        focusImageView.overlayContentView.clipsToBounds = false
-        focusImageView.overlayContentView.addSubview(hostedContent)
-        hostedContent.backgroundColor = .clear
-        hostedContent.isUserInteractionEnabled = false
-        addSubview(focusImageView)
-        isAccessibilityElement = false
-        accessibilityElements = [hostedContent]
-        addAction(UIAction { [weak self] _ in self?.focusContext?.action() }, for: .primaryActionTriggered)
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    func updateFocusContext(_ context: SystemCardFocusContext) {
-        // Consume each explicit request once. An ordinary redraw must never
-        // replay it after UIKit has moved focus elsewhere.
-        let newlyRequested = context.requestsFocus && focusContext?.requestsFocus != true
-        focusContext = context
-        if !context.requestsFocus || !context.isEnabled {
-            pendingFocusRequest = false
-        } else if newlyRequested {
-            pendingFocusRequest = true
-        }
-        applyPendingFocusRequest()
-    }
-
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        applyPendingFocusRequest()
-    }
-
-    private func applyPendingFocusRequest() {
-        guard pendingFocusRequest, isEnabled, window != nil, !bounds.isEmpty,
-              let system = UIFocusSystem.focusSystem(for: self) else { return }
-        pendingFocusRequest = false
-        guard !isFocused else { return }
-        system.requestFocusUpdate(to: self)
-        system.updateFocusIfNeeded()
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        guard !bounds.isEmpty else { return }
-        focusImageView.frame = bounds
-        hostedContent.frame = focusImageView.overlayContentView.bounds
-        let color = surfaceColor.resolvedColor(with: traitCollection)
-        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
-        guard color.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
-            PlozzLog.app.error("System focus requires an RGB-compatible theme surface")
-            return
-        }
-        let key = "\(bounds.size)-\(cornerRadius)-\(red),\(green),\(blue),\(alpha)" as NSString
-        if carrierKey != key as String {
-            carrierKey = key as String
-            if let image = Self.carriers.object(forKey: key) {
-                focusImageView.image = image
-            } else {
-                let format = UIGraphicsImageRendererFormat()
-                format.scale = 1
-                let image = UIGraphicsImageRenderer(size: bounds.size, format: format).image { _ in
-                    color.setFill()
-                    UIBezierPath(roundedRect: CGRect(origin: .zero, size: bounds.size), cornerRadius: cornerRadius).fill()
-                }
-                Self.carriers.setObject(image, forKey: key, cost: Int(bounds.width * bounds.height * 4))
-                focusImageView.image = image
-            }
-        }
-        applyPendingFocusRequest()
-    }
-
-    override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
-        super.didUpdateFocus(in: context, with: coordinator)
-        pendingFocusRequest = false
-        if !isFocused { selecting = false }
-        focusContext?.onFocus(isFocused)
-    }
-
-    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        if presses.contains(where: { $0.type == .select }) { selecting = true }
-        super.pressesBegan(presses, with: event)
-    }
-
-    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        if presses.contains(where: { $0.type == .select }) {
-            if selecting, isEnabled, isFocused { sendActions(for: .primaryActionTriggered) }
-            selecting = false
-        }
-        super.pressesEnded(presses, with: event)
-    }
-
-    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        selecting = false
-        super.pressesCancelled(presses, with: event)
-    }
-}
 
 /// UIView/CALayer's 2D conversion drops the native focus image's Z translation
 /// before its ancestor's perspective is applied. Keep homogeneous coordinates
@@ -319,55 +119,19 @@ enum NativeFocusProjection {
     }
 }
 
-private struct NativeCardButtonStyle: PrimitiveButtonStyle {
-    let cornerRadius: CGFloat
-    let contentSuppliesProjection: Bool
-
-    func makeBody(configuration: Configuration) -> some View {
-        LabelBody(configuration: configuration, cornerRadius: cornerRadius, contentSuppliesProjection: contentSuppliesProjection)
-    }
-
-    private struct LabelBody: View {
-        let configuration: PrimitiveButtonStyleConfiguration
-        let cornerRadius: CGFloat
-        let contentSuppliesProjection: Bool
-        @State private var focused = false
-        @Environment(\.isEnabled) private var enabled
-
-        var body: some View {
-            Group {
-                if contentSuppliesProjection {
-                    configuration.label
-                } else {
-                    configuration.label.plozzSystemCardProjection(cornerRadius: cornerRadius)
-                }
-            }
-            .environment(\.systemCardFocusContext, SystemCardFocusContext(
-                requestsFocus: false, isEnabled: enabled, onFocus: { focused = $0 }, action: configuration.trigger
-            ))
-            .plozzChromeFocused(focused)
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction {
-                if enabled { configuration.trigger() }
-            }
-        }
-    }
-}
 #endif
 
 private struct CardFocusButtonStyle<Style: ButtonStyle>: ViewModifier {
     let fallback: Style
     let cornerRadius: CGFloat
-    let contentSuppliesProjection: Bool
     @Environment(\.plozzCardFocusStyle) private var style
 
     func body(content: Content) -> some View {
         #if os(tvOS)
         if style.usesSystemEffect {
-            content.buttonStyle(NativeCardButtonStyle(
-                cornerRadius: cornerRadius, contentSuppliesProjection: contentSuppliesProjection
-            ))
+            content
+                .buttonStyle(.borderless)
+                .buttonBorderShape(.roundedRectangle(radius: cornerRadius))
         } else {
             content.buttonStyle(fallback).focusEffectDisabled()
         }

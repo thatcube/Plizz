@@ -206,22 +206,15 @@ Card focus has three independent options: System (native tvOS projection),
 Highlight (custom sheen/lean) and Outline (custom glass). Absent per-profile
 preferences use System; saved `highlight` and `outlined` values are not migrated.
 The System path must not instantiate custom focus growth, sheen, lean, halo or
-settling tasks. System uses a native UIKit focus owner and
-`UIImageView.adjustsImageWhenAncestorFocused`; the live SwiftUI content sits in
-its `overlayContentView` via `UIHostingConfiguration`. Its alpha-shaped carrier
-is cached and capped, not a per-focus screenshot. Do not substitute SwiftUI
-`hoverEffect(.lift)` or `.highlight`: those omit the white ring from tvOS
-**Focus Style > High Contrast**, a separate setting from Increase Contrast.
-System skips SwiftUI rasterization so native focus and artwork anchors stay live.
-Captions reserve clearance without an additional custom focus animation.
+settling tasks. System uses standard SwiftUI `Button` controls with the native
+`.borderless` style and `.hoverEffect(.automatic)` on artwork. The OS owns focus
+motion and accessibility appearance. There is no UIKit carrier image, hosted
+overlay, custom focus callback bridge, forced lift, or app-level High Contrast
+override. Highlight and Outline retain their existing custom treatments.
 
-Media-card focus uses `PlozzCardFocus`: native UIKit notifications update ordinary
-visual state, never the `FocusState` used for commands. Writing a native blur
-notification back to `FocusState` can clear the entire scope after UIKit has
-already moved to the next card, returning focus to the hero/default target.
-Explicit requests are consumed once and may wait for attachment/layout, but are
-not replayed during ordinary redraws. Raw `FocusState` surfaces with independent
-focus chrome, such as multiview picture controls, retain ordinary SwiftUI focus.
+Media-card focus uses `PlozzCardFocus`, a shared wrapper around the platform's
+`FocusState`. Raw `FocusState` surfaces with independent focus chrome, such as
+multiview picture controls, retain ordinary SwiftUI focus.
 `SystemDirectionalFocusTests` drives real remote arrows through production media
 rows with a preferred hero above, including horizontal scrolling, direction
 reversals and vertical row changes in both card layouts. Programmatically
