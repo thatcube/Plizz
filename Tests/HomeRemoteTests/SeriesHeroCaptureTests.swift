@@ -12,6 +12,11 @@ final class SeriesHeroCaptureTests: XCTestCase {
         let hero = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "detail-hero-"))
         let focusedHero = hero.matching(NSPredicate(format: "hasFocus == true")).firstMatch
         XCTAssertTrue(hero.firstMatch.waitForExistence(timeout: 20), "The series hero must be present.")
+        for _ in 0..<4 {
+            if focusedHero.exists { break }
+            XCUIRemote.shared.press(.up)
+            Thread.sleep(forTimeInterval: 0.5)
+        }
         XCTAssertTrue(focusedHero.exists, "Start with focus on a hero control.")
 
         let before = XCTAttachment(screenshot: app.screenshot())
