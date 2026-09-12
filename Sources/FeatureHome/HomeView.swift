@@ -1599,7 +1599,7 @@ private struct LibraryCardView: View {
         VStack(alignment: .leading, spacing: metrics.landscapeCaptionTopSpacing) {
             artwork
                 .frame(width: metrics.landscapeWidth, height: metrics.landscapeHeight)
-                .clipShape(RoundedRectangle(cornerRadius: PlozzTheme.Metrics.mediumMediaCornerRadius, style: .continuous))
+                .plozzCardArtworkClip(RoundedRectangle(cornerRadius: PlozzTheme.Metrics.mediumMediaCornerRadius, style: .continuous))
                 .plozzMediaEdge(cornerRadius: PlozzTheme.Metrics.mediumMediaCornerRadius)
 
             VStack(alignment: .leading, spacing: 4) {
@@ -1648,7 +1648,7 @@ private struct LibraryCardView: View {
                 .aspectRatio(16.0 / 9.0, contentMode: .fit)
                 .frame(width: width)
                 .overlay { artwork }
-                .clipShape(RoundedRectangle(cornerRadius: metrics.landscapeCardCornerRadius, style: .continuous))
+                .plozzCardArtworkClip(RoundedRectangle(cornerRadius: metrics.landscapeCardCornerRadius, style: .continuous))
                 .plozzMediaEdge(cornerRadius: metrics.landscapeCardCornerRadius)
                 .plozzFocusHalo(
                     cornerRadius: metrics.landscapeCardCornerRadius,

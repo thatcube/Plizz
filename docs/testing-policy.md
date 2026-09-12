@@ -205,16 +205,19 @@ released after returning, on a memory warning, or with the page's lifetime.
 Card focus has three independent options: System (native tvOS projection),
 Highlight (custom sheen/lean) and Outline (custom glass). Absent per-profile
 preferences use System; saved `highlight` and `outlined` values are not migrated.
-The System path uses SwiftUI's native `.borderless` media button with Apple's
-`.hoverEffect(.highlight)` applied to its artwork. Despite the cross-platform
+The System path uses native `.borderless` buttons for Posters and native `.card`
+buttons for Cards and read-only information. Borderless artwork uses Apple's
+`.hoverEffect(.highlight)`. Despite the cross-platform
 API name, Apple documents its tvOS behavior as focus projection, specular light
 and remote-driven parallax. It is not the app's custom Highlight option and is
 not the scale-only `.lift` effect.
 There is no UIKit control wrapper, carrier bitmap, secondary focus image view,
-app-supplied focus scale, sheen, tilt or animation. Artwork remains live in its
-original SwiftUI rendering path. System skips card rasterization, and horizontal
-rails do not clip focus overflow. Rounded corners belong to the artwork, not to
-an outer focus-effect clip.
+app-supplied focus scale, sheen, tilt or animation. Inside native button labels,
+System also bypasses app-defined rounded clipping, glass surfaces, edge strokes,
+resting card shadows and focused z-index changes. No custom button-border or
+hover-content shape is supplied. Custom Highlight/Outline retain their styling;
+unrelated panels and iOS styling are not stripped. Artwork remains live in its
+SwiftUI rendering path and horizontal rails do not clip focus overflow.
 Captions reserve clearance without an additional custom focus animation.
 
 Media-card focus uses `PlozzCardFocus`, a wrapper around SwiftUI's `FocusState`;

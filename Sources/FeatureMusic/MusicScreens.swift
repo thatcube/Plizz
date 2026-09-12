@@ -380,9 +380,11 @@ private struct GenreCard: View {
                 .padding(18)
         }
         .frame(width: 280, height: 160)
-        .clipShape(shape)
+        .plozzCardArtworkClip(shape)
         .overlay {
-            shape.strokeBorder(.white.opacity(showsFocusRim ? 0.95 : 0.10), lineWidth: showsFocusRim ? 4 : 1)
+            if !focusStyle.usesSystemEffect {
+                shape.strokeBorder(.white.opacity(showsFocusRim ? 0.95 : 0.10), lineWidth: showsFocusRim ? 4 : 1)
+            }
         }
         // Same proven modifier order as MusicCard (works in this exact grid):
         // visual → focusableCard → rasterize → shadow → scale. `plozzCardRasterize`
@@ -390,7 +392,7 @@ private struct GenreCard: View {
         // card in this grid is what froze the render server.
         .plozzCardRasterize(reduceTransparency: reduceTransparency)
         .shadow(
-            color: .black.opacity(isFocused && !focusStyle.usesSystemEffect ? 0.4 : 0.15),
+            color: .black.opacity(focusStyle.usesSystemEffect ? 0 : (isFocused ? 0.4 : 0.15)),
             radius: isFocused && !focusStyle.usesSystemEffect ? 22 : 8,
             y: isFocused && !focusStyle.usesSystemEffect ? 12 : 4
         )

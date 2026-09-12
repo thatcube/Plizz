@@ -1,6 +1,17 @@
 import CoreModels
 import SwiftUI
 
+private struct NativeFocusSurfaceKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var plozzNativeFocusSurface: Bool {
+        get { self[NativeFocusSurfaceKey.self] }
+        set { self[NativeFocusSurfaceKey.self] = newValue }
+    }
+}
+
 @propertyWrapper
 public struct PlozzCardFocus: DynamicProperty {
     @FocusState private var focused: Bool
@@ -27,8 +38,7 @@ public extension View {
     /// Apple's tvOS projection, specular highlight and remote-driven parallax.
     func plozzSystemCardProjection(cornerRadius: CGFloat) -> some View {
         #if os(tvOS)
-        contentShape(.hoverEffect, RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .hoverEffect(.highlight)
+        hoverEffect(.highlight)
         #else
         self
         #endif
@@ -38,29 +48,74 @@ public extension View {
         modifier(RestingCardShadow(isFocused: isFocused))
     }
 
+    func plozzCardArtworkClip<S: Shape>(_ shape: S) -> some View {
+        modifier(CardArtworkClip(shape: shape))
+    }
+
+    func plozzNativeMediaButtonStyle() -> some View {
+        modifier(NativeMediaButtonStyle())
+    }
+
     func plozzCardFocusButtonStyle<Style: ButtonStyle>(
         _ fallback: Style, cornerRadius: CGFloat, contentSuppliesProjection: Bool = false
     ) -> some View {
-        modifier(CardFocusButtonStyle(fallback: fallback, cornerRadius: cornerRadius))
+        modifier(CardFocusButtonStyle(fallback: fallback, contentSuppliesProjection: contentSuppliesProjection))
     }
 }
 
 private struct CardFocusButtonStyle<Style: ButtonStyle>: ViewModifier {
     let fallback: Style
-    let cornerRadius: CGFloat
+    let contentSuppliesProjection: Bool
     @Environment(\.plozzCardFocusStyle) private var style
 
     func body(content: Content) -> some View {
         #if os(tvOS)
         if style.usesSystemEffect {
-            content
-                .buttonStyle(.borderless)
-                .buttonBorderShape(.roundedRectangle(radius: cornerRadius))
+            if contentSuppliesProjection {
+                content.buttonStyle(.borderless)
+                    .environment(\.plozzNativeFocusSurface, true)
+            } else {
+                content.buttonStyle(.card)
+                    .environment(\.plozzNativeFocusSurface, true)
+            }
         } else {
             content.buttonStyle(fallback).focusEffectDisabled()
         }
         #else
         content.buttonStyle(fallback)
+        #endif
+    }
+}
+
+private struct NativeMediaButtonStyle: ViewModifier {
+    @Environment(\.plozzCardStyle) private var cardStyle
+
+    func body(content: Content) -> some View {
+        #if os(tvOS)
+        if cardStyle == .borderless {
+            content.buttonStyle(.borderless)
+        } else {
+            content.buttonStyle(.card)
+        }
+        #else
+        content
+        #endif
+    }
+}
+
+private struct CardArtworkClip<S: Shape>: ViewModifier {
+    let shape: S
+    @Environment(\.plozzNativeFocusSurface) private var nativeSurface
+
+    func body(content: Content) -> some View {
+        #if os(tvOS)
+        if nativeSurface {
+            content
+        } else {
+            content.clipShape(shape)
+        }
+        #else
+        content.clipShape(shape)
         #endif
     }
 }
@@ -75,15 +130,18 @@ private struct CardFocusEffectAvailability: ViewModifier {
 
 private struct RestingCardShadow: ViewModifier {
     let isFocused: Bool
-    @Environment(\.plozzCardFocusStyle) private var style
+    @Environment(\.plozzNativeFocusSurface) private var nativeSurface
 
     func body(content: Content) -> some View {
-        let customFocus = isFocused && !style.usesSystemEffect
-        content.shadow(
-            color: .black.opacity(customFocus ? 0.36 : 0.15),
-            radius: customFocus ? 20 : 8,
-            y: customFocus ? 10 : 4
-        )
+        if nativeSurface {
+            content
+        } else {
+            content.shadow(
+                color: .black.opacity(isFocused ? 0.36 : 0.15),
+                radius: isFocused ? 20 : 8,
+                y: isFocused ? 10 : 4
+            )
+        }
     }
 }
 

@@ -856,6 +856,7 @@ public struct MediaRowView: View {
                 .onTapGesture(perform: selectEpisodeEntryPlaceholder)
                 #endif
                 .accessibilityIdentifier("episode-entry-placeholder")
+                .environment(\.plozzCardStyle, .borderless)
                 if episodeEntry?.phase == .loading || episodeEntry?.phase == .ready {
                     ForEach(0..<3, id: \.self) { _ in
                         EpisodeRowEntryPlaceholder().accessibilityHidden(true)

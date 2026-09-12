@@ -62,7 +62,7 @@ struct MusicArtworkImage: View {
                 placeholder
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .plozzCardArtworkClip(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .modifier(OptionalMediaEdge(cornerRadius: cornerRadius, enabled: showsMediaEdge))
     }
 

@@ -16,6 +16,7 @@ public struct PlozzGlassCardModifier: ViewModifier {
 
     @Environment(\.plozzReduceTransparency) private var reduceTransparency
     @Environment(\.themePalette) private var palette
+    @Environment(\.plozzNativeFocusSurface) private var nativeSurface
 
     public init(cornerRadius: CGFloat, isFocused: Bool, glassAtRest: Bool = true) {
         self.cornerRadius = cornerRadius
@@ -53,7 +54,9 @@ public struct PlozzGlassCardModifier: ViewModifier {
     public func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
 
-        if reduceTransparency {
+        if nativeSurface {
+            content
+        } else if reduceTransparency {
             // Reduce Transparency on: never lean on translucency. At REST use the
             // shared elevation surface (identical to the glass branch below and to
             // every other card), so a card looks the same regardless of this
@@ -122,6 +125,7 @@ public struct PlozzMediaEdgeModifier: ViewModifier {
     private let cornerRadius: CGFloat
     private let isEnabled: Bool
     @Environment(\.themePalette) private var palette
+    @Environment(\.plozzNativeFocusSurface) private var nativeSurface
 
     public init(cornerRadius: CGFloat, isEnabled: Bool = true) {
         self.cornerRadius = cornerRadius
@@ -130,7 +134,7 @@ public struct PlozzMediaEdgeModifier: ViewModifier {
 
     public func body(content: Content) -> some View {
         content.overlay {
-            if isEnabled {
+            if isEnabled && !nativeSurface {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .inset(by: -0.5)
                     .stroke(palette.mediaEdgeColor, lineWidth: 1.5)
@@ -289,12 +293,12 @@ public struct PlozzFocusableCardModifier: ViewModifier {
     public func body(content: Content) -> some View {
         #if os(tvOS)
         if focusStyle.usesSystemEffect {
-            content
-                .background { surface }
-                .plozzSystemCardProjection(cornerRadius: cornerRadius)
-                .focusableCard(isFocused: $focused, cornerRadius: cornerRadius, action: {})
+            Button {} label: {
+                content.environment(\.plozzNativeFocusSurface, true)
+            }
+                .buttonStyle(.card)
+                .focused($focused.focusState)
                 .accessibilityRemoveTraits(.isButton)
-                .zIndex(focused ? 1 : 0)
         } else {
             content
                 .background { surface }

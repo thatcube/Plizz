@@ -141,10 +141,12 @@ public struct PosterCardView: View {
     /// "lift" surface. Centralised in `PlozzCardCaption` so every card type flips
     /// identically.
     private var titleColor: Color {
-        PlozzCardCaption.titleColor(isFocused: surfaceFocused, reduceTransparency: reduceTransparency)
+        focusStyle.usesSystemEffect ? .primary
+            : PlozzCardCaption.titleColor(isFocused: surfaceFocused, reduceTransparency: reduceTransparency)
     }
     private var subtitleColor: Color {
-        PlozzCardCaption.subtitleColor(isFocused: surfaceFocused, reduceTransparency: reduceTransparency)
+        focusStyle.usesSystemEffect ? .secondary
+            : PlozzCardCaption.subtitleColor(isFocused: surfaceFocused, reduceTransparency: reduceTransparency)
     }
 
     private var size: CGSize {
@@ -226,7 +228,7 @@ public struct PosterCardView: View {
                 }
                 .overlay { resumeChip }
                 .overlay { pendingRemovalOverlay }
-                .clipShape(RoundedRectangle(cornerRadius: PlozzTheme.Metrics.posterArtCornerRadius, style: .continuous))
+                .plozzCardArtworkClip(RoundedRectangle(cornerRadius: PlozzTheme.Metrics.posterArtCornerRadius, style: .continuous))
                 .plozzMediaEdge(
                     cornerRadius: PlozzTheme.Metrics.posterArtCornerRadius,
                     isEnabled: MediaArtworkPlaceholder.Symbol(for: item) == .playback
@@ -280,7 +282,7 @@ public struct PosterCardView: View {
                 }
                 .overlay { resumeChip }
                 .overlay { pendingRemovalOverlay }
-                .clipShape(RoundedRectangle(cornerRadius: PlozzTheme.Metrics.mediumMediaCornerRadius, style: .continuous))
+                .plozzCardArtworkClip(RoundedRectangle(cornerRadius: PlozzTheme.Metrics.mediumMediaCornerRadius, style: .continuous))
                 .plozzMediaEdge(
                     cornerRadius: PlozzTheme.Metrics.mediumMediaCornerRadius,
                     isEnabled: MediaArtworkPlaceholder.Symbol(for: item) == .playback
@@ -380,7 +382,7 @@ public struct PosterCardView: View {
             }
             .overlay { resumeChip }
             .overlay { pendingRemovalOverlay }
-            .clipShape(RoundedRectangle(cornerRadius: borderlessCornerRadius, style: .continuous))
+            .plozzCardArtworkClip(RoundedRectangle(cornerRadius: borderlessCornerRadius, style: .continuous))
             .plozzMediaEdge(
                 cornerRadius: borderlessCornerRadius,
                 isEnabled: MediaArtworkPlaceholder.Symbol(for: item) == .playback
@@ -1465,9 +1467,10 @@ private struct CardFocusOwner: ViewModifier {
 
     func body(content: Content) -> some View {
         if style.usesSystemEffect {
-            Button(action: action) { content }
-                .buttonStyle(.borderless)
-                .buttonBorderShape(.roundedRectangle(radius: cornerRadius))
+            Button(action: action) {
+                content.environment(\.plozzNativeFocusSurface, true)
+            }
+                .plozzNativeMediaButtonStyle()
                 .focused(isFocused.focusState)
                 .disabled(!isEnabled || !parentEnabled)
         } else {

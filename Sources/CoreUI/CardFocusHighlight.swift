@@ -121,7 +121,7 @@ private struct CardFocusTreatmentModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         if focusStyle.usesSystemEffect {
-            content.plozzSystemCardProjection(cornerRadius: cornerRadius)
+            content
         } else {
             content.modifier(CardFocusLiftModifier(
                 isFocused: isFocused, cornerRadius: cornerRadius,
@@ -425,7 +425,7 @@ private struct CardFocusTransitionSelector: ViewModifier {
 
     func body(content: Content) -> some View {
         if focusStyle.usesSystemEffect {
-            content.zIndex(isFocused ? focusedZIndex : 0)
+            content
         } else {
             content.modifier(CardFocusTransitionModifier(
                 isFocused: isFocused, focusedZIndex: focusedZIndex, animates: animates

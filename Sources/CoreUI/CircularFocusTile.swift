@@ -52,7 +52,6 @@ public struct CircularFocusHalo<Avatar: View>: View {
         if focusStyle.usesSystemEffect {
             avatar()
                 .frame(width: diameter, height: diameter)
-                .clipShape(Circle())
                 .plozzSystemCardProjection(cornerRadius: diameter / 2)
                 .frame(width: slot, height: slot)
         } else {
@@ -65,7 +64,7 @@ public struct CircularFocusHalo<Avatar: View>: View {
 
                 avatar()
                     .frame(width: diameter, height: diameter)
-                    .clipShape(Circle())
+                    .plozzCardArtworkClip(Circle())
                     .scaleEffect(contentScale)
             }
             .frame(width: slot, height: slot)
@@ -132,7 +131,7 @@ public struct CircularFocusTile<Avatar: View, Caption: View>: View {
         VStack(spacing: captionSpacing + push) {
             avatar()
                 .frame(width: diameter, height: diameter)
-                .clipShape(Circle())
+                .plozzCardArtworkClip(Circle())
                 .plozzFocusHalo(
                     cornerRadius: diameter / 2,
                     focusScale: focusScale,
@@ -152,6 +151,7 @@ public struct CircularFocusTile<Avatar: View, Caption: View>: View {
         .onChange(of: isFocused) { _, focused in onFocusChange?(focused) }
         .accessibilityAddTraits(.isButton)
         .plozzCardFocusTransition(isFocused: isFocused)
+        .environment(\.plozzCardStyle, .borderless)
     }
 }
 #endif

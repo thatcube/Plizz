@@ -97,7 +97,7 @@ public struct EpisodeColumnCard: View, Equatable {
                     }
                 }
                 .overlay(alignment: .topTrailing) { statusIndicator }
-                .clipShape(RoundedRectangle(
+                .plozzCardArtworkClip(RoundedRectangle(
                     cornerRadius: metrics.landscapeCardCornerRadius,
                     style: .continuous
                 ))
@@ -167,6 +167,7 @@ public struct EpisodeColumnCard: View, Equatable {
             synopsisAtRest = true
         }
         .mediaItemContextMenu(for: item)
+        .environment(\.plozzCardStyle, .borderless)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(presentation.accessibilityLabel)
     }
