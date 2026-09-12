@@ -5,6 +5,7 @@ import SwiftUI
 /// shading is baked; the theme's opaque black/white tone stays live.
 public struct HomeHeroLegibilityTexture: View {
     private let tone: Color
+    @Environment(\.layoutDirection) private var layoutDirection
 
     public init(tone: Color) {
         self.tone = tone
@@ -12,7 +13,7 @@ public struct HomeHeroLegibilityTexture: View {
 
     @ViewBuilder
     public var body: some View {
-        if tone == .black || tone == .white {
+        if layoutDirection == .leftToRight && (tone == .black || tone == .white) {
             Image("HomeHeroLegibility", bundle: .module)
                 .resizable()
                 .renderingMode(.template)

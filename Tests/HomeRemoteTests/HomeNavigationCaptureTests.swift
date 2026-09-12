@@ -22,9 +22,9 @@ final class HomeNavigationCaptureTests: XCTestCase {
         }
         XCTAssertTrue(hero.waitForExistence(timeout: 45), "Home hero must be loaded, not a profile picker.")
         XCTAssertEqual(app.state, .runningForeground, "Launch the desired capture configuration first.")
-        if startup && !hero.hasFocus { XCUIRemote.shared.press(.right) }
-        XCTAssertTrue(hero.hasFocus, "Start on the hero, not a sidebar or another row.")
+        focusHero(hero, in: app)
         if !startup {
+            Thread.sleep(forTimeInterval: 2)
             capture("Before navigation", app: app)
             print("PLZREMOTE warmup \(Date().timeIntervalSince1970)")
             XCUIRemote.shared.press(.down)
@@ -44,10 +44,10 @@ final class HomeNavigationCaptureTests: XCTestCase {
                 XCTOSSignpostMetric(subsystem: "com.plozz.app", category: "homeanimation", name: $0)
             }, options: options) {
                 print("PLZREMOTE cycle \(Date().timeIntervalSince1970)")
-                navigationCycle()
+                navigationCycle(hero: hero)
             }
         } else {
-            for _ in 0..<12 { navigationCycle() }
+            for _ in 0..<12 { navigationCycle(hero: hero) }
         }
         print("PLZREMOTE end \(Date().timeIntervalSince1970)")
         XCTAssertEqual(app.state, .runningForeground)
@@ -56,11 +56,35 @@ final class HomeNavigationCaptureTests: XCTestCase {
     }
 
     @MainActor
-    private func navigationCycle() {
+    private func focusHero(_ hero: XCUIElement, in app: XCUIApplication) {
+        var previousFrame: CGRect?
+        var lastMoveWasUp = false
+        for _ in 0..<12 {
+            if hero.hasFocus { return }
+            let focused = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "hasFocus == true")).firstMatch
+            guard focused.exists else {
+                Thread.sleep(forTimeInterval: 0.2)
+                continue
+            }
+            let frame = focused.frame
+            let leaveSidebar = focused.label == "Home" || (lastMoveWasUp && previousFrame == frame)
+            XCUIRemote.shared.press(leaveSidebar ? .right : .up)
+            previousFrame = frame
+            lastMoveWasUp = !leaveSidebar
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+        XCTFail("Could not focus the Home hero; no measurement should proceed.")
+    }
+
+    @MainActor
+    private func navigationCycle(hero: XCUIElement) {
         XCUIRemote.shared.press(.down)
         Thread.sleep(forTimeInterval: 2)
+        XCTAssertFalse(hero.hasFocus, "Down must reach the rows.")
         XCUIRemote.shared.press(.up)
         Thread.sleep(forTimeInterval: 2)
+        XCTAssertTrue(hero.hasFocus, "Up must return to the hero.")
     }
 
     @MainActor

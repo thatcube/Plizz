@@ -93,6 +93,7 @@ public final class HomeHeroRuntimeState {
 @MainActor
 @Observable
 final class HomeHeroRecedeModel {
+    static let animationDuration: TimeInterval = 0.9
     var isReceded = false
 }
 
@@ -202,7 +203,7 @@ public struct HomeView: View {
     /// `.offset` transforms (not layout), a long duration costs nothing extra. The
     /// backdrop artwork uses its OWN, even slower curve (see HomeHeroBackdrop) so
     /// it lags behind and settles last — the Apple TV parallax feel.
-    private static let recedeAnimationDuration: CGFloat = 0.9
+    private static let recedeAnimationDuration = HomeHeroRecedeModel.animationDuration
 
     /// Page-scroll distance (points) past which the hero is considered "receded".
     /// The focus engine scrolls the page ~480pt in a single frame the instant
@@ -468,10 +469,16 @@ public struct HomeView: View {
                                 onFocusGained: {
                                     HomePerfDiagnostics.emitLine("HOME-TRANSITION hero-focus UP")
                                     if heroRecedeModel.isReceded {
+                                        HomeMotionDiagnostics.transition(receding: false)
                                         HomePerfDiagnostics.recordNavigationAnimation(receding: false)
                                     }
-                                    withAnimation(.smooth(duration: Self.recedeAnimationDuration)) {
+                                    if HomeAnimationComparison.isolatesMotionTransactions {
                                         heroRecedeModel.isReceded = false
+                                    }
+                                    withAnimation(.smooth(duration: Self.recedeAnimationDuration)) {
+                                        if !HomeAnimationComparison.isolatesMotionTransactions {
+                                            heroRecedeModel.isReceded = false
+                                        }
                                         heroScrollProxy.scrollTo(Self.heroTopID, anchor: .top)
                                     }
                                 },
@@ -590,9 +597,16 @@ public struct HomeView: View {
                     heroActive && geometry.contentOffset.y > Self.recedeScrollThreshold
                 } action: { _, shouldRecede in
                     HomePerfDiagnostics.emitLine("HOME-TRANSITION receded=\(shouldRecede)")
-                    if shouldRecede { HomePerfDiagnostics.recordNavigationAnimation(receding: true) }
-                    withAnimation(.smooth(duration: Self.recedeAnimationDuration)) {
+                    if shouldRecede {
+                        HomeMotionDiagnostics.transition(receding: true)
+                        HomePerfDiagnostics.recordNavigationAnimation(receding: true)
+                    }
+                    if HomeAnimationComparison.isolatesMotionTransactions {
                         heroRecedeModel.isReceded = shouldRecede
+                    } else {
+                        withAnimation(.smooth(duration: Self.recedeAnimationDuration)) {
+                            heroRecedeModel.isReceded = shouldRecede
+                        }
                     }
                 }
                 // When the hero is active, let it bleed into the top overscan
@@ -1816,7 +1830,11 @@ private struct HomeRowsRecedeModifier: ViewModifier {
     let lift: CGFloat
 
     func body(content: Content) -> some View {
-        content.offset(y: active && model.isReceded ? -lift : 0)
+        content.modifier(HomeVerticalMotion(
+            y: active && model.isReceded ? -lift : 0,
+            duration: HomeHeroRecedeModel.animationDuration,
+            isolated: HomeAnimationComparison.isolatesMotionTransactions
+        ))
     }
 }
 

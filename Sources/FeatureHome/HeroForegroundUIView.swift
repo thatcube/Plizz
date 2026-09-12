@@ -199,6 +199,9 @@ final class HeroForegroundUIView: UIView {
             addSubview(v)
         }
         dotsContainer.clipsToBounds = true
+        HomeMotionDiagnostics.register(self, role: "foreground")
+        HomeMotionDiagnostics.register(logoImageView, role: "logo")
+        HomeMotionDiagnostics.register(pillsContainer, role: "pills")
     }
 
     @available(*, unavailable)

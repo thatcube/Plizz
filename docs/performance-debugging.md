@@ -473,24 +473,29 @@ clean, here's the breakdown" is a real outcome** — it stops you from cargo-cul
 "optimisations" that cost readability and fix nothing. Record the numbers so the
 next agent doesn't re-chase a ghost.
 
-### Opt-in Home backdrop composition comparisons
+### Home backdrop composition and comparison controls
 
-Both options below are off by default and do not change saved settings:
+tvOS uses cached shading by default where it preserves the original treatment.
+iOS retains analytic shading by default. The color dissolve and animation
+isolation experiments remain off. These launch overrides do not change saved settings:
 
 | Launch flag | Rendering change |
 | --- | --- |
-| `PLZHOME_CACHED_SCRIM=1` | Replaces Home's fixed wash and leading/bottom gradients with a pre-rendered alpha texture. |
+| `PLZHOME_CACHED_SCRIM=0` | Forces the original analytic shading for a control recording. |
+| `PLZHOME_CACHED_SCRIM=1` | Uses the pre-rendered alpha texture where eligible (also opt-in on iOS). |
 | `PLZHOME_OPAQUE_DISSOLVE=1` | Replaces the whole-backdrop alpha mask with the inverse fade into `AppBackground`'s opaque `backgroundBase`. |
 
-The options are independent. Compare each against the default before combining
+The options are independent. Compare each against the analytic reference before combining
 them, with the same artwork, theme, row population, and input cadence. Neither
 changes the page scroll, recede distances, or 0.9/0.96-second animation choices.
 Local layer-count and screenshot improvements are not proof of Apple TV frame
-rate; confirm on the physical device before enabling either by default.
+rate; confirm on the physical device before promoting an experiment.
 
 `HomeHeroLegibilityTexture` uses native-size 1920x1080 and 3840x2160 alpha assets,
-not a runtime `drawingGroup`. The texture is tinted for opaque black/white;
-other tones retain the analytic `HeroLegibilityScrim` path. Its fixed parameters
+not a runtime `drawingGroup`. The texture is tinted for opaque black/white in
+left-to-right layouts; other tones and right-to-left layouts retain the analytic
+`HeroLegibilityScrim` path. The RTL fallback preserves the platform's own leading
+edge behavior, which differed between the tvOS 26 and 27 comparisons. Its fixed parameters
 match Home's current leading/bottom treatment. Regenerate with
 `python3 tools/generate_home_scrim.py` whenever those parameters change, and
 verify with `python3 tools/generate_home_scrim.py --check` plus
@@ -547,6 +552,51 @@ start). The first 20-second callback windows were similar: median smoothed FPS
 59 in both, reported hitches 2.66/2.55 per second. This establishes loading
 overlap, **not** a proven startup improvement or presented-frame equivalence.
 Keep that limitation separate from the native animation results above.
+
+#### Investigating a visible position jump
+
+`PLZHOME_MOTION_TRACE=1` enables a passive, one-shot capture of the UIKit hero
+artwork, foreground, logo and pills. It records model/presentation coordinates,
+the enclosing page's scroll offset, content height and inset, without publishing
+SwiftUI state or steering focus. It retains a short pre-transition history and
+20 seconds after the first recede, then writes
+`Library/Caches/plozz-home-motion.json`. This is geometry evidence, not a
+low-overhead FPS benchmark; file serialization happens after sampling stops.
+If no transition occurs within two minutes, sampling stops with an explicit
+diagnostic instead of leaving a display link running indefinitely.
+
+A tvOS 27 capture found 40–60-point hero steps following delayed updates while
+hero heights and the top inset stayed constant. A separate Time Profiler capture
+showed main-thread SwiftUI/AttributeGraph work and substantial background share
+scanning. Do not call every large coordinate step a layout-size change, or blame
+all of it on GPU composition.
+
+One measured source of redundant focus-time work was eager context-menu action
+preparation. A deferred-content experiment eliminated unopened-menu queries in
+a hosted test and opened the real menu, but its same-binary comparison did not
+establish a fix for the remaining jumps. Native dismissal/focus verification
+also remained inconclusive. That experiment was removed rather than mixing it
+into subsequent motion comparisons.
+
+`PLZHOME_ISOLATED_MOTION=1` is a separate, off-by-default transaction-scope
+experiment. Its movement modifier explicitly interpolates the offset before
+clearing child animations; clearing the transaction around an ordinary offset
+made UIKit content snap in the hosted comparison. It keeps the original native
+gradient mask, because rebuilding that gradient from an interpolated start
+position differed during the fade. Hosted tests compare rendered positions,
+UIKit geometry, mask pixels and reversal on tvOS 26 and 27.
+
+Do not attribute improvements in an isolation-OFF control to that experimental
+path. One tvOS 27 control reported zero hitches in all twelve measured Down
+windows and all twelve Up windows, and was the run the viewer reported as
+smoother. This does not establish the cause of the improvement, nor prove that
+busy-startup cases are fixed.
+
+A repeat with a focus assertion after every Down and Up still recorded occasional
+hitches: mean Down/Up ratios of 5.8/1.1 ms/s in the control. Isolation ON measured
+9.3/0.0 ms/s and more large sampled coordinate steps in that comparison, so it
+was not accepted as an overall improvement and remains off. Keep the successful
+cached-shading change separate from that unresolved experiment.
 
 ---
 
