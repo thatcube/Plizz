@@ -205,8 +205,10 @@ released after returning, on a memory warning, or with the page's lifetime.
 Card focus has three independent options: System (native tvOS projection),
 Highlight (custom sheen/lean) and Outline (custom glass). Absent per-profile
 preferences use System; saved `highlight` and `outlined` values are not migrated.
-The System path must not instantiate custom focus growth, sheen, lean, halo or
-settling tasks. System uses a native UIKit focus owner and
+The System path retains the OS outline and native image effects, with an
+app-supplied, Reduce-Motion-aware lift driven by `UIFocusAnimationCoordinator`.
+It is not an untouched automatic effect. No custom sheen, arrival lean, halo
+or settling task is added. System uses a native UIKit focus owner and
 `UIImageView.adjustsImageWhenAncestorFocused`. Resolved artwork is composed into
 the native image; only captions, badges and other live decorations stay in
 `overlayContentView` via `UIHostingConfiguration`. Drawing the opaque artwork in

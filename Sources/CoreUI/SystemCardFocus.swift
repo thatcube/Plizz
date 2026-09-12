@@ -386,6 +386,11 @@ private final class SystemCardControl: UIControl {
         super.didUpdateFocus(in: context, with: coordinator)
         pendingFocusRequest = false
         if !isFocused { selecting = false }
+        let scale: CGFloat = isFocused && !UIAccessibility.isReduceMotionEnabled
+            ? PlozzTheme.Metrics.mediumFocusedCardScale : 1
+        coordinator.addCoordinatedAnimations {
+            self.transform = CGAffineTransform(scaleX: scale, y: scale)
+        }
         focusContext?.onFocus(isFocused)
     }
 
