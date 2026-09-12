@@ -273,7 +273,7 @@ private struct CardRasterization: ViewModifier {
 public struct PlozzFocusableCardModifier: ViewModifier {
     private let cornerRadius: CGFloat
     private let variant: PlozzFocusableCardVariant
-    @FocusState private var focused: Bool
+    @PlozzCardFocus private var focused: Bool
     @Environment(\.themePalette) private var palette
     @Environment(\.plozzReduceTransparency) private var reduceTransparency
     @Environment(\.plozzCardFocusStyle) private var focusStyle
@@ -299,7 +299,7 @@ public struct PlozzFocusableCardModifier: ViewModifier {
             content
                 .background { surface }
                 .focusable(true)
-                .focused($focused)
+                .focused($focused.focusState)
                 .focusEffectDisabled()
                 .scaleEffect(focused ? PlozzTheme.Metrics.readOnlyFocusedCardScale : 1)
                 .zIndex(focused ? 1 : 0)

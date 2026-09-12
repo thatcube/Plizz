@@ -145,7 +145,7 @@ private struct BrowseButton: View {
     let title: LocalizedStringResource
     let action: () -> Void
 
-    @FocusState private var isFocused: Bool
+    @PlozzCardFocus private var isFocused: Bool
     @Environment(\.plozzReduceTransparency) private var reduceTransparency
     @Environment(\.plozzMetrics) private var metrics
     @Environment(\.plozzCardFocusStyle) private var focusStyle
@@ -343,7 +343,7 @@ private struct GenreCard: View {
     /// always differ in colour.
     let index: Int
     let action: () -> Void
-    @FocusState private var isFocused: Bool
+    @PlozzCardFocus private var isFocused: Bool
     @Environment(\.plozzReduceTransparency) private var reduceTransparency
     @Environment(\.plozzCardFocusStyle) private var focusStyle
 

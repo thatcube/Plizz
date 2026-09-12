@@ -7,7 +7,9 @@ import CoreModels
 struct FocusHostApp: App {
     var body: some Scene {
         WindowGroup {
-            if ProcessInfo.processInfo.arguments.contains("--focus-style-fixture") {
+            if ProcessInfo.processInfo.arguments.contains("--focus-navigation-fixture") {
+                SystemFocusNavigationFixture()
+            } else if ProcessInfo.processInfo.arguments.contains("--focus-style-fixture") {
                 FocusStyleFixture()
             } else {
                 Color.black
@@ -78,7 +80,7 @@ private struct FocusStyleFixture: View {
 
 private struct ProductionFocusFixture: View {
     let circular: Bool
-    @FocusState private var focused: Bool
+    @PlozzCardFocus private var focused: Bool
     @State private var activations = 0
 
     var body: some View {

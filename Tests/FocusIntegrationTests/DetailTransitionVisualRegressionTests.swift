@@ -298,6 +298,25 @@ final class DetailTransitionVisualRegressionTests: XCTestCase {
         add(attachment)
     }
 
+    func testIndependentFocusSurfaceRemainsFocusableInSystemCardMode() async throws {
+        let scene = try await activeScene()
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        var focused = false
+        let host = UIHostingController(rootView: IndependentFocusSurface { focused = $0 }
+            .environment(\.plozzCardFocusStyle, .system))
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previous?.makeKeyAndVisible()
+        }
+        try await waitUntil { focused }
+        XCTAssertNotNil(UIFocusSystem.focusSystem(for: window)?.focusedItem)
+    }
+
     private func sourceView(in view: UIView) -> DetailTransitionSourceView? {
         if let source = view as? DetailTransitionSourceView { return source }
         return view.subviews.lazy.compactMap { self.sourceView(in: $0) }.first
@@ -495,9 +514,22 @@ private final class NativeFocusGridHost: UIViewController {
     }
 }
 
+private struct IndependentFocusSurface: View {
+    let onFocus: (Bool) -> Void
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        Color.clear
+            .frame(width: 400, height: 220)
+            .focusableCard(isFocused: $focused, cornerRadius: 10, action: {})
+            .onChange(of: focused) { _, value in onFocus(value) }
+            .accessibilityLabel("Independent picture control")
+    }
+}
+
 private struct NativeFocusTestCard: View {
     let index: Int
-    @FocusState private var focused: Bool
+    @PlozzCardFocus private var focused: Bool
 
     var body: some View {
         VStack(spacing: 28) {

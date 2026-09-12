@@ -49,7 +49,7 @@ public struct PosterCardView: View {
     private let isPendingRemoval: Bool
     private let action: () -> Void
 
-    @FocusState private var isFocused: Bool
+    @PlozzCardFocus private var isFocused: Bool
     #if os(tvOS)
     @State private var detailTransitionSource = DetailTransitionSourceReference()
     #endif
@@ -182,7 +182,7 @@ public struct PosterCardView: View {
                     itemKey: item.stablePresentationID,
                     cornerRadius: transitionArtworkCornerRadius,
                     isFocused: isFocused,
-                    focus: $isFocused
+                    focus: $isFocused.focusState
                 )
             }
             #endif
@@ -1415,10 +1415,29 @@ private struct FolderNavigationBadge: View {
 }
 
 public extension View {
-    /// One focus owner and select handler, with native effects enabled only for
-    /// System. Call after rasterizing the artwork so projection is not flattened.
+    /// Ordinary SwiftUI focus for surfaces that supply their own focus visuals.
     func focusableCard(
         isFocused: FocusState<Bool>.Binding,
+        cornerRadius: CGFloat,
+        isEnabled: Bool = true,
+        action: @escaping () -> Void
+    ) -> some View {
+        #if os(tvOS)
+        contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .focusable(isEnabled)
+            .focused(isFocused)
+            .focusEffectDisabled()
+            .onTapGesture(perform: action)
+            .disabled(!isEnabled)
+            .accessibilityAddTraits(.isButton)
+        #else
+        contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        #endif
+    }
+
+    /// Media-card focus with separate native observations and explicit requests.
+    func focusableCard(
+        isFocused: PlozzCardFocus.Binding,
         cornerRadius: CGFloat,
         isEnabled: Bool = true,
         action: @escaping () -> Void
@@ -1437,7 +1456,7 @@ public extension View {
 
 #if os(tvOS)
 private struct CardFocusOwner: ViewModifier {
-    let isFocused: FocusState<Bool>.Binding
+    let isFocused: PlozzCardFocus.Binding
     let cornerRadius: CGFloat
     let isEnabled: Bool
     let action: () -> Void
@@ -1448,11 +1467,16 @@ private struct CardFocusOwner: ViewModifier {
         if style.usesSystemEffect {
             content
                 .environment(\.systemCardFocusContext, SystemCardFocusContext(
-                    isFocused: isFocused.wrappedValue,
+                    requestsFocus: isFocused.focusState.wrappedValue,
                     isEnabled: isEnabled && parentEnabled,
-                    onFocus: { isFocused.wrappedValue = $0 }, action: action
+                    onFocus: { focused in
+                        if isFocused.observed.wrappedValue != focused {
+                            isFocused.observed.wrappedValue = focused
+                        }
+                    },
+                    action: action
                 ))
-                .focused(isFocused)
+                .focused(isFocused.focusState)
                 .accessibilityElement(children: .combine)
                 .accessibilityAddTraits(.isButton)
                 .accessibilityAction {
@@ -1462,7 +1486,7 @@ private struct CardFocusOwner: ViewModifier {
             content
                 .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
                 .focusable(isEnabled)
-                .focused(isFocused)
+                .focused(isFocused.focusState)
                 .focusEffectDisabled()
                 .onTapGesture(perform: action)
                 .disabled(!isEnabled)

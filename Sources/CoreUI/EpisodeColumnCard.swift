@@ -33,7 +33,7 @@ public struct EpisodeColumnCard: View, Equatable {
     private let presentation: EpisodeColumnPresentation
     private let action: () -> Void
 
-    @FocusState private var isFocused: Bool
+    @PlozzCardFocus private var isFocused: Bool
     @State private var synopsisVisible = false
     @State private var synopsisAtRest = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

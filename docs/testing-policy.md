@@ -215,6 +215,18 @@ is cached and capped, not a per-focus screenshot. Do not substitute SwiftUI
 System skips SwiftUI rasterization so native focus and artwork anchors stay live.
 Captions reserve clearance without an additional custom focus animation.
 
+Media-card focus uses `PlozzCardFocus`: native UIKit notifications update ordinary
+visual state, never the `FocusState` used for commands. Writing a native blur
+notification back to `FocusState` can clear the entire scope after UIKit has
+already moved to the next card, returning focus to the hero/default target.
+Explicit requests are consumed once and may wait for attachment/layout, but are
+not replayed during ordinary redraws. Raw `FocusState` surfaces with independent
+focus chrome, such as multiview picture controls, retain ordinary SwiftUI focus.
+`SystemDirectionalFocusTests` drives real remote arrows through production media
+rows with a preferred hero above, including horizontal scrolling, direction
+reversals and vertical row changes in both card layouts. Programmatically
+requesting the next focus target is not an adequate substitute for this test.
+
 `NativeFocusProjectionTests` covers the perspective/Z transform that ordinary
 2D layer conversion loses. Real card tests compare the projected artwork's
 rectangle and rounded corners against painted pixels through a native pop.

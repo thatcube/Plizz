@@ -96,7 +96,7 @@ public struct CircularFocusTile<Avatar: View, Caption: View>: View {
     private let action: () -> Void
     private let onFocusChange: ((Bool) -> Void)?
 
-    @FocusState private var isFocused: Bool
+    @PlozzCardFocus private var isFocused: Bool
     @Environment(\.plozzMetrics) private var metrics
     @Environment(\.plozzCardFocusStyle) private var focusStyle
 
@@ -146,7 +146,7 @@ public struct CircularFocusTile<Avatar: View, Caption: View>: View {
         .focusableCard(isFocused: $isFocused, cornerRadius: diameter / 2, action: action)
         #else
         .focusable(true)
-        .focused($isFocused)
+        .focused($isFocused.focusState)
         .onTapGesture(perform: action)
         #endif
         .onChange(of: isFocused) { _, focused in onFocusChange?(focused) }

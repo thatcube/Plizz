@@ -104,7 +104,7 @@ struct MusicCard: View {
     var asyncFallbackURL: (@Sendable () async -> URL?)? = nil
     let action: () -> Void
 
-    @FocusState private var isFocused: Bool
+    @PlozzCardFocus private var isFocused: Bool
     @Environment(\.plozzReduceTransparency) private var reduceTransparency
     @Environment(\.plozzMetrics) private var metrics
     @Environment(\.plozzCardStyle) private var cardStyle

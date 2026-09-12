@@ -1557,7 +1557,7 @@ private struct LibraryCardView: View {
     var isUpdating: Bool = false
     let action: () -> Void
 
-    @FocusState private var isFocused: Bool
+    @PlozzCardFocus private var isFocused: Bool
     @Environment(\.themePalette) private var palette
     @Environment(\.plozzReduceTransparency) private var reduceTransparency
     @Environment(\.plozzMetrics) private var metrics

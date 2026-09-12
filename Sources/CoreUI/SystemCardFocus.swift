@@ -2,6 +2,36 @@ import CoreModels
 import CoreNetworking
 import SwiftUI
 
+/// Native focus notifications update visual state, not FocusState commands.
+@propertyWrapper
+public struct PlozzCardFocus: DynamicProperty {
+    @FocusState private var requested: Bool
+    @State private var observed = false
+    @Environment(\.plozzCardFocusStyle) private var style
+
+    public init() {}
+
+    public var wrappedValue: Bool {
+        get {
+            #if os(tvOS)
+            style.usesSystemEffect ? observed : requested
+            #else
+            requested
+            #endif
+        }
+        nonmutating set { requested = newValue }
+    }
+
+    public var projectedValue: Binding {
+        Binding(focusState: $requested, observed: $observed)
+    }
+
+    public struct Binding {
+        public let focusState: FocusState<Bool>.Binding
+        let observed: SwiftUI.Binding<Bool>
+    }
+}
+
 public extension View {
     /// Apply to the focus owner; the projection itself belongs to its artwork.
     func plozzCardFocusEffect() -> some View {
@@ -35,7 +65,7 @@ public extension View {
 import UIKit
 
 struct SystemCardFocusContext {
-    var isFocused: Bool
+    var requestsFocus: Bool
     var isEnabled: Bool
     var onFocus: (Bool) -> Void
     var action: () -> Void
@@ -76,16 +106,11 @@ private struct SystemCardRepresentable<Content: View>: UIViewRepresentable {
 
     func updateUIView(_ view: SystemCardControl, context: Context) {
         view.hostedContent.configuration = configuration(in: context)
-        view.focusContext = focusContext
         view.isEnabled = focusContext.isEnabled
         view.cornerRadius = cornerRadius
         view.surfaceColor = UIColor(context.environment.themePalette.raised.fill)
         view.setNeedsLayout()
-        if focusContext.isFocused, !view.isFocused, view.window != nil {
-            let system = UIFocusSystem.focusSystem(for: view)
-            system?.requestFocusUpdate(to: view)
-            system?.updateFocusIfNeeded()
-        }
+        view.updateFocusContext(focusContext)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: SystemCardControl, context: Context) -> CGSize? {
@@ -120,6 +145,7 @@ private final class SystemCardControl: UIControl {
     var surfaceColor: UIColor = .black
     private var carrierKey = ""
     private var selecting = false
+    private var pendingFocusRequest = false
     private static let carriers: NSCache<NSString, UIImage> = {
         let cache = NSCache<NSString, UIImage>()
         cache.totalCostLimit = 8 * 1024 * 1024
@@ -144,6 +170,33 @@ private final class SystemCardControl: UIControl {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func updateFocusContext(_ context: SystemCardFocusContext) {
+        // Consume each explicit request once. An ordinary redraw must never
+        // replay it after UIKit has moved focus elsewhere.
+        let newlyRequested = context.requestsFocus && focusContext?.requestsFocus != true
+        focusContext = context
+        if !context.requestsFocus || !context.isEnabled {
+            pendingFocusRequest = false
+        } else if newlyRequested {
+            pendingFocusRequest = true
+        }
+        applyPendingFocusRequest()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        applyPendingFocusRequest()
+    }
+
+    private func applyPendingFocusRequest() {
+        guard pendingFocusRequest, isEnabled, window != nil, !bounds.isEmpty,
+              let system = UIFocusSystem.focusSystem(for: self) else { return }
+        pendingFocusRequest = false
+        guard !isFocused else { return }
+        system.requestFocusUpdate(to: self)
+        system.updateFocusIfNeeded()
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -172,10 +225,12 @@ private final class SystemCardControl: UIControl {
                 focusImageView.image = image
             }
         }
+        applyPendingFocusRequest()
     }
 
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
         super.didUpdateFocus(in: context, with: coordinator)
+        pendingFocusRequest = false
         if !isFocused { selecting = false }
         focusContext?.onFocus(isFocused)
     }
@@ -288,7 +343,7 @@ private struct NativeCardButtonStyle: PrimitiveButtonStyle {
                 }
             }
             .environment(\.systemCardFocusContext, SystemCardFocusContext(
-                isFocused: focused, isEnabled: enabled, onFocus: { focused = $0 }, action: configuration.trigger
+                requestsFocus: false, isEnabled: enabled, onFocus: { focused = $0 }, action: configuration.trigger
             ))
             .plozzChromeFocused(focused)
             .accessibilityElement(children: .combine)

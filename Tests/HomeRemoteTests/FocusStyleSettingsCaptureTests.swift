@@ -10,64 +10,83 @@ final class FocusStyleSettingsCaptureTests: XCTestCase {
             "Opt-in native focus regression; requires a disposable simulator and the built FocusHost fixture."
         )
         continueAfterFailure = false
-        let settings = XCUIApplication(bundleIdentifier: "com.apple.TVSettings")
-        settings.launch()
-        try select("Accessibility", in: settings)
-        try select("Display", in: settings)
-        let style = settings.cells.matching(NSPredicate(format: "label BEGINSWITH %@", "Focus Style")).firstMatch
-        let original = try XCTUnwrap(style.value as? String)
-        defer {
-            settings.activate()
-            if style.value as? String != original {
-                do { try select("Focus Style", in: settings) }
-                catch { XCTFail("Could not restore the simulator's Focus Style: \(error)") }
+        try Self.withFocusStyle("High Contrast") { settings in
+            let tree = XCTAttachment(string: settings.debugDescription)
+            tree.name = "tvOS-display-settings"
+            tree.lifetime = .keepAlways
+            add(tree)
+            let app = XCUIApplication(bundleIdentifier: "com.thatcube.Plozz.FocusHost")
+            for mode in ["production", "production-circle"] {
+                app.launchArguments = ["--focus-style-fixture", mode]
+                app.launch()
+                let focused = app.descendants(matching: .any).matching(NSPredicate(format: "hasFocus == true")).firstMatch
+                XCTAssertTrue(focused.waitForExistence(timeout: 5), app.debugDescription)
+                XCTAssertTrue(
+                    app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "System card"))
+                        .firstMatch.waitForExistence(timeout: 3),
+                    app.debugDescription
+                )
+                Thread.sleep(forTimeInterval: 0.7)
+                let capture = app.screenshot()
+                let screenshot = XCTAttachment(screenshot: capture)
+                screenshot.name = "real-system-focus-\(mode)"
+                screenshot.lifetime = .keepAlways
+                add(screenshot)
+                try assertHighContrastRing(in: capture.image, around: focused.frame, circular: mode == "production-circle")
+                XCUIRemote.shared.press(.select)
+                XCTAssertTrue(app.staticTexts["Activated 1"].waitForExistence(timeout: 3), app.debugDescription)
+                XCUIRemote.shared.press(.select, forDuration: 1)
+                XCTAssertTrue(
+                    app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Context action"))
+                        .firstMatch.waitForExistence(timeout: 3),
+                    app.debugDescription
+                )
+                XCUIRemote.shared.press(.menu)
+                XCTAssertTrue(app.staticTexts["Activated 1"].waitForExistence(timeout: 3), "Long press must not also select the card.")
+                app.terminate()
             }
-            XCTAssertEqual(style.value as? String, original)
-        }
-        if original != "High Contrast" {
-            try select("Focus Style", in: settings)
-            if settings.cells.matching(NSPredicate(format: "label BEGINSWITH %@", "High Contrast")).firstMatch.exists {
-                try select("High Contrast", in: settings)
+            for borderless in [false, true] {
+                add(try SystemDirectionalFocusTests.exerciseDirections(in: app, borderless: borderless))
             }
-            XCTAssertEqual(style.value as? String, "High Contrast")
-        }
-        let tree = XCTAttachment(string: settings.debugDescription)
-        tree.name = "tvOS-display-settings"
-        tree.lifetime = .keepAlways
-        add(tree)
-        let app = XCUIApplication(bundleIdentifier: "com.thatcube.Plozz.FocusHost")
-        for mode in ["production", "production-circle"] {
-            app.launchArguments = ["--focus-style-fixture", mode]
-            app.launch()
-            let focused = app.descendants(matching: .any).matching(NSPredicate(format: "hasFocus == true")).firstMatch
-            XCTAssertTrue(focused.waitForExistence(timeout: 5), app.debugDescription)
-            XCTAssertTrue(
-                app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "System card"))
-                    .firstMatch.waitForExistence(timeout: 3),
-                app.debugDescription
-            )
-            Thread.sleep(forTimeInterval: 0.7)
-            let capture = app.screenshot()
-            let screenshot = XCTAttachment(screenshot: capture)
-            screenshot.name = "real-system-focus-\(mode)"
-            screenshot.lifetime = .keepAlways
-            add(screenshot)
-            try assertHighContrastRing(in: capture.image, around: focused.frame, circular: mode == "production-circle")
-            XCUIRemote.shared.press(.select)
-            XCTAssertTrue(app.staticTexts["Activated 1"].waitForExistence(timeout: 3), app.debugDescription)
-            XCUIRemote.shared.press(.select, forDuration: 1)
-            XCTAssertTrue(
-                app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Context action"))
-                    .firstMatch.waitForExistence(timeout: 3),
-                app.debugDescription
-            )
-            XCUIRemote.shared.press(.menu)
-            XCTAssertTrue(app.staticTexts["Activated 1"].waitForExistence(timeout: 3), "Long press must not also select the card.")
-            app.terminate()
         }
         #else
         throw XCTSkip("Settings inspection is restricted to the task-owned simulator.")
         #endif
+    }
+
+    static func withFocusStyle(_ requested: String, body: (XCUIApplication) throws -> Void) throws {
+        let settings = XCUIApplication(bundleIdentifier: "com.apple.TVSettings")
+        let original = try openFocusStyleSettings(settings)
+        defer {
+            do {
+                if try openFocusStyleSettings(settings) != original {
+                    try changeFocusStyle(original, in: settings)
+                    XCTAssertEqual(try openFocusStyleSettings(settings), original)
+                }
+            } catch {
+                XCTFail("Could not restore the simulator's Focus Style: \(error)")
+            }
+        }
+        if original != requested {
+            try changeFocusStyle(requested, in: settings)
+            XCTAssertEqual(try openFocusStyleSettings(settings), requested)
+        }
+        try body(settings)
+    }
+
+    private static func changeFocusStyle(_ value: String, in settings: XCUIApplication) throws {
+        try select("Focus Style", in: settings)
+        try select(value, in: settings)
+    }
+
+    private static func openFocusStyleSettings(_ settings: XCUIApplication) throws -> String {
+        // Changing Focus Style can restart Settings; old element handles then
+        // point at the previous process even when the new screen looks identical.
+        settings.launch()
+        try select("Accessibility", in: settings)
+        try select("Display", in: settings)
+        let style = settings.cells.matching(NSPredicate(format: "label BEGINSWITH %@", "Focus Style")).firstMatch
+        return try XCTUnwrap(style.value as? String)
     }
 
     private func assertHighContrastRing(in image: UIImage, around frame: CGRect, circular: Bool) throws {
@@ -100,7 +119,7 @@ final class FocusStyleSettingsCaptureTests: XCTestCase {
         }
     }
 
-    private func select(_ label: String, in app: XCUIApplication) throws {
+    private static func select(_ label: String, in app: XCUIApplication) throws {
         let target = app.cells.matching(NSPredicate(format: "label BEGINSWITH %@", label)).firstMatch
         XCTAssertTrue(target.waitForExistence(timeout: 3), app.debugDescription)
         for _ in 0..<25 {
