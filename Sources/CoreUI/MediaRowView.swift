@@ -493,6 +493,7 @@ public struct MediaRowView: View {
                         // rows are unchanged; only the drawing area grows.
                         .padding(.vertical, layoutMetrics.railShadowClearance)
                     }
+                    .scrollClipDisabled()
                     .padding(.top, layoutMetrics.railTopClearanceOffset)
                     .padding(.bottom, layoutMetrics.railBottomClearanceOffset)
                     .coordinateSpace(name: episodeEntrySpace)

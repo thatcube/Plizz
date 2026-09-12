@@ -217,6 +217,9 @@ Do not substitute SwiftUI
 `hoverEffect(.lift)` or `.highlight`: those omit the white ring from tvOS
 **Focus Style > High Contrast**, a separate setting from Increase Contrast.
 System skips SwiftUI rasterization so native focus and artwork anchors stay live.
+The horizontal rail, native button, image view and image overlay must not clip
+focus overflow. Rounded corners remain part of the artwork crop, not a clip on
+the outer focus container.
 Captions reserve clearance without an additional custom focus animation.
 
 Media-card focus uses `PlozzCardFocus`: native UIKit notifications update ordinary

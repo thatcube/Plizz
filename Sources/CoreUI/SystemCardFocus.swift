@@ -293,6 +293,7 @@ private final class SystemCardControl: UIButton {
         buttonConfiguration.image = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1))
             .image { _ in }.withRenderingMode(.alwaysOriginal)
         self.configuration = buttonConfiguration
+        clipsToBounds = false
         contentHorizontalAlignment = .fill
         contentVerticalAlignment = .fill
         hostedContent.backgroundColor = .clear
@@ -334,6 +335,8 @@ private final class SystemCardControl: UIButton {
     override func layoutSubviews() {
         super.layoutSubviews()
         guard !bounds.isEmpty, let focusImageView = imageView else { return }
+        focusImageView.clipsToBounds = false
+        focusImageView.overlayContentView.clipsToBounds = false
         if hostedContent.superview !== focusImageView.overlayContentView {
             focusImageView.overlayContentView.addSubview(hostedContent)
         }
