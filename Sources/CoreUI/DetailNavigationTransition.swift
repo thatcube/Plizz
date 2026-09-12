@@ -56,14 +56,41 @@ public struct DetailTransitionArtworkLayout: Equatable {
 public extension View {
     /// Measure the clipped artwork slot, not an aspect-fill image overflowing it.
     func recordDetailTransitionArtwork(_ reference: DetailTransitionSourceReference) -> some View {
-        onGeometryChange(for: DetailTransitionArtworkLayout.self) {
-            DetailTransitionArtworkLayout(
-                frame: $0.frame(in: .named(reference.coordinateSpace)),
-                intrinsicSize: $0.size
-            )
-        } action: {
-            reference.recordArtworkFrame($0.frame, intrinsicSize: $0.intrinsicSize)
+        modifier(DetailArtworkTracking(reference: reference))
+    }
+}
+
+private struct DetailArtworkTracking: ViewModifier {
+    let reference: DetailTransitionSourceReference
+    @Environment(\.plozzCardFocusStyle) private var style
+
+    func body(content: Content) -> some View {
+        if style.usesSystemEffect {
+            content.background { NativeArtworkAnchor(reference: reference) }
+        } else {
+            content.onGeometryChange(for: DetailTransitionArtworkLayout.self) {
+                DetailTransitionArtworkLayout(
+                    frame: $0.frame(in: .named(reference.coordinateSpace)), intrinsicSize: $0.size
+                )
+            } action: {
+                reference.recordArtworkFrame($0.frame, intrinsicSize: $0.intrinsicSize)
+            }
         }
+    }
+}
+
+private struct NativeArtworkAnchor: UIViewRepresentable {
+    let reference: DetailTransitionSourceReference
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        view.accessibilityElementsHidden = true
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        reference.nativeArtworkView = view
     }
 }
 
@@ -82,6 +109,7 @@ protocol DetailTransitionFocusRequesting: AnyObject {
 public final class DetailTransitionSourceReference {
     public let coordinateSpace = UUID()
     weak var view: UIView?
+    weak var nativeArtworkView: UIView?
     var itemKey = ""
     var cornerRadius: CGFloat = 0
     var isFocused: Bool?
@@ -102,13 +130,22 @@ public final class DetailTransitionSourceReference {
     }
 
     func visibleFrame(in window: UIWindow) -> CGRect? {
-        guard let view, view.window === window, !view.bounds.isEmpty else { return nil }
+        guard let view = nativeArtworkView ?? view, view.window === window, !view.bounds.isEmpty else { return nil }
         var ancestor: UIView? = view
         while let current = ancestor {
             guard !current.isHidden, current.alpha > 0 else { return nil }
             ancestor = current.superview
         }
-        let frame = view.convert(artworkFrame ?? view.bounds, to: window)
+        let frame: CGRect
+        if nativeArtworkView != nil {
+            guard let projected = NativeFocusProjection.frame(of: view.layer, in: window.layer) else {
+                PlozzLog.app.debug("Native artwork projection is unavailable for the detail transition")
+                return nil
+            }
+            frame = projected
+        } else {
+            frame = view.convert(nativeArtworkView == nil ? artworkFrame ?? view.bounds : view.bounds, to: window)
+        }
         guard frame.width > 1, frame.height > 1, !frame.isInfinite, !frame.isNull,
               window.bounds.intersection(frame).width >= frame.width * 0.9,
               window.bounds.intersection(frame).height >= frame.height * 0.9 else { return nil }
@@ -117,7 +154,7 @@ public final class DetailTransitionSourceReference {
 
     func geometry(in window: UIWindow) -> DetailTransitionSourceGeometry? {
         guard let frame = visibleFrame(in: window) else { return nil }
-        let unscaledWidth = intrinsicArtworkSize?.width ?? view?.bounds.width ?? frame.width
+        let unscaledWidth = nativeArtworkView?.bounds.width ?? intrinsicArtworkSize?.width ?? view?.bounds.width ?? frame.width
         let scale = unscaledWidth > 0 ? frame.width / unscaledWidth : 1
         return DetailTransitionSourceGeometry(frame: frame, cornerRadius: cornerRadius * scale)
     }
@@ -125,6 +162,15 @@ public final class DetailTransitionSourceReference {
     func restoreFocus(in window: UIWindow, preferred: (any UIFocusEnvironment)?) {
         guard let frame = visibleFrame(in: window), let view else { return }
         let system = UIFocusSystem.focusSystem(for: window)
+        var nativeOwner = nativeArtworkView?.superview
+        while let current = nativeOwner {
+            if current.canBecomeFocused {
+                system?.requestFocusUpdate(to: current)
+                system?.updateFocusIfNeeded()
+                return
+            }
+            nativeOwner = current.superview
+        }
         if focusRequester?.requestFocus() == true {
             var responder: UIResponder? = view
             while let current = responder {
@@ -392,6 +438,8 @@ public final class TVDetailEntranceSession {
     public private(set) var blocksNavigation = true
     /// Retained only for the return transition, never as the detail backdrop.
     private(set) var returnArtwork: DetailTransitionSurface?
+    @ObservationIgnored private var returnBackground: DetailTransitionSurface?
+    @ObservationIgnored private var destinationArtwork: UIImage?
     public let timing: DetailEntranceTiming
     @ObservationIgnored private var hasStarted = false
     @ObservationIgnored private weak var window: UIWindow?
@@ -414,6 +462,7 @@ public final class TVDetailEntranceSession {
 
     public func resolvedDestinationArtwork(_ image: UIImage) {
         guard !isClosing else { return }
+        destinationArtwork = image
         if !hasStarted {
             earlyDestinationArtwork = image
         } else if let overlay {
@@ -445,6 +494,7 @@ public final class TVDetailEntranceSession {
         source = pending?.source
         sourceKey = pending?.itemKey
         returnArtwork = pending?.card
+        returnBackground = pending?.overlay.screen
         activationGeometry = pending?.sourceFrame.map {
             DetailTransitionSourceGeometry(frame: $0, cornerRadius: pending?.sourceCornerRadius ?? 0)
         }
@@ -457,6 +507,7 @@ public final class TVDetailEntranceSession {
         overlay = cover
         inputGuard = pending?.inputGuard ?? installInputGuard(in: window)
         cover.destination.image = earlyDestinationArtwork ?? cover.destination.image
+        destinationArtwork = cover.destination.image
         earlyDestinationArtwork = nil
         if let pending {
             opening = pending
@@ -513,6 +564,8 @@ public final class TVDetailEntranceSession {
         guard let window, hasStarted, !UIAccessibility.isReduceMotionEnabled else {
             finishImmediately()
             returnArtwork = nil
+            returnBackground = nil
+            destinationArtwork = nil
             source = nil
             dismiss()
             return
@@ -522,7 +575,12 @@ public final class TVDetailEntranceSession {
         sequence?.cancel()
         sequence = nil
         let interrupted = !artworkHasLanded
-        let screen = DetailTransitionSnapshot.surface(of: window)
+        // Restore the source page immediately. A detail-page snapshot would
+        // keep its background visible until the native pop finished.
+        let screen = activationWindowSize == window.bounds.size
+            ? returnBackground ?? DetailTransitionSurface()
+            : DetailTransitionSurface()
+        screen.alpha = 1
         opening?.onLanded = nil
         opening?.animator?.stopAnimation(true)
         opening = nil
@@ -533,7 +591,9 @@ public final class TVDetailEntranceSession {
         cover.frame = window.bounds
         cover.backgroundColor = .clear
         cover.cardContainer.frame = cover.bounds
-        cover.card.alpha = 0
+        cover.destination.image = destinationArtwork
+        cover.destination.alpha = destinationArtwork == nil ? 0 : 1
+        cover.card.alpha = destinationArtwork == nil ? 1 : 0
         window.addSubview(cover)
         overlay = cover
         if inputGuard == nil { inputGuard = installInputGuard(in: window) }
@@ -544,17 +604,15 @@ public final class TVDetailEntranceSession {
         let target = validSource ? activationGeometry : nil
         let animation = UIViewPropertyAnimator(duration: timing.reverse, curve: .easeInOut)
         if let target, returnArtwork != nil, !interrupted {
-            cover.cardContainer.addSubview(cover.screen)
-            cover.screen.frame = cover.cardContainer.bounds
-            cover.screen.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             cover.layoutIfNeeded()
             animation.addAnimations {
                 cover.cardContainer.frame = target.frame
                 cover.cardContainer.layer.cornerRadius = target.cornerRadius
-                cover.screen.alpha = 0
+                cover.destination.alpha = 0
                 cover.card.alpha = 1
             }
         } else {
+            cover.cardContainer.isHidden = true
             animation.addAnimations { cover.alpha = 0 }
         }
         animation.addCompletion { [self, cover] _ in
@@ -563,6 +621,8 @@ public final class TVDetailEntranceSession {
             animator = nil
             releaseInput()
             returnArtwork = nil
+            returnBackground = nil
+            destinationArtwork = nil
             source = nil
             activationGeometry = nil
             activationWindowSize = nil
@@ -587,6 +647,13 @@ public final class TVDetailEntranceSession {
     func disappeared() {
         guard !isClosing else { return }
         finishImmediately()
+    }
+
+    func releaseReturnBackgroundForMemoryPressure() {
+        if returnBackground != nil {
+            PlozzLog.app.debug("Releasing the detail return backdrop after a memory warning")
+            returnBackground = nil
+        }
     }
 
     func finishImmediately() {
@@ -641,6 +708,8 @@ private struct TVDetailPageTransition: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .opacity(session.isClosing ? 0 : 1)
+            .animation(nil, value: session.isClosing)
             .environment(\.detailEntranceSession, isEnabled && !reduceMotion ? session : nil)
             .background {
                 DetailEntrancePageAnchor(session: session, enabled: isEnabled && !reduceMotion)
@@ -650,6 +719,9 @@ private struct TVDetailPageTransition: ViewModifier {
                 else { dismiss() }
             }
             .onDisappear { session.disappeared() }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+                session.releaseReturnBackgroundForMemoryPressure()
+            }
             .onChange(of: reduceMotion) { _, reduced in
                 if reduced { session.finishImmediately() }
             }

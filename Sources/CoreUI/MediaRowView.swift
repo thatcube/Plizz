@@ -830,19 +830,30 @@ public struct MediaRowView: View {
         )
     }
 
+    private func selectEpisodeEntryPlaceholder() {
+        guard episodeEntry?.isEnabled != false else { return }
+        if episodeEntry?.phase == .failed { episodeEntry?.onRetry?() }
+    }
+
     private var episodeEntryPlaceholder: some View {
         HStack(alignment: .top, spacing: layoutMetrics.cardSpacing) {
                 EpisodeRowEntryPlaceholder(
                     phase: episodeEntry?.phase ?? .loading,
                     showsStatus: true, isFocused: entryPlaceholderFocused
                 )
+                #if os(tvOS)
+                .focusableCard(
+                    isFocused: $entryPlaceholderFocused,
+                    cornerRadius: layoutMetrics.landscapeCardCornerRadius,
+                    isEnabled: episodeEntry?.isEnabled != false,
+                    action: selectEpisodeEntryPlaceholder
+                )
+                #else
                 .focusable(episodeEntry?.isEnabled != false)
                 .plozzCardFocusEffect()
                 .focused($entryPlaceholderFocused)
-                .onTapGesture {
-                    guard episodeEntry?.isEnabled != false else { return }
-                    if episodeEntry?.phase == .failed { episodeEntry?.onRetry?() }
-                }
+                .onTapGesture(perform: selectEpisodeEntryPlaceholder)
+                #endif
                 .accessibilityIdentifier("episode-entry-placeholder")
                 if episodeEntry?.phase == .loading || episodeEntry?.phase == .ready {
                     ForEach(0..<3, id: \.self) { _ in

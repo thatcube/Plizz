@@ -374,11 +374,9 @@ public struct DetailInformationSections: View {
             // Same lift as the read-only cards beside it. The style's default is
             // a browse-card 1.07, which on a panel this wide both mismatched its
             // neighbours and grew far enough to overlap the Ratings column.
-            .buttonStyle(
-                PlozzCardButtonStyle(
-                    cornerRadius: cardCornerRadius,
-                    focusedScale: PlozzTheme.Metrics.readOnlyFocusedCardScale
-                )
+            .plozzCardButton(
+                cornerRadius: cardCornerRadius,
+                focusedScale: PlozzTheme.Metrics.readOnlyFocusedCardScale
             )
             .sheet(isPresented: $showsFullOverview) {
                 overviewSheet

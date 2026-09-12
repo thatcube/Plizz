@@ -196,14 +196,34 @@ it. Render-server snapshots avoid a full-window bitmap draw on the main thread.
 The hosted tests also delay destination mounting and withhold return focus to
 verify that neither creates a new pre-animation wait.
 
+Back restores the captured source page behind the moving artwork immediately,
+not a snapshot of the outgoing detail page. Its real content is hidden during
+the pop. Coverage deliberately delays the native pop by 250ms and samples an
+uncovered corner during the reverse animation. The source-page snapshot is
+released after returning, on a memory warning, or with the page's lifetime.
+
 Card focus has three independent options: System (native tvOS projection),
 Highlight (custom sheen/lean) and Outline (custom glass). Absent per-profile
 preferences use System; saved `highlight` and `outlined` values are not migrated.
 The System path must not instantiate custom focus growth, sheen, lean, halo or
-settling tasks. Resting surfaces and shadows remain unchanged. Projection is
-outside rasterization, inside the focus owner, and uses the platform's explicit
-border shape so circular portraits do not acquire a square plate. Captions
-reserve clearance without adding another focus animation.
+settling tasks. System uses a native UIKit focus owner and
+`UIImageView.adjustsImageWhenAncestorFocused`; the live SwiftUI content sits in
+its `overlayContentView` via `UIHostingConfiguration`. Its alpha-shaped carrier
+is cached and capped, not a per-focus screenshot. Do not substitute SwiftUI
+`hoverEffect(.lift)` or `.highlight`: those omit the white ring from tvOS
+**Focus Style > High Contrast**, a separate setting from Increase Contrast.
+System skips SwiftUI rasterization so native focus and artwork anchors stay live.
+Captions reserve clearance without an additional custom focus animation.
+
+`NativeFocusProjectionTests` covers the perspective/Z transform that ordinary
+2D layer conversion loses. Real card tests compare the projected artwork's
+rectangle and rounded corners against painted pixels through a native pop.
+The opt-in `FocusStyleSettingsCaptureTests` runs only on a disposable simulator,
+sets the real High Contrast Focus Style, checks the on-screen ring and circular
+shape, checks its accessibility label, verifies Select fires once and long press
+opens a context menu without selecting, then restores the original setting. Run it
+with `TEST_RUNNER_PLOZZ_SYSTEM_FOCUS_CAPTURE=1` on the `PlozzHomeRemoteTests`
+scheme after building/installing `PlozzFocusHost`.
 
 Hosted coverage includes actual projected circular artwork, framed/borderless
 return geometry and loading-row overflow. These are correctness checks, **not

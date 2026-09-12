@@ -142,11 +142,14 @@ public struct CircularFocusTile<Avatar: View, Caption: View>: View {
             caption(isFocused)
                 .offset(y: focusStyle.usesSystemEffect || isFocused ? 0 : -push)
         }
+        #if os(tvOS)
+        .focusableCard(isFocused: $isFocused, cornerRadius: diameter / 2, action: action)
+        #else
         .focusable(true)
         .focused($isFocused)
-        .onChange(of: isFocused) { _, focused in onFocusChange?(focused) }
-        .plozzCardFocusEffect()
         .onTapGesture(perform: action)
+        #endif
+        .onChange(of: isFocused) { _, focused in onFocusChange?(focused) }
         .accessibilityAddTraits(.isButton)
         .plozzCardFocusTransition(isFocused: isFocused)
     }

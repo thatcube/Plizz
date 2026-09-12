@@ -178,6 +178,49 @@ final class CinematicDetailTransitionHostedTests: XCTestCase {
         XCTAssertTrue(inputGuards(in: fixture.window).isEmpty)
     }
 
+    func testBackRevealsHomeBehindArtworkBeforeNativePopFinishes() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.close() }
+        let corner = CGRect(x: 1890, y: 1040, width: 1, height: 1)
+        let homePixel = try pixel(fixture.window, at: corner)
+        fixture.model.open(in: fixture.window, usesCard: true)
+        try await waitUntil { fixture.model.session?.stage == .complete }
+        let session = try XCTUnwrap(fixture.model.session)
+        let detailPixel = try pixel(fixture.window, at: corner)
+        XCTAssertNotEqual(detailPixel, homePixel)
+        session.close {
+            // Keep the real detail behind the cover briefly, just as a slow
+            // native pop can on device. Home must not wait for this lifecycle.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                fixture.model.path.removeLast()
+            }
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        let cover = try XCTUnwrap(overlays(in: fixture.window).first)
+        XCTAssertFalse(try XCTUnwrap(cover.cardContainer.layer.presentation()).frame.contains(corner.origin))
+        XCTAssertEqual(try pixel(fixture.window, at: corner), homePixel)
+        try await waitUntil { self.overlays(in: fixture.window).isEmpty }
+    }
+
+    func testMemoryPressureReleasesTheReturnBackdropWithoutBlockingBack() async throws {
+        final class WeakSurface {
+            weak var value: DetailTransitionSurface?
+            init(_ value: DetailTransitionSurface?) { self.value = value }
+        }
+        let fixture = try await makeFixture()
+        defer { fixture.close() }
+        fixture.model.open(in: fixture.window, usesCard: true)
+        let background = WeakSurface(overlays(in: fixture.window).first?.screen)
+        try await waitUntil { fixture.model.session?.stage == .complete }
+        let session = try XCTUnwrap(fixture.model.session)
+        XCTAssertNotNil(background.value)
+        session.releaseReturnBackgroundForMemoryPressure()
+        XCTAssertNil(background.value)
+        session.close { fixture.model.path.removeLast() }
+        try await waitUntil { self.overlays(in: fixture.window).isEmpty }
+        XCTAssertTrue(inputGuards(in: fixture.window).isEmpty)
+    }
+
     func testDirectPlaybackDoesNotPrepareOrRunADetailEntrance() async throws {
         let fixture = try await makeFixture()
         defer { fixture.close() }

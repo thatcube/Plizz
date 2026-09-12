@@ -1424,13 +1424,9 @@ public extension View {
         action: @escaping () -> Void
     ) -> some View {
         #if os(tvOS)
-        contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .focusable(isEnabled)
-            .focused(isFocused)
-            .plozzCardFocusEffect()
-            .onTapGesture(perform: action)
-            .disabled(!isEnabled)
-            .accessibilityAddTraits(.isButton)
+        modifier(CardFocusOwner(
+            isFocused: isFocused, cornerRadius: cornerRadius, isEnabled: isEnabled, action: action
+        ))
         #else
         contentShape(
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -1438,6 +1434,43 @@ public extension View {
         #endif
     }
 }
+
+#if os(tvOS)
+private struct CardFocusOwner: ViewModifier {
+    let isFocused: FocusState<Bool>.Binding
+    let cornerRadius: CGFloat
+    let isEnabled: Bool
+    let action: () -> Void
+    @Environment(\.plozzCardFocusStyle) private var style
+    @Environment(\.isEnabled) private var parentEnabled
+
+    func body(content: Content) -> some View {
+        if style.usesSystemEffect {
+            content
+                .environment(\.systemCardFocusContext, SystemCardFocusContext(
+                    isFocused: isFocused.wrappedValue,
+                    isEnabled: isEnabled && parentEnabled,
+                    onFocus: { isFocused.wrappedValue = $0 }, action: action
+                ))
+                .focused(isFocused)
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction {
+                    if isEnabled && parentEnabled { action() }
+                }
+        } else {
+            content
+                .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .focusable(isEnabled)
+                .focused(isFocused)
+                .focusEffectDisabled()
+                .onTapGesture(perform: action)
+                .disabled(!isEnabled)
+                .accessibilityAddTraits(.isButton)
+        }
+    }
+}
+#endif
 
 public extension MediaItem {
     /// Ordered real-image candidates a `PosterCardView` of `style` will try before

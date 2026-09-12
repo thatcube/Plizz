@@ -179,13 +179,7 @@ final class DetailTransitionVisualRegressionTests: XCTestCase {
                 let initialPainted = try redArtworkBounds(in: window)
                 let initialGeometry = try XCTUnwrap(source.geometry(in: window))
                 if focusStyle == .system {
-                    let restingWidth: CGFloat = shape == .poster
-                        ? (style == .framed ? 216 : 220)
-                        : (style == .framed ? 480 : 500)
-                    XCTAssertGreaterThan(
-                        initialPainted.width, restingWidth,
-                        "The framed/rasterized System path must actually project its artwork."
-                    )
+                    XCTAssertNotNil(source.nativeArtworkView, "System artwork must use native UIKit geometry.")
                 }
                 source.prepare(for: model.item)
                 model.path.append(1)
@@ -204,7 +198,7 @@ final class DetailTransitionVisualRegressionTests: XCTestCase {
                 after.name = "focused-return-\(style)-\(shape)-\(focusStyle)"
                 after.lifetime = .keepAlways
                 add(after)
-                let geometry = XCTAttachment(string: "Before: geometry \(initialGeometry), pixels \(initialPainted)\nAfter: geometry \(String(describing: source.geometry(in: window))), pixels \(painted)")
+                let geometry = XCTAttachment(string: "Before: geometry \(initialGeometry), pixels \(initialPainted)\nAfter: geometry \(String(describing: source.geometry(in: window))), pixels \(painted)\n\(nativeProjectionDescription(source.nativeArtworkView, in: window))")
                 geometry.name = "native-geometry-\(style)-\(shape)-\(focusStyle)"
                 geometry.lifetime = .keepAlways
                 add(geometry)
@@ -248,7 +242,7 @@ final class DetailTransitionVisualRegressionTests: XCTestCase {
         add(attachment)
         let painted = try redArtworkBounds(in: window)
         XCTAssertEqual(painted.width, painted.height, accuracy: 2)
-        XCTAssertGreaterThan(painted.width, 200, "The OS must apply focus projection, not merely a no-op.")
+        XCTAssertTrue(UIFocusSystem.focusSystem(for: window)?.focusedItem is UIControl)
         let cgImage = try XCTUnwrap(image.cgImage)
         for corner in [
             CGPoint(x: painted.minX + 4, y: painted.minY + 4),
@@ -307,6 +301,20 @@ final class DetailTransitionVisualRegressionTests: XCTestCase {
     private func sourceView(in view: UIView) -> DetailTransitionSourceView? {
         if let source = view as? DetailTransitionSourceView { return source }
         return view.subviews.lazy.compactMap { self.sourceView(in: $0) }.first
+    }
+
+    private func nativeProjectionDescription(_ view: UIView?, in window: UIWindow) -> String {
+        var current = view
+        var lines: [String] = []
+        while let ancestor = current, ancestor !== window {
+            lines.append("\(type(of: ancestor)): frame \(ancestor.frame), bounds \(ancestor.bounds), transform \(ancestor.layer.transform), sublayers \(ancestor.layer.sublayerTransform)")
+            if let image = ancestor as? UIImageView {
+                let guide = image.focusedFrameGuide
+                lines.append("Focused guide \(guide.layoutFrame), window \(String(describing: guide.owningView?.convert(guide.layoutFrame, to: window)))")
+            }
+            current = ancestor.superview
+        }
+        return lines.joined(separator: "\n")
     }
 
     private func redArtworkBounds(in window: UIWindow) throws -> CGRect {

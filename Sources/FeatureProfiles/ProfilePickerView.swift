@@ -310,8 +310,10 @@ private struct ProfileTile: View {
         Button(action: action) {
             ProfileTileLabel(profile: profile)
         }
-        .buttonStyle(ProfileTileButtonStyle())
-        .plozzCardFocusEffect()
+        .plozzCardFocusButtonStyle(
+            ProfileTileButtonStyle(), cornerRadius: ProfilePickerLayout.avatarSize / 2,
+            contentSuppliesProjection: true
+        )
     }
 }
 
@@ -400,8 +402,10 @@ private struct AddProfileTile: View {
         Button(action: action) {
             AddProfileTileLabel(title: title, systemImage: systemImage, isProminent: isProminent)
         }
-        .buttonStyle(ProfileTileButtonStyle())
-        .plozzCardFocusEffect()
+        .plozzCardFocusButtonStyle(
+            ProfileTileButtonStyle(), cornerRadius: ProfilePickerLayout.avatarSize / 2,
+            contentSuppliesProjection: true
+        )
     }
 }
 

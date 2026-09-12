@@ -91,6 +91,14 @@ final class MediaRowEpisodeEntryHostedTests: XCTestCase {
     }
 
     func testFocusedLoadingSlotHandsOffToTheFarEpisodeAfterDataArrives() async throws {
+        try await assertEpisodeHandoff(focusStyle: .highlight)
+    }
+
+    func testSystemFocusHandsOffAndRestoresTheBrowsedEpisode() async throws {
+        try await assertEpisodeHandoff(focusStyle: .system)
+    }
+
+    private func assertEpisodeHandoff(focusStyle: CardFocusStyle) async throws {
         let settingsStore = MetadataProviderSettingsStore()
         let original = settingsStore.load()
         var local = original
@@ -99,6 +107,7 @@ final class MediaRowEpisodeEntryHostedTests: XCTestCase {
         defer { settingsStore.save(original) }
         let imageURL = try await seedImage()
         let model = EpisodeEntryFixture()
+        model.focusStyle = focusStyle
         let host = EpisodeEntryHost(model: model)
         await waitUntil { UIApplication.shared.connectedScenes.contains { $0.activationState == .foregroundActive } }
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }

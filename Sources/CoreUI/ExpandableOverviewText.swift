@@ -175,11 +175,9 @@ public struct ExpandableOverviewText: View {
                 // Card styling supplies the surface; the label owns its inset.
                 clipped.padding(Self.cardPadding)
             }
-            .buttonStyle(
-                PlozzCardButtonStyle(
-                    cornerRadius: Self.cardCornerRadius,
-                    focusedScale: PlozzTheme.Metrics.readOnlyFocusedCardScale
-                )
+            .plozzCardButton(
+                cornerRadius: Self.cardCornerRadius,
+                focusedScale: PlozzTheme.Metrics.readOnlyFocusedCardScale
             )
         } else {
             clipped.padding(Self.cardPadding)
