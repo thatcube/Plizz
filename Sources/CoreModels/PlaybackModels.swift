@@ -285,6 +285,9 @@ public struct MediaSourceMetadata: Hashable, Sendable, Codable {
 /// direct-play or transcode and hands back either a legacy resolved URL or a
 /// credential-free typed source.
 public struct PlaybackRequest: Hashable, Sendable {
+    /// Library channels own a separate interval-based reporting path; accidental
+    /// use in the ordinary reporter must still fail closed.
+    public var suppressOrdinaryWatchReporting: Bool = false
     public var item: MediaItem
     /// Credential-free source resolved at the engine boundary. Network files
     /// use this path and never carry a diagnostic or placeholder URL.

@@ -187,6 +187,9 @@ private enum PlozziOSSettingsDestination: Hashable {
     case trackers
     case appearance
     case home
+    #if DEBUG
+    case liveTV
+    #endif
     case detailPage
     case playback
     case downloads
@@ -337,6 +340,9 @@ private struct PlozziOSSettingsSplitView: View {
                         settingsRow(.trackers, title: "Trackers", systemImage: "link")
                         settingsRow(.appearance, title: "Appearance", systemImage: "paintpalette")
                         settingsRow(.home, title: "Customize Home", systemImage: "house")
+                        #if DEBUG
+                        settingsRow(.liveTV, title: "Live TV", systemImage: "antenna.radiowaves.left.and.right")
+                        #endif
                         settingsRow(.detailPage, title: "Detail Page", systemImage: "rectangle.portrait.on.rectangle.portrait")
                         settingsRow(.playback, title: "Playback", systemImage: "play.rectangle")
                         settingsRow(.subtitles, title: "Subtitles", systemImage: "captions.bubble")
@@ -621,6 +627,7 @@ private struct PlozziOSSettingsSplitView: View {
             PlozziOSTrackerSettingsView(appModel: appModel)
         case .appearance:
             PlozziOSAppearanceSettingsView(
+                appModel: appModel,
                 theme: appModel.settings.theme,
                 transparency: appModel.settings.transparency,
                 cardStyle: appModel.settings.cardStyle,
@@ -636,6 +643,32 @@ private struct PlozziOSSettingsSplitView: View {
                 accounts: appModel.accountsProviders.resolvedActiveAccounts,
                 seerConfigured: appModel.seerService.isConfigured
             )
+        #if DEBUG
+        case .liveTV:
+            LiveTVSettingsView(
+                store: LiveTVViewSettingsStore(
+                    namespace: appModel.profiles.activeNamespace
+                ),
+                preferencesStore: LiveTVPreferencesStore(
+                    namespace: appModel.profiles.activeNamespace
+                ),
+                sourceManagement: {
+                    AnyView(PlozziOSLiveTVSourcesDestination(
+                        profileID: appModel.profiles.activeProfile.id,
+                        preferencesNamespace: appModel.profiles.activeNamespace,
+                        accountsProviders: appModel.accountsProviders,
+                        profiles: appModel.profiles,
+                        connectServer: onAddServer,
+                        didConfigurePlaylist: {
+                            _ = appModel.recordSuccessfulIPTVSetup()
+                        },
+                        isPresented: selection == .liveTV,
+                        isProfileAuthorized: { [appModel] in appModel.isLiveTVProfileAuthorized }
+                    ))
+                }
+            )
+            .id(appModel.profiles.activeProfile.id)
+        #endif
         case .detailPage:
             PlozziOSDetailPageSettingsView(
                 heroBackground: appModel.settings.heroBackground,
@@ -889,6 +922,7 @@ private struct PlozziOSSettingsCompactMenu: View {
                 }
                 NavigationLink {
                     PlozziOSAppearanceSettingsView(
+                        appModel: appModel,
                         theme: appModel.settings.theme,
                         transparency: appModel.settings.transparency,
                         cardStyle: appModel.settings.cardStyle,
@@ -910,6 +944,34 @@ private struct PlozziOSSettingsCompactMenu: View {
                 } label: {
                     Label("Customize Home", systemImage: "house")
                 }
+                #if DEBUG
+                NavigationLink {
+                    LiveTVSettingsView(
+                        store: LiveTVViewSettingsStore(
+                            namespace: appModel.profiles.activeNamespace
+                        ),
+                        preferencesStore: LiveTVPreferencesStore(
+                            namespace: appModel.profiles.activeNamespace
+                        ),
+                        sourceManagement: {
+                            AnyView(PlozziOSLiveTVSourcesDestination(
+                                profileID: appModel.profiles.activeProfile.id,
+                                preferencesNamespace: appModel.profiles.activeNamespace,
+                                accountsProviders: appModel.accountsProviders,
+                                profiles: appModel.profiles,
+                                connectServer: onAddServer,
+                                didConfigurePlaylist: {
+                                    _ = appModel.recordSuccessfulIPTVSetup()
+                                },
+                                isProfileAuthorized: { [appModel] in appModel.isLiveTVProfileAuthorized }
+                            ))
+                        }
+                    )
+                    .id(appModel.profiles.activeProfile.id)
+                } label: {
+                    Label("Live TV", systemImage: "antenna.radiowaves.left.and.right")
+                }
+                #endif
                 NavigationLink {
                     PlozziOSDetailPageSettingsView(
                         heroBackground: appModel.settings.heroBackground,
@@ -1606,6 +1668,7 @@ struct PlozziOSPlexHomeUserSettingsView: View {
 }
 
 private struct PlozziOSAppearanceSettingsView: View {
+    let appModel: PlozziOSAppModel
     @Bindable var theme: ThemeSettingsModel
     @Bindable var transparency: TransparencyPreferenceModel
     @Bindable var cardStyle: CardStyleSettingsModel
@@ -1613,6 +1676,37 @@ private struct PlozziOSAppearanceSettingsView: View {
     @Bindable var watchIndicator: WatchStatusIndicatorSettingsModel
     @Bindable var navigation: NavigationStyleSettingsModel
     @Environment(AppLanguageSettingsModel.self) private var appLanguage
+
+    private var navigationLibrariesScope: ProfileLibrariesScope {
+        let profile = appModel.profiles.activeProfile
+        return ProfileLibrariesScope(
+            accounts: appModel.accounts,
+            activeProfile: profile,
+            // Individual library tabs are not supported by the iOS tab bar, so
+            // this shared editor needs only its always-available built-ins.
+            discoveredLibraries: .loaded([]),
+            refreshingLibraryAccountIDs: [],
+            unreachableLibraryAccountIDs: [],
+            reloadLibraries: {},
+            homeVisibility: appModel.settings.homeVisibility,
+            isAccountIncludedInActiveProfile: {
+                appModel.activeAccountIDs(for: profile.id).contains($0)
+            },
+            onSetAccountIncluded: {
+                appModel.setAccount($0, enabled: $1, for: profile.id)
+            },
+            onAddAccount: {},
+            plexHomeUsersFetcher: {
+                await appModel.plexHomeUsers.plexHomeUsers(forAccountID: $0)
+            },
+            onSelectPlexHomeUser: {
+                appModel.plexHomeUsers.setPlexHomeUserForActiveProfile(
+                    accountID: $0,
+                    user: $1
+                )
+            }
+        )
+    }
 
     var body: some View {
         @Bindable var appLanguage = appLanguage
@@ -1678,17 +1772,24 @@ private struct PlozziOSAppearanceSettingsView: View {
                         Text(indicator.displayName).tag(indicator)
                     }
                 }
+            }
 
-                SettingsSectionGroup("Navigation") {
-                    Toggle("Show Watchlist", isOn: $navigation.showsWatchlist)
-                } footer: {
-                    Text("Home, Search, profile switching and Settings always stay available.")
-                }
+            SettingsSectionGroup("Hide or Reorder Navigation") {
+                NavigationLibrariesDetailView(
+                    scope: navigationLibrariesScope,
+                    includesIndividualLibraries: false,
+                    excludedKeys: [
+                        NavigationLibraryLayout.musicKey,
+                        NavigationLibraryLayout.allLibrariesKey,
+                    ]
+                )
+                .id(appModel.profiles.activeProfileID)
             }
         }
         .settingsPageSurface()
         .navigationTitle("Appearance")
     }
+
 }
 
 private struct PlozziOSHomeSettingsView: View {

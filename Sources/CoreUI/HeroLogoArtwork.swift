@@ -64,12 +64,14 @@ public enum HeroLogoPresentationPolicy: Sendable, Equatable {
 /// opt into `.center`. By default it crossfades over the readable title once
 /// decoded; arrival-sensitive callers can suppress a late replacement.
 /// Unlike poster art there is no aspect-ratio guard — logos are legitimately wide.
+/// Fixed-height surfaces can set `constrainsToBounds` to contain the whole logo;
+/// existing hero callers retain their flexible area-based sizing.
 /// What a resolved logo turned out to look like, reported to hosts that adapt
 /// their backdrop to it.
 ///
-/// Both numbers come free from the pixel pass that already trims and tones every
-/// logo (``PreparedLogo``), so a host can react to the actual artwork without
-/// commissioning any analysis of its own.
+/// These measurements reuse the preparation pass that already trims and tones
+/// every logo (``PreparedLogo``), including its background-plate detection, so a
+/// host can adapt without commissioning any image analysis of its own.
 public struct ResolvedLogoTone: Equatable, Sendable {
     /// Mean luminance of the logo's own ink, 0…1.
     public let luminance: Double
@@ -84,14 +86,21 @@ public struct ResolvedLogoTone: Equatable, Sendable {
     /// a pale highlight. A logo with plenty of it reads on almost any picture,
     /// whatever its mean tone says.
     public let brightInk: Double
+    /// Original solid backing, including a retained box inside transparent margins.
+    /// Transparent logos have no plate; hosts can use their ink colour instead.
+    public let backgroundPlate: HeroBackgroundSample?
 
-    public init(luminance: Double, coverage: Double, red: Double = 0, green: Double = 0, blue: Double = 0, brightInk: Double = 0) {
+    public init(
+        luminance: Double, coverage: Double, red: Double = 0, green: Double = 0,
+        blue: Double = 0, brightInk: Double = 0, backgroundPlate: HeroBackgroundSample? = nil
+    ) {
         self.luminance = luminance
         self.coverage = coverage
         self.red = red
         self.green = green
         self.blue = blue
         self.brightInk = brightInk
+        self.backgroundPlate = backgroundPlate
     }
 }
 
@@ -125,6 +134,7 @@ public struct HeroLogoArtwork<TextFallback: View>: View {
     private let backgroundSample: (@Sendable () async -> HeroBackgroundSample?)?
     private let maxWidth: CGFloat
     private let maxHeight: CGFloat
+    private let constrainsToBounds: Bool
     private let presentationPolicy: HeroLogoPresentationPolicy
     private let alignment: Alignment
     private let haloStyle: HeroLogoHaloStyle
@@ -138,6 +148,7 @@ public struct HeroLogoArtwork<TextFallback: View>: View {
         backgroundSample: (@Sendable () async -> HeroBackgroundSample?)? = nil,
         maxWidth: CGFloat = 620,
         maxHeight: CGFloat = 200,
+        constrainsToBounds: Bool = false,
         presentationPolicy: HeroLogoPresentationPolicy = .whenReady,
         alignment: Alignment = .leading,
         haloStyle: HeroLogoHaloStyle = .standard,
@@ -150,6 +161,7 @@ public struct HeroLogoArtwork<TextFallback: View>: View {
         self.backgroundSample = backgroundSample
         self.maxWidth = maxWidth
         self.maxHeight = maxHeight
+        self.constrainsToBounds = constrainsToBounds
         self.presentationPolicy = presentationPolicy
         self.alignment = alignment
         self.haloStyle = haloStyle
@@ -167,6 +179,7 @@ public struct HeroLogoArtwork<TextFallback: View>: View {
         backgroundSample: (@Sendable () async -> HeroBackgroundSample?)? = nil,
         maxWidth: CGFloat = 620,
         maxHeight: CGFloat = 200,
+        constrainsToBounds: Bool = false,
         presentationPolicy: HeroLogoPresentationPolicy = .whenReady,
         alignment: Alignment = .leading,
         haloStyle: HeroLogoHaloStyle = .standard,
@@ -179,6 +192,7 @@ public struct HeroLogoArtwork<TextFallback: View>: View {
         self.backgroundSample = backgroundSample
         self.maxWidth = maxWidth
         self.maxHeight = maxHeight
+        self.constrainsToBounds = constrainsToBounds
         self.presentationPolicy = presentationPolicy
         self.alignment = alignment
         self.haloStyle = haloStyle
@@ -195,6 +209,7 @@ public struct HeroLogoArtwork<TextFallback: View>: View {
             backgroundSample: backgroundSample,
             maxWidth: maxWidth,
             maxHeight: maxHeight,
+            constrainsToBounds: constrainsToBounds,
             presentationPolicy: presentationPolicy,
             alignment: alignment,
             haloStyle: haloStyle,
@@ -226,6 +241,10 @@ enum HeroLogoMemo {
     /// oldest-first costs one await on the next look, not a re-decode.
     private static let capacity = 60
 
+    static func key(for references: [ArtworkReference], hasFallback: Bool = false) -> String {
+        (references.map(\.privacySafeIdentity) + [hasFallback ? "1" : "0"]).joined(separator: "|")
+    }
+
     static func value(for key: String) -> ProcessedLogo? { entries[key] }
 
     static func store(_ value: ProcessedLogo, for key: String) {
@@ -247,6 +266,7 @@ private struct LoadedLogo<TextFallback: View>: View {
     let backgroundSample: (@Sendable () async -> HeroBackgroundSample?)?
     let maxWidth: CGFloat
     let maxHeight: CGFloat
+    let constrainsToBounds: Bool
     let presentationPolicy: HeroLogoPresentationPolicy
     let alignment: Alignment
     let haloStyle: HeroLogoHaloStyle
@@ -304,7 +324,8 @@ private struct LoadedLogo<TextFallback: View>: View {
             for: processed.image.size,
             maxWidth: maxWidth,
             maxHeight: maxHeight,
-            coverage: processed.coverage
+            coverage: processed.coverage,
+            constrainsToBounds: constrainsToBounds
         )
     }
 
@@ -358,8 +379,7 @@ private struct LoadedLogo<TextFallback: View>: View {
 
     /// Re-run resolution whenever the candidate sources change.
     private var taskKey: String {
-        (references.map(\.privacySafeIdentity) + [asyncFallbackURL == nil ? "0" : "1"])
-            .joined(separator: "|")
+        HeroLogoMemo.key(for: references, hasFallback: asyncFallbackURL != nil)
     }
 
     private func resolve() async {
@@ -426,14 +446,7 @@ private struct LoadedLogo<TextFallback: View>: View {
     private func adopt(_ processed: ProcessedLogo) {
         image = processed
         HeroLogoMemo.store(processed, for: taskKey)
-        onResolve?(ResolvedLogoTone(
-            luminance: processed.luminance,
-            coverage: processed.coverage,
-            red: processed.red,
-            green: processed.green,
-            blue: processed.blue,
-            brightInk: processed.brightInk
-        ))
+        onResolve?(processed.tone)
     }
 }
 
@@ -495,7 +508,8 @@ enum HeroLogoAnalysis {
             red: prepared.red,
             green: prepared.green,
             blue: prepared.blue,
-            brightInk: prepared.brightInk
+            brightInk: prepared.brightInk,
+            backgroundPlate: prepared.backgroundPlate
         )
     }
 
@@ -674,6 +688,7 @@ struct PreparedLogo: @unchecked Sendable {
     /// anything (0…1) — a white keyline, a pale highlight. Distinct from
     /// ``luminance``, which is the mean and so misses exactly this.
     let brightInk: Double
+    let backgroundPlate: HeroBackgroundSample?
 
     /// Luminance above which ink counts as carrying its own contrast.
     static let brightInkLuminance = 0.72
@@ -685,7 +700,8 @@ struct PreparedLogo: @unchecked Sendable {
         green: Double = 0,
         blue: Double = 0,
         coverage: Double = 1.0,
-        brightInk: Double = 0
+        brightInk: Double = 0,
+        backgroundPlate: HeroBackgroundSample? = nil
     ) {
         self.image = image
         self.luminance = luminance
@@ -694,6 +710,7 @@ struct PreparedLogo: @unchecked Sendable {
         self.blue = blue
         self.coverage = coverage
         self.brightInk = brightInk
+        self.backgroundPlate = backgroundPlate
     }
 }
 
@@ -717,6 +734,14 @@ struct ProcessedLogo {
     let green: Double
     let blue: Double
     let brightInk: Double
+    let backgroundPlate: HeroBackgroundSample?
+
+    var tone: ResolvedLogoTone {
+        ResolvedLogoTone(
+            luminance: luminance, coverage: coverage, red: red, green: green,
+            blue: blue, brightInk: brightInk, backgroundPlate: backgroundPlate
+        )
+    }
 }
 
 /// Decodes, background-strips, trims, and measures hero logos, caching the
@@ -914,7 +939,7 @@ actor HeroLogoPipeline {
     /// crisp at hero size on a 4K panel while a fraction of the memory. Alpha is
     /// preserved by the ImageIO thumbnail path; a decode failure falls back to a
     /// full decode so a logo never silently vanishes.
-    private static func decodeAndPrepare(_ data: Data) -> PreparedLogo? {
+    static func decodeAndPrepare(_ data: Data) -> PreparedLogo? {
         let image = ArtworkImageCache.downsample(data, maxPixelSize: 900) ?? UIImage(data: data)
         return image?.preparedAsHeroLogo()
     }
@@ -1100,7 +1125,6 @@ private extension UIImage {
         // from the border ring; `nil` means the logo is genuinely transparent and
         // nothing is stripped.
         let plate = Self.detectBackgroundPlate(data, width: width, height: height, bytesPerRow: bytesPerRow)
-
         // Single fused pass: strip the plate (when present) *and* measure the
         // content bounds + tone of what survives, so the full image is touched
         // exactly once instead of in two separate O(width*height) passes.
@@ -1125,19 +1149,44 @@ private extension UIImage {
         let cropArea = Double((stats.maxX - stats.minX + 1) * (stats.maxY - stats.minY + 1))
         let coverage = cropArea > 0 ? min(1.0, weight / cropArea) : 1.0
         let brightInk = weight > 0 ? min(1.0, stats.brightWeight / weight) : 0
+        let colorVariance = weight > 0
+            ? max(0, stats.squaredColorSum / weight - meanR * meanR - meanG * meanG - meanB * meanB)
+            : 0
+        var originalPlate = plate
+        if originalPlate == nil,
+           colorVariance > 0.001,
+           let insetPlate = Self.detectBackgroundPlate(
+               data, width: width, height: height, bytesPerRow: bytesPerRow,
+               bounds: (stats.minX, stats.minY, stats.maxX, stats.maxY)
+           ) {
+            // A boxed logo can have transparent padding. Retain its pixels, but
+            // expose the box colour so channel plates can extend it seamlessly.
+            originalPlate = insetPlate
+        }
+        let backgroundPlate = originalPlate.map {
+            let r = $0.red / 255, g = $0.green / 255, b = $0.blue / 255
+            return HeroBackgroundSample(
+                red: r, green: g, blue: b, luminance: 0.2126 * r + 0.7152 * g + 0.0722 * b
+            )
+        }
         guard let processedFull = Self.makeImage(&data, width: width, height: height, bytesPerRow: bytesPerRow) else {
             return nil
         }
         let cropRect = CGRect(x: stats.minX, y: stats.minY, width: stats.maxX - stats.minX + 1, height: stats.maxY - stats.minY + 1)
         guard let cropped = processedFull.cropping(to: cropRect) else {
-            return PreparedLogo(image: UIImage(cgImage: processedFull, scale: scale, orientation: imageOrientation), luminance: luminance, red: meanR, green: meanG, blue: meanB, coverage: coverage, brightInk: brightInk)
+            return PreparedLogo(
+                image: UIImage(cgImage: processedFull, scale: scale, orientation: imageOrientation),
+                luminance: luminance, red: meanR, green: meanG, blue: meanB,
+                coverage: coverage, brightInk: brightInk, backgroundPlate: backgroundPlate
+            )
         }
         return PreparedLogo(
             image: UIImage(cgImage: cropped, scale: scale, orientation: imageOrientation),
             luminance: luminance,
             red: meanR, green: meanG, blue: meanB,
             coverage: coverage,
-            brightInk: brightInk
+            brightInk: brightInk,
+            backgroundPlate: backgroundPlate
         )
     }
 
@@ -1168,9 +1217,15 @@ private extension UIImage {
     /// box rather than real artwork — a genuinely transparent logo has a
     /// transparent border, so this returns `nil` for it. Reads the buffer without
     /// mutating it; the actual removal happens in `stripPlateAndMeasure`.
-    private static func detectBackgroundPlate(_ data: [UInt8], width: Int, height: Int, bytesPerRow: Int) -> PlateColor? {
+    private static func detectBackgroundPlate(
+        _ data: [UInt8], width: Int, height: Int, bytesPerRow: Int,
+        bounds: (minX: Int, minY: Int, maxX: Int, maxY: Int)? = nil
+    ) -> PlateColor? {
         let bpp = 4
-        guard width > 2, height > 2 else { return nil }
+        let minX = bounds?.minX ?? 0, minY = bounds?.minY ?? 0
+        let maxX = bounds?.maxX ?? (width - 1), maxY = bounds?.maxY ?? (height - 1)
+        let sampleWidth = maxX - minX + 1, sampleHeight = maxY - minY + 1
+        guard sampleWidth > 2, sampleHeight > 2 else { return nil }
 
         // Sample the border ring to estimate the background colour and confirm it
         // is opaque + uniform enough to be a deliberate plate rather than artwork.
@@ -1180,13 +1235,13 @@ private extension UIImage {
             rSum += Int(data[i]); gSum += Int(data[i + 1]); bSum += Int(data[i + 2]); aSum += Int(data[i + 3])
             count += 1
         }
-        for x in stride(from: 0, to: width, by: max(1, width / 64)) {
-            sample(x, 0)
-            sample(x, height - 1)
+        for x in stride(from: minX, through: maxX, by: max(1, sampleWidth / 64)) {
+            sample(x, minY)
+            sample(x, maxY)
         }
-        for y in stride(from: 0, to: height, by: max(1, height / 64)) {
-            sample(0, y)
-            sample(width - 1, y)
+        for y in stride(from: minY, through: maxY, by: max(1, sampleHeight / 64)) {
+            sample(minX, y)
+            sample(maxX, y)
         }
         guard count > 0 else { return nil }
 
@@ -1212,11 +1267,11 @@ private extension UIImage {
             let d = max(abs(r - bgR), max(abs(g - bgG), abs(b - bgB)))
             if d > maxDev { maxDev = d }
         }
-        for x in stride(from: 0, to: width, by: max(1, width / 64)) {
-            dev(x, 0); dev(x, height - 1)
+        for x in stride(from: minX, through: maxX, by: max(1, sampleWidth / 64)) {
+            dev(x, minY); dev(x, maxY)
         }
-        for y in stride(from: 0, to: height, by: max(1, height / 64)) {
-            dev(0, y); dev(width - 1, y)
+        for y in stride(from: minY, through: maxY, by: max(1, sampleHeight / 64)) {
+            dev(minX, y); dev(maxX, y)
         }
         // Tolerance for "the border is one flat colour". Loose enough to absorb
         // JPEG noise, tight enough to spare gradient/photographic backgrounds.
@@ -1302,6 +1357,7 @@ private extension UIImage {
                     stats.rSum += r * af
                     stats.gSum += g * af
                     stats.bSum += b * af
+                    stats.squaredColorSum += (r * r + g * g + b * b) * af
                     stats.weight += af
                     // A logo's MEAN tone hides its most legible feature: the white
                     // keyline around a pastel wordmark, or the highlights on a
@@ -1338,6 +1394,7 @@ private struct LogoStats {
     var rSum = 0.0
     var gSum = 0.0
     var bSum = 0.0
+    var squaredColorSum = 0.0
     var weight = 0.0
     /// Ink bright enough to carry its own contrast — see
     /// ``PreparedLogo/brightInk``.

@@ -1,7 +1,29 @@
 #if canImport(SwiftUI) && canImport(UIKit)
 import SwiftUI
 import UIKit
+import Observation
+import CoreModels
 import CoreUI
+
+@MainActor
+@Observable
+final class HeroForegroundRatingsState {
+    private(set) var ratings: [ExternalRating] = []
+
+    func update(_ ratings: [ExternalRating]) {
+        guard self.ratings != ratings else { return }
+        self.ratings = ratings
+    }
+}
+
+private struct HeroForegroundRatingsView: View {
+    let state: HeroForegroundRatingsState
+
+    var body: some View {
+        RatingsBadgeRow(ratings: state.ratings)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
 
 /// The persistent UIKit hero **visual foreground** (POC, gated by
 /// ``HeroForegroundConfig``). One long-lived view that renders a slide's
@@ -22,8 +44,9 @@ final class HeroForegroundUIView: UIView {
     private let overviewLabel = UILabel()
     /// The air-schedule badge above the logo ("New episode every Wednesday").
     private let scheduleLabel = PaddedLabel()
-    private let ratingsHost = UIHostingController(
-        rootView: AnyView(EmptyView())
+    private let ratingsState = HeroForegroundRatingsState()
+    private lazy var ratingsHost = UIHostingController(
+        rootView: HeroForegroundRatingsView(state: ratingsState)
     )
     private let pillsContainer = UIView()
     var contentLocale: Locale = .current
@@ -264,10 +287,7 @@ final class HeroForegroundUIView: UIView {
 
         overviewLabel.text = model.overview
         overviewLabel.isHidden = (model.overview ?? "").isEmpty
-        ratingsHost.rootView = AnyView(
-            RatingsBadgeRow(ratings: model.ratings)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        )
+        ratingsState.update(model.ratings)
         ratingsHost.view!.isHidden = model.ratings.isEmpty
 
         applyPills(model)

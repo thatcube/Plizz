@@ -171,7 +171,8 @@ struct ScrubBar: View {
 /// transaction. Icon-only at rest; the label reveals with the button on focus
 /// (instant, so the row never janks mid-expand).
 struct InfoActionButtonStyle: ButtonStyle {
-    let focused: Bool
+    /// Read native focus locally unless a caller supplies its own focus state.
+    var focused: Bool? = nil
     let prominent: Bool
     /// Scaled with the card — a capsule sized for a three-metre viewing distance
     /// is most of a phone's card height on its own.
@@ -179,17 +180,32 @@ struct InfoActionButtonStyle: ButtonStyle {
     var vPadding: CGFloat = 14
 
     func makeBody(configuration: Configuration) -> some View {
-        let fill: Color = focused ? .white : .white.opacity(prominent ? 0.24 : 0.12)
-        let fg: Color = focused ? .black : .white
-        return configuration.label
-            .foregroundStyle(fg)
-            .padding(.horizontal, hPadding)
-            .padding(.vertical, vPadding)
-            .background(Capsule(style: .continuous).fill(fill))
-            .clipShape(Capsule(style: .continuous))
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
-            // Everything about focus is instant — no background/foreground fade.
-            .animation(nil, value: focused)
+        ActionBody(
+            configuration: configuration, focused: focused, prominent: prominent,
+            hPadding: hPadding, vPadding: vPadding
+        )
+    }
+
+    private struct ActionBody: View {
+        let configuration: ButtonStyle.Configuration
+        let focused: Bool?
+        let prominent: Bool
+        let hPadding: CGFloat
+        let vPadding: CGFloat
+        @Environment(\.isFocused) private var nativeFocus
+
+        var body: some View {
+            let hasFocus = focused ?? nativeFocus
+            let fill: Color = hasFocus ? .white : .white.opacity(prominent ? 0.24 : 0.12)
+            return configuration.label
+                .foregroundStyle(hasFocus ? Color.black : .white)
+                .padding(.horizontal, hPadding)
+                .padding(.vertical, vPadding)
+                .background(Capsule(style: .continuous).fill(fill))
+                .clipShape(Capsule(style: .continuous))
+                .scaleEffect(configuration.isPressed ? 0.96 : 1)
+                .animation(nil, value: hasFocus)
+        }
     }
 }
 

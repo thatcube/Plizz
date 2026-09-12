@@ -93,7 +93,10 @@ public enum PlozzLog {
         guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
             return url.absoluteString
         }
-        let sensitiveQuery: Set<String> = ["secret", "api_key", "apikey", "x-plex-token", "token"]
+        let sensitiveQuery: Set<String> = [
+            "secret", "api_key", "apikey", "x-plex-token", "token",
+            "opentoken", "livestreamid", "playsessionid", "username", "password"
+        ]
         components.queryItems = components.queryItems?.map { item in
             sensitiveQuery.contains(item.name.lowercased())
                 ? URLQueryItem(name: item.name, value: "<redacted>")

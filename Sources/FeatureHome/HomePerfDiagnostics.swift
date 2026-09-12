@@ -27,6 +27,8 @@ public enum HomePerfDiagnostics {
         category: "homeperf"
     )
     private static let logger = Logger(subsystem: "com.plozz.app", category: "homeperf")
+    private static let animationLog = OSLog(subsystem: "com.plozz.app", category: "homeanimation")
+    @MainActor private static var pendingAnimation: (name: StaticString, end: DispatchWorkItem)?
     #endif
 
     private static let store = Store()
@@ -38,6 +40,32 @@ public enum HomePerfDiagnostics {
     /// be read over the network here. Off by default; read once at startup.
     public static let isStdoutMirrorEnabled: Bool =
         ProcessInfo.processInfo.environment["PLZPERF_STDOUT"] == "1"
+
+    private static let isAnimationCaptureEnabled =
+        ProcessInfo.processInfo.environment["PLZPERF_ANIMATIONS"] == "1"
+
+    /// A bounded window covering the original 0.9/0.96-second recede animations.
+    /// XCTest measures presented-frame hitches here, independently of display-link callbacks.
+    @MainActor
+    public static func recordNavigationAnimation(receding: Bool) {
+        guard isAnimationCaptureEnabled else { return }
+        #if canImport(OSLog)
+        if let pendingAnimation {
+            pendingAnimation.end.cancel()
+            os_signpost(.end, log: animationLog, name: pendingAnimation.name)
+        }
+        let name: StaticString = receding ? "HomeRecede" : "HomeReturn"
+        os_signpost(.animationBegin, log: animationLog, name: name)
+        let end = DispatchWorkItem {
+            MainActor.assumeIsolated {
+                os_signpost(.end, log: animationLog, name: name)
+                pendingAnimation = nil
+            }
+        }
+        pendingAnimation = (name, end)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: end)
+        #endif
+    }
 
     /// Monotonic clock start so each streamed line carries a relative `t+<ms>` stamp.
     private static let start = DispatchTime.now().uptimeNanoseconds

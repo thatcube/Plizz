@@ -125,6 +125,17 @@ tools/l10n-guard.sh
 
 ## Automatic pre-main pass
 
+Before exporting translation packets, validate the English catalog with
+`tools/l10n-sync.py --validate-only`, including its count/plural structures.
+For reviewed source-only corrections, `l10n-import.py --source-delta` accepts a
+source-language artifact containing only existing keys, with `deltaKeys` in exact
+translation order and `sourceCatalogSHA256` matching the exported catalog hash.
+All changed units must remain `needs_review`. This preserves implicit English
+fallbacks and unrelated source states instead of manufacturing a full English
+translation. It cannot change permission prompts; ordinary language imports still
+require full coverage. Re-export and review affected translations after changing
+source wording or plural structures.
+
 Localization runs as part of landing a feature, not on a timer. The committed
 `.githooks/pre-push` gate activates only for a push targeting `main`; ordinary
 feature-branch pushes stay fast. The repository uses `core.hooksPath=.githooks`.

@@ -11,7 +11,7 @@ import CoreModels
 ///  - **Resolved but missing the capability** (a provider that can't express the
 ///    state) → return success, since retrying could never succeed (no silent loss —
 ///    there is genuinely nothing to write).
-public struct AppShellWatchMutationApplier: WatchMutationApplying {
+public struct AppShellWatchMutationApplier: WatchMutationAuthorizationEnforcing {
     /// Fences a reconciler to the profile it was created for. A superseded
     /// profile's in-flight drain must keep its mutations queued, never write
     /// through services/providers now scoped to another profile.
@@ -103,11 +103,13 @@ public struct AppShellWatchMutationApplier: WatchMutationApplying {
 
     public func setPlayed(_ played: Bool, on target: WatchMutationTarget, capturedAt: Date) async throws {
         guard await isActive() else { throw AppError.serverUnreachable }
+        try await WatchMutationDeliveryAuthorization.check()
         guard let provider = await resolveProvider(target.accountID) else {
             FanoutDiagnostics.emit("write.setPlayed acct=\(target.accountID) item=\(target.itemID) -> provider=nil (unreachable/unresolved, will retry)")
             throw AppError.serverUnreachable
         }
         guard await isActive() else { throw AppError.serverUnreachable }
+        try await WatchMutationDeliveryAuthorization.check()
         // A locally-stored played state (the SMB share) is ordered last-writer-wins
         // by the play's real time, so prefer the timestamped write — otherwise a
         // late-draining stale played write, stamped at drain time, would clobber a
@@ -139,11 +141,13 @@ public struct AppShellWatchMutationApplier: WatchMutationApplying {
         dismiss: Bool
     ) async throws {
         guard await isActive() else { throw AppError.serverUnreachable }
+        try await WatchMutationDeliveryAuthorization.check()
         guard let provider = await resolveProvider(target.accountID) else {
             FanoutDiagnostics.emit("write.setResume acct=\(target.accountID) item=\(target.itemID) -> provider=nil (unreachable/unresolved, will retry)")
             throw AppError.serverUnreachable
         }
         guard await isActive() else { throw AppError.serverUnreachable }
+        try await WatchMutationDeliveryAuthorization.check()
         guard let resumeWriter = provider as? ResumeStateWriting else {
             FanoutDiagnostics.emit("write.setResume acct=\(target.accountID) item=\(target.itemID) -> provider=\(provider.kind.rawValue) NOT ResumeStateWriting (no write, treated success)")
             return
@@ -166,6 +170,8 @@ public struct AppShellWatchMutationApplier: WatchMutationApplying {
                 FanoutDiagnostics.emit("write.removeFromCW acct=\(target.accountID) item=\(target.itemID) -> OK (position kept)")
                 return
             } catch {
+                guard await isActive() else { throw AppError.serverUnreachable }
+                try await WatchMutationDeliveryAuthorization.check()
                 FanoutDiagnostics.emit("write.removeFromCW acct=\(target.accountID) item=\(target.itemID) -> FAILED, clearing position instead")
             }
         }
@@ -174,21 +180,25 @@ public struct AppShellWatchMutationApplier: WatchMutationApplying {
 
     public func scrobbleTrakt(_ intent: TraktScrobbleIntent) async throws {
         guard await isActive() else { throw AppError.serverUnreachable }
+        try await WatchMutationDeliveryAuthorization.check()
         try await applyTrakt(intent)
     }
 
     public func scrobbleSimkl(_ intent: TraktScrobbleIntent) async throws {
         guard await isActive() else { throw AppError.serverUnreachable }
+        try await WatchMutationDeliveryAuthorization.check()
         try await applySimkl(intent)
     }
 
     public func scrobbleAniList(_ intent: TraktScrobbleIntent) async throws {
         guard await isActive() else { throw AppError.serverUnreachable }
+        try await WatchMutationDeliveryAuthorization.check()
         try await applyAniList(intent)
     }
 
     public func scrobbleMAL(_ intent: TraktScrobbleIntent) async throws {
         guard await isActive() else { throw AppError.serverUnreachable }
+        try await WatchMutationDeliveryAuthorization.check()
         try await applyMAL(intent)
     }
 
@@ -200,7 +210,7 @@ public struct AppShellWatchMutationApplier: WatchMutationApplying {
     /// warmth-gated via ``WatchTargetExpansion/inconclusiveAccountIDs`` so the
     /// reconciler retries rather than dropping or guessing.
     public func expandTargets(for mutation: WatchMutation) async -> WatchTargetExpansion {
-        guard await isActive() else {
+        guard await isActive(), await WatchMutationDeliveryAuthorization.allowsExpansion() else {
             return WatchTargetExpansion(
                 targets: [],
                 inconclusiveAccountIDs: ["inactive-profile"]
@@ -212,7 +222,7 @@ public struct AppShellWatchMutationApplier: WatchMutationApplying {
         } else {
             expansion = await expandIdentityTargets(for: mutation)
         }
-        guard await isActive() else {
+        guard await isActive(), await WatchMutationDeliveryAuthorization.allowsExpansion() else {
             return WatchTargetExpansion(
                 targets: [],
                 inconclusiveAccountIDs: ["inactive-profile"]
@@ -243,6 +253,9 @@ public struct AppShellWatchMutationApplier: WatchMutationApplying {
         let scopedSources = indexedSources(mutation.identities, mutation.kind, mutation.anchorTitle, mutation.anchorYear)
         let targets = scopedSources.map(\.target)
         let everyAccount = Set(await allAccountIDs())
+        guard await WatchMutationDeliveryAuthorization.allowsExpansion() else {
+            return WatchTargetExpansion(inconclusiveAccountIDs: ["authorization"])
+        }
         // Conclusive only once every active account has been indexed at least once
         // (the union can still grow until then), unless we've exhausted the attempt
         // budget so a never-indexing account can't keep the mutation queued forever.
@@ -266,6 +279,9 @@ public struct AppShellWatchMutationApplier: WatchMutationApplying {
 
         // Which OTHER servers to probe. None ⇒ single-server household ⇒ no probing.
         let everyAccount = await allAccountIDs()
+        guard await WatchMutationDeliveryAuthorization.allowsExpansion() else {
+            return WatchTargetExpansion(inconclusiveAccountIDs: ["authorization"])
+        }
         let otherAccountIDs = everyAccount.filter { $0 != origin.accountID }
         guard !otherAccountIDs.isEmpty else { return .none }
 
@@ -277,9 +293,12 @@ public struct AppShellWatchMutationApplier: WatchMutationApplying {
         }
         let originSeries: MediaItem
         do {
+            try await WatchMutationDeliveryAuthorization.check()
             let episodeItem = try await originProvider.item(id: origin.itemID)
+            try await WatchMutationDeliveryAuthorization.check()
             guard let seriesID = episodeItem.seriesID else { return .none }
             originSeries = try await originProvider.item(id: seriesID)
+            try await WatchMutationDeliveryAuthorization.check()
         } catch {
             return WatchTargetExpansion(inconclusiveAccountIDs: [origin.accountID])
         }
@@ -288,9 +307,15 @@ public struct AppShellWatchMutationApplier: WatchMutationApplying {
         // search/children closures can call them (and report provider kinds).
         var providers: [String: any MediaProvider] = [:]
         for accountID in otherAccountIDs {
+            guard await WatchMutationDeliveryAuthorization.allowsExpansion() else {
+                return WatchTargetExpansion(inconclusiveAccountIDs: ["authorization"])
+            }
             if let provider = await resolveProvider(accountID) {
                 providers[accountID] = provider
             }
+        }
+        guard await WatchMutationDeliveryAuthorization.allowsExpansion() else {
+            return WatchTargetExpansion(inconclusiveAccountIDs: ["authorization"])
         }
         // An account whose provider can't be resolved (signed out / still resolving)
         // is inconclusive — retry it later rather than concluding it lacks the show.
@@ -324,6 +349,7 @@ public struct AppShellWatchMutationApplier: WatchMutationApplying {
             episodeNumber: episode,
             otherAccountIDs: resolvableAccountIDs,
             searchSeries: { accountID, query in
+                guard await WatchMutationDeliveryAuthorization.allowsExpansion() else { return nil }
                 if let knownID = knownSeriesByAccount[accountID] {
                     var synthetic = originSeriesForSynthesis
                     synthetic.id = knownID
@@ -334,6 +360,7 @@ public struct AppShellWatchMutationApplier: WatchMutationApplying {
                 return await Self.searchSeries(provider, query: query, seconds: deadline)
             },
             children: { accountID, containerID in
+                guard await WatchMutationDeliveryAuthorization.allowsExpansion() else { return nil }
                 guard let provider = resolvedProviders[accountID] else { return nil }
                 return try? await provider.children(of: containerID)
             },
@@ -352,7 +379,10 @@ public struct AppShellWatchMutationApplier: WatchMutationApplying {
     /// "this server doesn't have the show". A libdispatch timer cancels the search
     /// task so a saturated cooperative pool can't defeat the deadline.
     private static func searchSeries(_ provider: any MediaProvider, query: String, seconds: TimeInterval) async -> [MediaItem]? {
-        let searchTask = Task { try await provider.search(query: query, limit: 25) }
+        let searchTask = Task {
+            try await WatchMutationDeliveryAuthorization.check()
+            return try await provider.search(query: query, limit: 25)
+        }
         let timeout = DispatchWorkItem { searchTask.cancel() }
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + seconds, execute: timeout)
         defer { timeout.cancel() }

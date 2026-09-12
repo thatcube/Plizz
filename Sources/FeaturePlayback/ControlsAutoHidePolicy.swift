@@ -1,3 +1,4 @@
+import CoreUI
 import Foundation
 
 /// Pure auto-hide decisions for the player transport (the control bar), extracted
@@ -13,7 +14,7 @@ enum ControlsAutoHidePolicy {
     static let postLoadGrace: TimeInterval = 1.0
     /// Floor measured from the last input (a reveal, skip, or control-bar focus
     /// move) — the transport never hides sooner than this after the viewer acted.
-    static let minSinceInput: TimeInterval = 4.0
+    static let minSinceInput: TimeInterval = PlaybackControlsInactivity.defaultGrace
     /// The same floor while the Info card is open. Longer because the card is
     /// something to READ — a synopsis, episode number, runtime and badges — rather
     /// than a row of buttons to act on, so the 4s that suits the transport cuts a

@@ -33,6 +33,8 @@ public struct AppliedResumeRecord: Codable, Sendable, Equatable {
 /// Everything here is plain `Codable` value data so a brand-new install starts from
 /// a well-defined **empty** state (no force-unwraps, no migration) and a kill at any
 /// point leaves a recoverable file.
+/// Guarded mutations persist their requirement, never their runtime validator.
+/// Such intents fail closed after restoration rather than becoming ordinary writes.
 public struct WatchOutboxState: Codable, Sendable, Equatable {
     /// Pending mutations, in enqueue order (coalesced by ``WatchMutation/coalesceKey``).
     public var pending: [WatchMutation]

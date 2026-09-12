@@ -433,6 +433,36 @@ utilisation = "death by a thousand re-renders", not one big stall.
    `GeometryReader` do **not** inherit a `.move` transition — they snap to their
    final position while siblings slide. To animate such a subtree as one unit,
    keep it mounted and animate `.offset`/`.opacity` instead of insert/remove.
+5. **Keep scheduling-only activity out of render state.** Home's remote-move
+   handler previously wrote a `@State` timestamp used only by the share-refresh
+   idle gate. A physical-TV SwiftUI causes trace linked five Home invalidations
+   directly to `HomeView.lastInteractionAt.setter`; each propagated through
+   `ContentStateView`, the hero, and row construction during navigation.
+   `HomeNavigationActivity` now keeps that timestamp in a non-observable,
+   Home-owned reference. The ancestor still records every move and delays
+   watchlist refreshes; the share observer reads the latest timestamp when
+   checking its unchanged 30-second idle grace. Do not make this clock
+   observable or copy its timestamp back into a view's `@State`.
+6. **Debouncing does not move CPU work off MainActor.** A later Home hang report
+   identified `scheduleReenrich` calling the synchronous `reenrich` merge on the
+   main thread. Its identity traversal repeatedly reached title normalization,
+   blocking navigation for seconds even after the activity-clock fix.
+   Reenrichment now merges an immutable content copy on a utility worker and
+   publishes on MainActor only if its content revision is still current.
+   Concurrent reloads or watch mutations force a fresh fold; a superseding pass
+   or cancellation cannot publish stale results or call the old completion.
+   Keep that protection when changing the worker boundary, and retain the
+   order-stable merge rather than re-sorting Continue Watching.
+7. **Ask only for the action a visible control needs.** The Home hero previously
+   built the complete context-menu catalog just to draw its bookmark button,
+   repeating provider-ownership identity lookups on focus changes. Its
+   `watchlistAction` query now shares the catalog's eligibility rules but skips
+   unrelated identity, provider-capability and download work when Plozz owns the
+   watchlist. Membership still uses the live revision-aware cache; legacy
+   provider watchlists and custom handlers retain their full-menu fallback.
+   The UIKit foreground also retains its ratings hosting view and updates its
+   isolated ratings state only when scores change. Focus, selection and paging
+   gauge updates must not replace that SwiftUI root with unchanged badges.
 
 ### Profiling that ends in "no change" is a valid, valuable result
 
@@ -442,6 +472,135 @@ fix already minimised, and there's no rogue loop left. **Reporting "measured, it
 clean, here's the breakdown" is a real outcome** — it stops you from cargo-culting
 "optimisations" that cost readability and fix nothing. Record the numbers so the
 next agent doesn't re-chase a ghost.
+
+### Home backdrop composition and comparison controls
+
+tvOS uses cached shading by default where it preserves the original treatment.
+iOS retains analytic shading by default. These launch overrides do not change saved settings:
+
+| Launch flag | Rendering change |
+| --- | --- |
+| `PLZHOME_CACHED_SCRIM=0` | Forces the original analytic shading for a control recording. |
+| `PLZHOME_CACHED_SCRIM=1` | Uses the pre-rendered alpha texture where eligible (also opt-in on iOS). |
+
+Compare cached shading against the analytic reference with the same artwork,
+theme, row population, and input cadence. The shading selection never
+changes the page scroll, recede distances, or 0.9/0.96-second animation choices.
+Local layer-count and screenshot improvements are not proof of Apple TV frame
+rate; confirm on the physical device before promoting an experiment.
+
+`HeroLegibilityTexture` uses native-size 1920x1080 and 3840x2160 alpha assets,
+not a runtime `drawingGroup`. The texture is tinted for opaque black/white in
+left-to-right layouts; other tones and right-to-left layouts retain the analytic
+`HeroLegibilityScrim` path. The RTL fallback preserves the platform's own leading
+edge behavior, which differed between the tvOS 26 and 27 comparisons. Its fixed parameters
+match Home's current leading/bottom treatment. Regenerate with
+`python3 tools/generate_home_scrim.py` whenever those parameters change, and
+verify with `python3 tools/generate_home_scrim.py --check` plus
+`python3 tools/test_generate_home_scrim.py`.
+
+An opaque color-fade experiment did not replace the original alpha mask: it
+introduced a visible seam and differed during intermediate animation frames.
+Adding rectangular clipping fixed a synthetic overdraw fixture but not the
+reported device seam. The experiment and its runtime switches were removed
+before landing; the accepted renderer retains the original mask.
+
+#### Measure presentation separately from callbacks and startup
+
+`PlozzHomeRemoteTests` can drive a bounded, repeatable Down/Up sequence against
+the installed app without changing its saved settings. It requires the explicit
+runner opt-in `PLOZZ_HOME_REMOTE_CAPTURE=1` and checks the actual Home hero focus
+target, not merely whether the app is foreground. Reject profile-picker runs.
+
+For native animation metrics, launch the app with `PLZPERF_ANIMATIONS=1` and set
+`PLOZZ_HOME_ANIMATION_METRICS=1` on the runner. `HomeRecede` and `HomeReturn`
+animation signposts cover separate 1.2-second windows around the unchanged
+0.9/0.96-second movements. Read XCTest's **hitch time ratio**, not just the
+display-link FPS counter. On an Apple TV 4K (2nd generation), a same-build,
+12-sample comparison starting the driver 120 seconds after each launch request measured
+mean Down/Up hitch ratios of 159.9/285.9 ms/s with analytic shading versus
+0.0/10.2 ms/s with cached shading, both using the original alpha dissolve.
+Callback counters alone had obscured this difference. The frame-count metric
+returned zero on this toolchain; do not report it as a valid frame count.
+
+Those results do **not** establish startup performance. Keep early-launch and
+later-navigation measurements separate, record actual first-move timestamps and
+background curation activity, and reverse comparison order. Do not wait for
+background loading to finish in a test intended to cover startup. XCTest's
+quiescence waits can delay input even with no explicit settling delay; verify
+the actual navigation markers. An experimental prestarted-driver handshake did
+not prove early input and was removed. This toolchain also returned no native metrics when the app process
+changed after the test session started. Empty metrics are an invalid capture,
+not zero hitches or a successful performance result.
+
+A subsequent manually driven startup pair did overlap background curation:
+first Down was at 10.9/10.4 seconds, before curation completed at 17.9/16.8
+seconds (original/cached, relative to Home's first diagnostic event, not process
+start). The first 20-second callback windows were similar: median smoothed FPS
+59 in both, reported hitches 2.66/2.55 per second. This establishes loading
+overlap, **not** a proven startup improvement or presented-frame equivalence.
+Keep that limitation separate from the native animation results above.
+
+#### Investigating a visible position jump
+
+A temporary, passive geometry recorder sampled the hero's UIKit coordinates,
+page scroll offset, content height and inset without steering focus. Its file
+logger and runtime switch were removed before landing. Retain recordings as
+investigation artifacts, not as production instrumentation.
+
+A tvOS 27 capture found 40–60-point hero steps following delayed updates while
+hero heights and the top inset stayed constant. A separate Time Profiler capture
+showed main-thread SwiftUI/AttributeGraph work and substantial background share
+scanning. Do not call every large coordinate step a layout-size change, or blame
+all of it on GPU composition.
+
+One measured source of redundant focus-time work was eager context-menu action
+preparation. A deferred-content experiment eliminated unopened-menu queries in
+a hosted test and opened the real menu, but its same-binary comparison did not
+establish a fix for the remaining jumps. Native dismissal/focus verification
+also remained inconclusive. That experiment was removed rather than mixing it
+into subsequent motion comparisons.
+
+An isolated-transaction experiment explicitly interpolated the offset before
+clearing child animations; clearing the transaction around an ordinary offset
+made UIKit content snap in the hosted comparison. It keeps the original native
+gradient mask, because rebuilding that gradient from an interpolated start
+position differed during the fade. The shared movement modifier retained for
+production instead uses the original inherited animation transaction; hosted
+tests compare its rendered positions, UIKit geometry and reversal.
+
+Do not attribute improvements in an isolation-OFF control to that experimental
+path. One tvOS 27 control reported zero hitches in all twelve measured Down
+windows and all twelve Up windows, and was the run the viewer reported as
+smoother. This does not establish the cause of the improvement, nor prove that
+busy-startup cases are fixed.
+
+A repeat with a focus assertion after every Down and Up still recorded occasional
+hitches: mean Down/Up ratios of 5.8/1.1 ms/s in the control. Isolation ON measured
+9.3/0.0 ms/s and more large sampled coordinate steps in that comparison, so it
+was not accepted as an overall improvement. The isolated path was removed before
+landing. Keep the successful cached-shading change separate from that experiment.
+
+#### TV show detail backdrops
+
+`HeroBackdropLayer` uses the same `HeroLegibilityTexture` and generated alpha
+asset as Home on tvOS. Its fixed wash, leading/bottom edges, peak and side ramp
+are identical. Only those static layers are cached: detail's own linear bottom
+dissolve, series hero masks, recede/return animation, episode rail and trailer
+handoff remain unchanged. RTL and custom tones retain native shading; iOS keeps
+its existing default.
+
+Use `PLZDETAIL_CACHED_SCRIM=0` for an analytic control. The layer also accepts
+`prefersCachedScrim` for embedding and visual comparisons. Hosted coverage
+compares the complete backdrop across themes, directions, full/short heights
+and vertical offsets, including clipping of a video-like UIKit layer.
+
+Long-show checks should use a real large episode collection, such as the
+animated One Piece series. `SeriesHeroCaptureTests` verifies hero/browser focus
+round trips when explicitly enabled with `PLOZZ_DETAIL_REMOTE_CAPTURE=1`.
+That is functional coverage, not a performance claim: empty native timing
+results and disconnected Instruments captures must not be counted as zero
+hitches. Episode-count-dependent work may require separate CPU investigation.
 
 ---
 

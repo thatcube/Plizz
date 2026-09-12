@@ -54,7 +54,13 @@ final class NavigationRailPresentationTests: XCTestCase {
     }
 
     func testOtherRootDestinationsKeepPinnedNavigation() {
-        for destination: NavigationRailDestination in [.home, .watchlist, .settings, .music, .allLibraries] {
+        var destinations: [NavigationRailDestination] = [
+            .home, .watchlist, .settings, .music, .allLibraries
+        ]
+        #if DEBUG
+        destinations.append(.liveTV)
+        #endif
+        for destination in destinations {
             let presentation = make(destination)
             XCTAssertFalse(presentation.usesPageButton)
             XCTAssertTrue(presentation.isRailVisible)
@@ -64,6 +70,30 @@ final class NavigationRailPresentationTests: XCTestCase {
             XCTAssertEqual(presentation.headerHeight, 0)
             XCTAssertFalse(presentation.shouldEnterSearchContent)
             XCTAssertFalse(make(destination, opening: true).opensExpanded)
+        }
+    }
+
+    func testPinnedEntryDoesNotExpandRowsBeforeNativeFocusArrives() {
+        for destination in [NavigationRailDestination.home, .settings, .library("account:movies")] {
+            let pending = make(destination, opening: true)
+            XCTAssertFalse(pending.opensExpanded)
+            XCTAssertTrue(pending.isRailEnabled)
+            XCTAssertEqual(
+                NavigationGlassSurface.resolve(
+                    isExpanded: pending.isExpanded || pending.opensExpanded,
+                    showsPageButton: pending.showsPageButton, hasButtonFrame: false
+                ),
+                .none
+            )
+            let closed = make(destination)
+            XCTAssertFalse(closed.opensExpanded)
+            XCTAssertEqual(
+                NavigationGlassSurface.resolve(
+                    isExpanded: closed.isExpanded || closed.isOpening,
+                    showsPageButton: closed.showsPageButton, hasButtonFrame: false
+                ),
+                .none
+            )
         }
     }
 
@@ -84,6 +114,24 @@ final class NavigationRailPresentationTests: XCTestCase {
         XCTAssertFalse(presentation.shouldEnterSearchContent)
         XCTAssertFalse(presentation.opensExpanded)
     }
+
+    #if DEBUG
+    func testLiveTVSearchSuppressionBlocksEvenAnAlreadyRequestedMenu() {
+        for expanded in [false, true] {
+            for opening in [false, true] {
+                let presentation = NavigationRailPresentation(
+                    destination: .liveTV, chromeHidden: true,
+                    isExpanded: expanded, isOpening: opening
+                )
+                XCTAssertFalse(presentation.isRailVisible)
+                XCTAssertFalse(presentation.isRailEnabled)
+                XCTAssertFalse(presentation.isEdgeNavigationEnabled())
+                XCTAssertFalse(presentation.showsPageButton)
+                XCTAssertEqual(presentation.contentInset, 0)
+            }
+        }
+    }
+    #endif
 
     private func make(
         _ destination: NavigationRailDestination,

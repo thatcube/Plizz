@@ -253,6 +253,12 @@ public struct ItemDetailView: View {
         }
         // Detail is a full-screen sub-page: hide the top tab bar.
         .toolbar(.hidden, for: .tabBar)
+        .cinematicDetailPage(isEnabled:
+            initialEpisode != nil
+                || viewModel.state.value?.item.kind == .movie
+                || viewModel.state.value?.item.kind == .series
+                || viewModel.state.value?.item.kind == .season
+        )
         // Always run load(), even when the page was seeded with the tapped list
         // item for instant first paint. The seed only paints a hero; load() must
         // still fetch the full detail AND its children (seasons/episodes). Skipping

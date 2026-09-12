@@ -12,6 +12,9 @@ public protocol MediaItemActionHandling: AnyObject {
     /// The actions to show for `item` in `context` (empty hides the menu).
     func actions(for item: MediaItem, context: MediaItemActionContext) -> [MediaItemAction]
 
+    /// Lightweight presentation for a bookmark control, without preparing unrelated menu actions.
+    func watchlistAction(for item: MediaItem, context: MediaItemActionContext) -> MediaItemAction?
+
     /// Performs `action` on `item`. Implementations mutate server state and then
     /// broadcast `Notification.Name.mediaItemDidMutate` so visible screens can
     /// refresh from the source of truth. Fire-and-forget: the menu has already
@@ -67,6 +70,10 @@ public protocol MediaItemActionHandling: AnyObject {
 }
 
 public extension MediaItemActionHandling {
+    func watchlistAction(for item: MediaItem, context: MediaItemActionContext) -> MediaItemAction? {
+        actions(for: item, context: context).first { $0 == .addToWatchlist || $0 == .removeFromWatchlist }
+    }
+
     func invalidateAccountCaches() {}
     func isWatchlisted(_ item: MediaItem) -> Bool { false }
     func isActivelyRemovingFromWatchlist(_ item: MediaItem) -> Bool { false }

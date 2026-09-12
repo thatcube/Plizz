@@ -456,8 +456,7 @@ struct HomeHeroView: View {
     /// The watchlist toggle action for the slide's watchlist target, if its
     /// provider supports it.
     private func watchlistAction(for item: MediaItem) -> MediaItemAction? {
-        actionHandler?.actions(for: watchlistTarget(for: item), context: actionContext)
-            .first { $0 == .addToWatchlist || $0 == .removeFromWatchlist }
+        actionHandler?.watchlistAction(for: watchlistTarget(for: item), context: actionContext)
     }
 
     private static var screenHeight: CGFloat { HomeHeroLayout.screenHeight }
@@ -1093,7 +1092,7 @@ struct HomeHeroView: View {
         // of this column or the rows below it. Padding-based lifts on a non-lazy
         // stack re-run full layout every animation frame, which is what made the
         // slow recede stutter; a transform is free at any duration.
-        .offset(y: receded ? -Self.recedeContentLift : 0)
+        .modifier(HomeVerticalMotion(y: receded ? -Self.recedeContentLift : 0))
         // Cap the overview to the button-row width: adopt the pills' measured width.
         .onPreferenceChange(HeroButtonsWidthKey.self) { width in
             if width > 0 { actionButtonsWidth = width }
@@ -1146,7 +1145,7 @@ struct HomeHeroView: View {
         .padding(.leading, PlozzTheme.Metrics.heroLeadingPadding + navigationContentInset)
         // Lower the whole UIKit column (visuals + focus overlay) by `uikitContentDrop`.
         .padding(.bottom, Self.contentBottomInset - Self.uikitContentDrop)
-        .offset(y: receded ? -Self.recedeContentLift : 0)
+        .modifier(HomeVerticalMotion(y: receded ? -Self.recedeContentLift : 0))
     }
 
     /// SwiftUI-only counterpart to `HeroForegroundModelBuilder.titleText`: same
@@ -1530,6 +1529,7 @@ struct HomeHeroView: View {
                     }
                     .accessibilityElement(children: .ignore)
                     .accessibilityAddTraits(.isButton)
+                    .accessibilityIdentifier(Self.actionRowFocusID)
                     .accessibilityLabel(accessibilityLabel(for: item))
                     .accessibilityAction { activateSelected() }
                     .modifier(HeroActionAccessibility(actions: a11yActions))

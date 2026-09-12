@@ -8,6 +8,16 @@ import MetadataKit
 import UIKit
 #endif
 
+private enum HomeBackdropCompositing {
+    #if os(tvOS)
+    static let usesCachedScrim =
+        ProcessInfo.processInfo.environment["PLZHOME_CACHED_SCRIM"] != "0"
+    #else
+    static let usesCachedScrim =
+        ProcessInfo.processInfo.environment["PLZHOME_CACHED_SCRIM"] == "1"
+    #endif
+}
+
 /// Shared Home **hero** backdrop, designed around the Apple TV app's "parallax
 /// wipe" page transition.
 ///
@@ -177,6 +187,24 @@ public struct HomeHeroBackdrop: View {
     }
 
     public var body: some View {
+        dissolvedSurface
+            .frame(maxWidth: .infinity, alignment: artworkAlignment)
+            // Keep the translation inside the safe-area breakout.
+            .modifier(HomeVerticalMotion(y: -recedeLift))
+            .animation(.smooth(duration: 0.96), value: recedeLift)
+            .animation(.smooth(duration: 0.96), value: receded)
+            .ignoresSafeArea(
+                edges: ignoresHorizontalSafeArea
+                    ? [.top, .horizontal]
+                    : .top
+            )
+    }
+
+    private var dissolvedSurface: some View {
+        backdropSurface.mask(dissolveMask)
+    }
+
+    private var backdropSurface: some View {
         backdropImage
             .frame(width: width, height: height)
             .clipped()
@@ -203,28 +231,6 @@ public struct HomeHeroBackdrop: View {
             .animation(.easeInOut(duration: 0.45), value: showsTrailer)
             .overlay(scrim.opacity(scrimOpacity))
             .animation(.easeOut(duration: 0.18), value: scrimOpacity)
-            .mask(dissolveMask)
-            // Leading-aligned whenever the page is inset, so the artwork's left
-            // edge is the anchor and the bleed below can carry it to the screen
-            // edge. Centre stays the default everywhere else.
-            .frame(maxWidth: .infinity, alignment: artworkAlignment)
-            // The recede rise MUST be applied here, BEFORE .ignoresSafeArea().
-            // An .offset() applied AFTER .ignoresSafeArea() (as this view is when
-            // hosted as a `.background` on tvOS) is silently cancelled: the
-            // safe-area breakout re-anchors the view to the physical screen edge
-            // on every layout pass, nullifying any outer translation. This inner
-            // offset — the child of .ignoresSafeArea — is the only reliable place.
-            .offset(y: -recedeLift)
-            // Glide the artwork up/down on recede, lagging the content lift a touch
-            // for the Apple TV parallax feel (but not sluggish). The right-side
-            // dissolve strengthening rides the same curve so it blends in step.
-            .animation(.smooth(duration: 0.96), value: recedeLift)
-            .animation(.smooth(duration: 0.96), value: receded)
-            .ignoresSafeArea(
-                edges: ignoresHorizontalSafeArea
-                    ? [.top, .horizontal]
-                    : .top
-            )
     }
 
     @ViewBuilder
@@ -252,12 +258,13 @@ public struct HomeHeroBackdrop: View {
     /// (0.55) so the content side is never lightened. Lives under the dissolve
     /// mask so it fades away with the image at the bottom and never tints the
     /// revealed background. Static across slides, so it never animates.
+    @ViewBuilder
     private var scrim: some View {
         // TEST: top and trailing dropped, matching the detail page. The hero's
         // logo, metadata and buttons all sit along the LEFT and the image melts
         // into the rows at the BOTTOM, so those are the only edges doing
         // legibility work — the other two just cost contrast on the artwork.
-        HeroLegibilityScrim(
+        let shading = HeroLegibilityScrim(
             tone: scrimTone,
             edgePeak: 0.55,
             edges: [.leading, .bottom],
@@ -265,6 +272,11 @@ public struct HomeHeroBackdrop: View {
             // only flattens the artwork. The wash arrives where the content is.
             sideDarkeningStart: 0.34
         )
+        if HomeBackdropCompositing.usesCachedScrim {
+            HeroLegibilityTexture(tone: scrimTone)
+        } else {
+            shading
+        }
     }
 
     /// A smooth, EASED vertical fade from opaque (`white × peak`) down to `clear`,

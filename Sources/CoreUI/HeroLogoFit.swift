@@ -121,11 +121,15 @@ public enum HeroLogoFit {
     ///   (``PreparedLogo/coverage``), which adjusts the area target so a thin
     ///   wordmark and a heavy one carry comparable weight. Omit it — or pass 1 —
     ///   to size on area alone.
+    /// - Parameter constrainsToBounds: Keeps the complete logo inside the slot
+    ///   for fixed-height surfaces such as channel rows; hero sizing stays
+    ///   flexible by default.
     public static func fittedSize(
         for imageSize: CGSize,
         maxWidth: CGFloat,
         maxHeight: CGFloat,
-        coverage: Double = 1
+        coverage: Double = 1,
+        constrainsToBounds: Bool = false
     ) -> CGSize {
         guard imageSize.width > 0, imageSize.height > 0, maxWidth > 0, maxHeight > 0 else {
             return CGSize(width: maxWidth, height: maxHeight)
@@ -142,8 +146,8 @@ public enum HeroLogoFit {
         // below — and those distances are fixed by the layout, not by how much of
         // its own box a logo happens to paint. A thin wordmark may be given more
         // area; it may not be given permission to reach further.
-        let widthCeiling = maxWidth * widthFlex
-        let heightCeiling = maxHeight * heightFlex
+        let widthCeiling = maxWidth * (constrainsToBounds ? 1 : widthFlex)
+        let heightCeiling = maxHeight * (constrainsToBounds ? 1 : heightFlex)
 
         // The size covering `target` at this aspect: area = w * (w * aspect).
         var width = (target / aspect).squareRoot()

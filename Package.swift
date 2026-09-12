@@ -49,7 +49,10 @@ let package = Package(
         .library(name: "FeatureHome", targets: ["FeatureHome"]),
         .library(name: "FeatureSearchCore", targets: ["FeatureSearchCore"]),
         .library(name: "FeaturePlayback", targets: ["FeaturePlayback"]),
+        .library(name: "EnginePlozzigen", targets: ["EnginePlozzigen"]),
         .library(name: "FeatureSearch", targets: ["FeatureSearch"]),
+        .library(name: "FeatureLiveTVCore", targets: ["FeatureLiveTVCore"]),
+        .library(name: "FeatureLiveTV", targets: ["FeatureLiveTV"]),
         .library(name: "FeatureSettings", targets: ["FeatureSettings"]),
         .library(name: "FeatureProfiles", targets: ["FeatureProfiles"]),
         .library(name: "FeatureWatchlistCore", targets: ["FeatureWatchlistCore"]),
@@ -396,6 +399,14 @@ let package = Package(
             dependencies: ["CoreModels", "CoreUI", "FeatureSearchCore"]
         ),
         .target(
+            name: "FeatureLiveTVCore",
+            dependencies: ["CoreModels"]
+        ),
+        .target(
+            name: "FeatureLiveTV",
+            dependencies: ["CoreModels", "CoreUI", "FeatureLiveTVCore"]
+        ),
+        .target(
             name: "FeatureSettings",
             dependencies: ["CoreModels", "CoreUI", "CoreNetworking", "CrashReporting", "FeatureProfiles", "TraktService", "SeerService", "SimklService", "AniListService", "MALService", "LastFmService"]
         ),
@@ -637,6 +648,8 @@ let package = Package(
                 // The universal watchlist runtime lives here so tvOS and iOS share
                 // one implementation instead of two 560-line copies.
                 "FeatureHomeCore",
+                "FeatureLiveTVCore",
+                "FeaturePlayback",
                 "FeatureWatchlistCore",
                 "MediaTransportCore",
                 "MediaTransportFTP",
@@ -705,6 +718,7 @@ let package = Package(
                 "MALService",
                 "LastFmService",
                 "FeatureHome",
+                "FeatureLiveTV",
                 "FeaturePlayback",
                 "FeatureSearch",
                 "FeatureSettings",
@@ -731,6 +745,7 @@ let package = Package(
                 "FeatureDiscoveryCore",
                 "FeatureHomeCore",
                 "HeroUI",
+                "FeatureLiveTV",
                 "FeaturePlayback",
                 "FeatureProfiles",
                 "FeatureSearchCore",
@@ -881,6 +896,14 @@ let package = Package(
         .testTarget(
             name: "FeatureSearchCoreTests",
             dependencies: ["FeatureSearchCore", "CoreModels"]
+        ),
+        .testTarget(
+            name: "FeatureLiveTVCoreTests",
+            dependencies: ["CoreModels", "FeatureLiveTVCore"]
+        ),
+        .testTarget(
+            name: "FeatureLiveTVTests",
+            dependencies: ["FeatureLiveTV", "FeatureLiveTVCore"]
         ),
         .testTarget(
             name: "FeatureProfilesTests",

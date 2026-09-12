@@ -21,8 +21,7 @@ import FeatureProfiles
 struct NavigationRailShell<Content: View>: View {
     let profile: Profile
     let entries: [NavigationRailLibraryEntry]
-    let showsWatchlist: Bool
-    let showsMusic: Bool
+    let destinations: [NavigationRailDestination]
     @Binding var selection: NavigationRailDestination
     let onOpenProfileSwitcher: () -> Void
     let chrome: NavigationChromeModel
@@ -83,6 +82,10 @@ struct NavigationRailShell<Content: View>: View {
                 )
                 .environment(\.plozzPinnedSidebarActive, true)
                 .environment(\.plozzPinnedSidebarInteraction, pinnedSidebarInteraction)
+                // Reordering puts even Home and Settings inside the scroll view.
+                // During explicit entry, only its revealed selected row may win
+                // focus; restore directional access to the page once it arrives.
+                .disabled(isOpeningNavigation)
                 // Content is the scope's preferred focus ONLY while the rail does
                 // not hold focus. Opening the rail changes its focusable subtree;
                 // leaving this unconditional can re-assert content focus in the
@@ -135,8 +138,7 @@ struct NavigationRailShell<Content: View>: View {
                     NavigationRailView(
                         profile: profile,
                         entries: entries,
-                        showsWatchlist: showsWatchlist,
-                        showsMusic: showsMusic,
+                        destinations: destinations,
                         selection: $selection,
                         isExpandedOutward: $railExpanded,
                         onOpenProfileSwitcher: onOpenProfileSwitcher,
@@ -144,6 +146,10 @@ struct NavigationRailShell<Content: View>: View {
                         focusReleaseToken: railReturnToken,
                         opensExpanded: presentation.opensExpanded,
                         usesPageButtonSurface: presentation.showsPageButton,
+                        onFocusRequestFailed: { token in
+                            guard focusRequestToken == token else { return }
+                            isOpeningNavigation = false
+                        },
                         preventsAccidentalExit: preventsAccidentalExit
                     )
                     // Keep the focus-request observer mounted while Search hides
@@ -151,7 +157,7 @@ struct NavigationRailShell<Content: View>: View {
                     .disabled(!presentation.isRailEnabled)
                     .opacity(presentation.isRailVisible ? 1 : 0)
                     .animation(
-                        reduceMotion ? nil : .easeInOut(duration: 0.22),
+                        reduceMotion || presentation.isRailVisible ? nil : .easeInOut(duration: 0.22),
                         value: presentation.isRailVisible
                     )
                     .accessibilityHidden(!presentation.isRailEnabled)
@@ -168,7 +174,7 @@ struct NavigationRailShell<Content: View>: View {
                         NavigationGlassMorph(
                             buttonFrame: anchors[.button].map { geometry[$0] },
                             menuFrame: geometry[menu],
-                            isExpanded: railExpanded || isOpeningNavigation,
+                            isExpanded: railExpanded || presentation.opensExpanded,
                             showsPageButton: presentation.showsPageButton
                         )
                     }
@@ -219,6 +225,9 @@ struct NavigationRailPresentation: Equatable {
 
     var usesPageButton: Bool { destination == .search }
     var showsPageButton: Bool { !chromeHidden && usesPageButton }
+    // Only Search needs to reveal a previously invisible menu for entry.
+    // A pinned rail expands when a row actually receives focus, not merely
+    // because the page requested it.
     var opensExpanded: Bool { showsPageButton && isOpening }
     var shouldEnterSearchContent: Bool { showsPageButton && !isExpanded && !isOpening }
     func isEdgeNavigationEnabled(searchResultsHaveFocus: Bool = false) -> Bool {

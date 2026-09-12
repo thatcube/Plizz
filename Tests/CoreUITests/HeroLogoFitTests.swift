@@ -105,6 +105,21 @@ final class HeroLogoFitTests: XCTestCase {
         )
         XCTAssertEqual(zero, slot)
     }
+
+    func testFixedChannelSlotsContainEveryLogoShapeWithoutCroppingOrDistortion() {
+        for aspect in [0.05, 0.25, 1.0, 3.0] {
+            for coverage in [0.05, 0.32, 0.95] {
+                let fitted = HeroLogoFit.fittedSize(
+                    for: CGSize(width: 1_000, height: 1_000 * aspect),
+                    maxWidth: 100, maxHeight: 52,
+                    coverage: coverage, constrainsToBounds: true
+                )
+                XCTAssertLessThanOrEqual(fitted.width, 100.001)
+                XCTAssertLessThanOrEqual(fitted.height, 52.001)
+                XCTAssertEqual(fitted.height / fitted.width, aspect, accuracy: 0.001)
+            }
+        }
+    }
 }
 
 /// Coverage for the **ink** correction, which is the variable area-fitting can't

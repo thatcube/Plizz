@@ -79,7 +79,8 @@ final class WatchProgressReporter {
         positionOverride: TimeInterval? = nil,
         durationOverride: TimeInterval? = nil
     ) async {
-        guard let host, let request = host.reporterRequest else { return }
+        guard let host, let request = host.reporterRequest,
+              !request.suppressOrdinaryWatchReporting else { return }
         let position = positionOverride ?? host.reporterEngineCurrentTime
         let knownDuration = durationOverride ?? knownPlaybackDuration()
         let progress = PlaybackProgress(
@@ -189,7 +190,8 @@ final class WatchProgressReporter {
     /// Pure enqueue (no network on this path); safe to call from the timer or, on
     /// app background, from `checkpointNow()`.
     func emitCheckpoint(includingPaused: Bool = false) {
-        guard let host, host.reporterRequest != nil,
+        guard let host, let request = host.reporterRequest,
+              !request.suppressOrdinaryWatchReporting,
               includingPaused || !host.reporterEngineIsPaused else { return }
         let position = host.reporterResumePosition
         guard position > 1, abs(position - lastCheckpointPosition) >= 1 else { return }

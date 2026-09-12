@@ -3,21 +3,28 @@ import SwiftUI
 import CoreModels
 import CoreUI
 
-/// Arranges the libraries shown in the custom navigation rail: reorder them, and
-/// move one below the divider to drop it from the navigation entirely.
-///
-/// Uses the app-wide ``LiftableReorderList`` — the same control (and the same
-/// muscle memory) as the metadata-provider priority list. Hiding a library here is
-/// a **chrome** decision only: it stays fully browsable from Home and Search. To
-/// turn a library off everywhere, use Settings ▸ Your Libraries.
-struct NavigationLibrariesDetailView: View {
+/// Shared navigation arrangement. Hiding a shortcut never disables its content.
+public struct NavigationLibrariesDetailView: View {
     let scope: ProfileLibrariesScope
+    let includesIndividualLibraries: Bool
+    let excludedKeys: Set<String>
     @Environment(NavigationStyleSettingsModel.self) private var navigation
 
     @State private var isReordering = false
 
-    var body: some View {
+    public init(
+        scope: ProfileLibrariesScope,
+        includesIndividualLibraries: Bool = true,
+        excludedKeys: Set<String> = []
+    ) {
+        self.scope = scope
+        self.includesIndividualLibraries = includesIndividualLibraries
+        self.excludedKeys = excludedKeys
+    }
+
+    public var body: some View {
         VStack(alignment: .leading, spacing: SettingsMetrics.sectionSpacing) {
+            content(for: discoveredLibraries)
             switch scope.discoveredLibraries {
             case .idle, .loading:
                 ProgressView()
@@ -30,17 +37,29 @@ struct NavigationLibrariesDetailView: View {
                 Text(Self.unavailable)
                     .font(.callout)
                     .plozzForeground(.secondary)
-            case let .loaded(all):
-                content(for: all)
+            case .loaded:
+                EmptyView()
             }
         }
         .task { await scope.reloadLibraries() }
     }
 
+    private var discoveredLibraries: [AggregatedLibrary] {
+        guard case let .loaded(libraries) = scope.discoveredLibraries else { return [] }
+        return libraries
+    }
+
     @ViewBuilder
     private func content(for all: [AggregatedLibrary]) -> some View {
         let visible = all.filter { scope.homeVisibility.isEnabled($0.key) }
-        let available = NavigationRailPlan.availableKeys(visibleLibraries: visible)
+        #if os(iOS)
+        let keys = NavigationDestinationDefaults.iOS
+        #else
+        let keys = NavigationRailPlan.customizableKeys(
+            visibleLibraries: includesIndividualLibraries ? visible : [], style: navigation.style
+        )
+        #endif
+        let available = keys.filter { !excludedKeys.contains($0) }
         let titles = Self.rowsByKey(visible: visible)
 
         VStack(alignment: .leading, spacing: SettingsMetrics.sectionSpacing) {
@@ -49,6 +68,7 @@ struct NavigationLibrariesDetailView: View {
                 disabledSectionTitle: Self.hiddenDivider,
                 disabledPlaceholder: Self.hiddenPlaceholder,
                 isLifting: $isReordering,
+                requiredEnabled: [NavigationLibraryLayout.settingsKey],
                 row: { key in
                     titles[key] ?? LiftableReorderList.Row(title: Text(verbatim: key))
                 },
@@ -80,11 +100,20 @@ struct NavigationLibrariesDetailView: View {
         visible: [AggregatedLibrary]
     ) -> [String: LiftableReorderList<String>.Row] {
         var rows: [String: LiftableReorderList<String>.Row] = [
+            NavigationLibraryLayout.homeKey: .init(title: Text("Home"), symbolName: "house.fill"),
+            NavigationLibraryLayout.searchKey: .init(title: Text("Search"), symbolName: "magnifyingglass"),
+            NavigationLibraryLayout.watchlistKey: .init(title: Text("Watchlist"), symbolName: "bookmark.fill"),
+            NavigationLibraryLayout.musicKey: .init(title: Text("Music"), symbolName: "music.note"),
+            NavigationLibraryLayout.downloadsKey: .init(title: Text("Downloads"), symbolName: "arrow.down.circle"),
+            NavigationLibraryLayout.settingsKey: .init(title: Text("Settings"), symbolName: "gearshape.fill"),
             NavigationLibraryLayout.allLibrariesKey: LiftableReorderList<String>.Row(
                 title: Text(AllLibrariesBrowse.title),
                 symbolName: "square.stack.3d.up.fill"
             )
         ]
+        #if DEBUG
+        rows[NavigationLibraryLayout.liveTVKey] = .init(title: Text("Live TV"), symbolName: "antenna.radiowaves.left.and.right")
+        #endif
         for aggregated in NavigationRailPlan.browsableLibraries(visible) {
             rows[aggregated.key] = LiftableReorderList<String>.Row(
                 title: aggregated.library.displayName,
@@ -99,33 +128,33 @@ struct NavigationLibrariesDetailView: View {
     // MARK: - Copy
 
     private static let hiddenDivider = LocalizedStringResource(
-        "navigationLibraries.hiddenDivider",
+        "navigationArrangement.hiddenDivider",
         defaultValue: "Hidden",
-        comment: "Divider in the navigation-libraries list; libraries below it are not shown in the navigation."
+        comment: "Divider before shortcuts hidden from navigation."
     )
     private static let hiddenPlaceholder = LocalizedStringResource(
-        "navigationLibraries.hiddenPlaceholder",
-        defaultValue: "Move a library here to keep it out of the navigation.",
+        "navigationArrangement.hiddenPlaceholder",
+        defaultValue: "Hidden items appear here. Move them back up or choose Show to restore them.",
         comment: "Empty-state drop target under the Hidden divider."
     )
     private static let footnote = LocalizedStringResource(
-        "navigationLibraries.footnote",
-        defaultValue: "Hiding a library here only removes it from the navigation. It stays on Home and in Search. To turn a library off everywhere, use Your Libraries.",
-        comment: "Explains that hiding a library from the navigation is not the same as turning it off."
+        "navigationArrangement.footnote",
+        defaultValue: "Press and hold an item to hide, show, or move it. Hiding a shortcut doesn't remove its content. Settings always stays visible.",
+        comment: "Instructions and the always-visible Settings safety rule for navigation customization."
     )
     private static let resetTitle = LocalizedStringResource(
-        "navigationLibraries.reset",
-        defaultValue: "Show Every Library",
+        "navigationArrangement.reset",
+        defaultValue: "Reset Navigation",
         comment: "Button that restores the default navigation arrangement."
     )
     private static let noLibraries = LocalizedStringResource(
-        "navigationLibraries.none",
-        defaultValue: "No libraries yet. Add a server to see them here.",
+        "navigationArrangement.none",
+        defaultValue: "Add a server to arrange its library shortcuts here too.",
         comment: "Shown when the household has no libraries to arrange."
     )
     private static let unavailable = LocalizedStringResource(
-        "navigationLibraries.unavailable",
-        defaultValue: "Couldn't reach your servers. Your arrangement is safe — try again in a moment.",
+        "navigationArrangement.unavailable",
+        defaultValue: "Couldn't load your library shortcuts. Their saved arrangement is unchanged.",
         comment: "Shown when library discovery failed while arranging the navigation."
     )
 }

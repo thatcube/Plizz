@@ -13,6 +13,7 @@ public struct PlexProvider: MediaProvider, AuthenticatedHTTPOriginProviding {
     public let accountID: String
     public let credentialRevision: CredentialRevision
     let client: PlexClient
+    let liveTVLeases = PlexLiveTVLeaseStore()
     let themeArchiveResolver: @Sendable (String?) async -> URL?
     private let artworkOriginHistoryKey: String
 
@@ -1518,7 +1519,7 @@ public struct PlexProvider: MediaProvider, AuthenticatedHTTPOriginProviding {
 
     // MARK: - Mapping
 
-    private func map(metadata dto: PlexMetadata) -> MediaItem {
+    func map(metadata dto: PlexMetadata) -> MediaItem {
         let kind = Self.kind(forItemType: dto.type)
         let isEpisode = kind == .episode
         // For an episode, the series title is the grandparent; otherwise the
@@ -2201,7 +2202,7 @@ public struct PlexProvider: MediaProvider, AuthenticatedHTTPOriginProviding {
         )
     }
 
-    private func map(
+    func map(
         stream dto: PlexStream,
         itemID: String,
         mediaSourceID: String?

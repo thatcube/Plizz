@@ -1,5 +1,6 @@
 import CoreModels
 import FeatureAuth
+import FeatureSyncCloud
 import XCTest
 @testable import AppShell
 
@@ -59,19 +60,25 @@ final class MediaAliasShellIntegrationTests: XCTestCase {
         XCTAssertEqual(sync?.schema, .configV3)
         XCTAssertEqual(sync?.stateFileURL.lastPathComponent, "cloud-config-v3.json")
 
-        // One service now multiplexes BOTH channels onto the same CKSyncEngine —
+        // One service multiplexes the channels onto the same CKSyncEngine —
         // assert their schemas + state files are disjoint rather than reaching for
         // a second service instance.
         let schemas = sync?.channelSchemas ?? []
         let stateFileURLs = sync?.channelStateFileURLs ?? []
-        XCTAssertEqual(schemas, [.configV3, .mediaStateV1, .trackerTokensV1])
+        var expectedSchemas: [CloudSyncSchemaDescriptor] = [.configV3, .mediaStateV1, .trackerTokensV1]
+        var expectedFiles = [
+            "cloud-config-v3.json",
+            "cloud-media-state-v1.json",
+            "cloud-tracker-tokens-v1.json"
+        ]
+        #if DEBUG
+        expectedSchemas.append(.liveTVStateV1)
+        expectedFiles.append("cloud-live-tv-state-v1.json")
+        #endif
+        XCTAssertEqual(schemas, expectedSchemas)
         XCTAssertEqual(
             stateFileURLs.map(\.lastPathComponent),
-            [
-                "cloud-config-v3.json",
-                "cloud-media-state-v1.json",
-                "cloud-tracker-tokens-v1.json"
-            ]
+            expectedFiles
         )
         XCTAssertEqual(Set(stateFileURLs).count, stateFileURLs.count, "channel state files must be disjoint")
         XCTAssertEqual(

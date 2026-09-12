@@ -53,6 +53,9 @@ public struct PosterCardView: View {
     private let action: () -> Void
 
     @FocusState private var isFocused: Bool
+    #if os(tvOS)
+    @State private var detailTransitionSource = DetailTransitionSourceReference()
+    #endif
     /// This card's resolved logo tone, and the tone of the artwork it sits on.
     /// Together they decide how far the artwork is dimmed behind it — see
     /// ``ContinueWatchingCardShape/artworkDim(logo:background:)``. Either being
@@ -174,6 +177,17 @@ public struct PosterCardView: View {
             // strength on focus. No-op off tvOS.
             .plozzChromeFocused(isFocused)
             .mediaItemContextMenu(for: item)
+            #if os(tvOS)
+            .coordinateSpace(name: detailTransitionSource.coordinateSpace)
+            .background {
+                DetailTransitionSourceAnchor(
+                    reference: detailTransitionSource,
+                    itemKey: item.stablePresentationID,
+                    cornerRadius: cardStyle == .borderless
+                        ? borderlessCornerRadius : PlozzTheme.Metrics.posterArtCornerRadius
+                )
+            }
+            #endif
     }
 
     @ViewBuilder
@@ -228,7 +242,7 @@ public struct PosterCardView: View {
             innerCornerRadius: PlozzTheme.Metrics.posterArtCornerRadius,
             isFocused: surfaceFocused
         )
-        .focusableCard(isFocused: $isFocused, cornerRadius: metrics.posterCardCornerRadius, action: action)
+        .focusableCard(isFocused: $isFocused, cornerRadius: metrics.posterCardCornerRadius, action: selectCard)
         .plozzCardRasterize(reduceTransparency: reduceTransparency)
         // Resting posters carry a soft drop shadow so they read as raised cards
         // (essential in Light mode against a white background); the focused card
@@ -286,7 +300,7 @@ public struct PosterCardView: View {
             innerCornerRadius: PlozzTheme.Metrics.mediumMediaCornerRadius,
             isFocused: surfaceFocused
         )
-        .focusableCard(isFocused: $isFocused, cornerRadius: metrics.landscapeCardCornerRadius, action: action)
+        .focusableCard(isFocused: $isFocused, cornerRadius: metrics.landscapeCardCornerRadius, action: selectCard)
         .plozzCardRasterize(reduceTransparency: reduceTransparency)
         .shadow(color: .black.opacity(isFocused ? 0.36 : 0.15), radius: isFocused ? 20 : 8, y: isFocused ? 10 : 4)
         .plozzCardFocusLift(
@@ -331,7 +345,7 @@ public struct PosterCardView: View {
             }
         }
         .padding(.horizontal, metrics.borderlessCardSideMargin)
-        .focusableCard(isFocused: $isFocused, cornerRadius: borderlessCornerRadius, action: action)
+        .focusableCard(isFocused: $isFocused, cornerRadius: borderlessCornerRadius, action: selectCard)
         // A borderless card's focus halo + scale bloom extend *beyond* the layout
         // bounds. `compositingGroup` composites them as one unit without clipping;
         // `drawingGroup` (what `plozzCardRasterize` uses under Reduce Transparency)
@@ -671,6 +685,25 @@ public struct PosterCardView: View {
 
     @ViewBuilder
     private var artwork: some View {
+        resolvedArtwork
+            #if os(tvOS)
+            .onGeometryChange(for: CGRect.self) {
+                $0.frame(in: .named(detailTransitionSource.coordinateSpace))
+            } action: {
+                detailTransitionSource.recordArtworkFrame($0)
+            }
+            #endif
+    }
+
+    private func selectCard() {
+        #if os(tvOS)
+        if !playsOnSelect { detailTransitionSource.prepare(for: item) }
+        #endif
+        action()
+    }
+
+    @ViewBuilder
+    private var resolvedArtwork: some View {
         if PosterCardPresentation.usesFolderArtwork(for: item.kind) {
             folderArtwork
         } else if showsSeriesArtwork {
@@ -1386,14 +1419,16 @@ public extension View {
     func focusableCard(
         isFocused: FocusState<Bool>.Binding,
         cornerRadius: CGFloat,
+        isEnabled: Bool = true,
         action: @escaping () -> Void
     ) -> some View {
         #if os(tvOS)
         contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .focusable(true)
+            .focusable(isEnabled)
             .focused(isFocused)
             .focusEffectDisabled()
             .onTapGesture(perform: action)
+            .disabled(!isEnabled)
             .accessibilityAddTraits(.isButton)
         #else
         contentShape(

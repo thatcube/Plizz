@@ -45,6 +45,53 @@ import UIKit
 @Observable
 public final class AppState {
     public private(set) var state: SessionState = .launching
+    private let appAdmission: AppAdmissionModel
+
+    public static var isStandalonePlaybackAvailable: Bool {
+        #if DEBUG
+        true
+        #else
+        false
+        #endif
+    }
+
+    public var admissionContext: AppAdmissionContext {
+        appAdmission.context(
+            hasMediaAccounts: !accountsProviders.accounts.isEmpty,
+            standalonePlaybackAvailable: Self.isStandalonePlaybackAvailable
+        )
+    }
+
+    public var canEnterApp: Bool { admissionContext.canEnterApp }
+    var isLiveTVProfileAuthorized: Bool {
+        guard canEnterApp, case .ready = state else { return false }
+        let profile = profilesModel.activeProfile
+        return !profileFlow.isChoosingProfile
+            && profileFlow.pendingLockedProfile == nil
+            && profileFlow.pendingParentalSwitch == nil
+            && profileFlow.pendingIdentityAccountID == nil
+            && profileFlow.pendingSetupProfile == nil
+            && profileFlow.pendingLockOfferProfile == nil
+            && !profileFlow.isPickingAppearanceForNewProfile
+            && !profileFlow.hasResumableSetup
+            && plexHomeUsers.pendingPlexPINRequest == nil
+            && (!profile.isLocked || profileFlow.isUnlockedThisRun(profile.id))
+            && !profile.awaitsIdentity(amongAccounts: accountsProviders.activeAccountIDs)
+    }
+    public var allowsStandalonePlayback: Bool { admissionContext.explicitStandaloneChoice }
+    public var pendingStandaloneLiveTVEntry: Bool { appAdmission.pendingLiveTVEntry }
+
+    @discardableResult
+    public func consumeStandaloneLiveTVEntryIntent() -> Bool {
+        appAdmission.consumeLiveTVEntryIntent()
+    }
+
+    /// Call only after a user-requested playlist/free-channel setup succeeds.
+    /// This records admission without changing the session or navigation.
+    @discardableResult
+    public func recordSuccessfulIPTVSetup() -> Bool {
+        appAdmission.recordStandaloneChoice(isAvailable: Self.isStandalonePlaybackAvailable)
+    }
 
     /// Provider chosen for the add-account flow currently in progress, so that
     /// cancelling Quick Connect returns to *that* provider's server picker
@@ -610,6 +657,14 @@ public final class AppState {
     @ObservationIgnored
     public private(set) lazy var cloudSync: CloudConfigSyncService? = Self.makeCloudSync(for: self)
 
+    #if DEBUG
+    @ObservationIgnored
+    public private(set) lazy var liveTVPortableSync: LiveTVPortableSyncBridge? =
+        Self.makeLiveTVPortableSync(profiles: profilesModel)
+    @ObservationIgnored
+    var liveTVPortableSyncLifecycle: LiveTVPortableSyncLifecycle?
+    #endif
+
     /// Debounces bursts of local config edits into a single cloud publish.
     @ObservationIgnored
     var cloudPublishTask: Task<Void, Never>?
@@ -846,8 +901,10 @@ public final class AppState {
         anilistService: AniListService? = nil,
         malService: MALService? = nil,
         lastfmService: LastFmService? = nil,
-        runtimeFeatureFlags: RuntimeFeatureFlags = .productionDefault
+        runtimeFeatureFlags: RuntimeFeatureFlags = .productionDefault,
+        appAdmissionStore: any AppAdmissionStoring = AppAdmissionStore()
     ) {
+        self.appAdmission = AppAdmissionModel(store: appAdmissionStore)
         let resolvedAccountStore = accountStore ?? Self.makeDefaultAccountStore()
         let resolvedDurableLocalStateStore: DurableLocalStateStore?
         if let durableLocalStateStore {
@@ -1277,7 +1334,13 @@ public final class AppState {
         // When the toggle is OFF, the remembered selection (or default
         // profile) is used silently and the picker stays hidden.
         profileFlow.prepareLaunchPicker()
-        apply(.restored(accountsProviders.accounts))
+        if allowsStandalonePlayback,
+           accountsProviders.accounts.isEmpty,
+           !profilesModel.firstRunProfileSetupComplete {
+            apply(.standalonePlaybackRequested(needsProfileSetup: true))
+        } else {
+            apply(.restored(accountsProviders.accounts))
+        }
         // Honor a remembered/auto-landed profile's Plex Home-user mapping at
         // launch. When the picker is shown, the switch happens once the user
         // picks instead.
@@ -1344,6 +1407,27 @@ public final class AppState {
 
 
     // MARK: Events
+
+    /// Explicit, device-wide opt-in; never inferred from imported sources.
+    /// Profile confirmation and all existing access gates remain in place.
+    @discardableResult
+    public func enterStandalonePlayback() -> Bool {
+        guard Self.isStandalonePlaybackAvailable else { return false }
+        switch state {
+        case .onboarding(.selectingServer, _), .ready:
+            break
+        default:
+            return false
+        }
+        guard appAdmission.enterStandalonePlayback(isAvailable: Self.isStandalonePlaybackAvailable) else {
+            return false
+        }
+        pendingOnboardingProvider = nil
+        apply(.standalonePlaybackRequested(
+            needsProfileSetup: !profilesModel.firstRunProfileSetupComplete
+        ))
+        return true
+    }
 
     /// Handles an incoming deep link. Recognised `plozz://item/<id>` links queue
     /// the item for playback once the user is signed in.
@@ -1678,7 +1762,9 @@ public final class AppState {
     /// never re-runs it.
     public func confirmFirstRunProfile() {
         profilesModel.markFirstRunProfileSetupComplete()
-        apply(.profileConfirmed)
+        apply(accountsProviders.accounts.isEmpty && allowsStandalonePlayback
+            ? .standaloneProfileConfirmed
+            : .profileConfirmed)
     }
 
     /// Completes the first profile's Seerr connection/acting-user step.
@@ -2205,7 +2291,7 @@ public final class AppState {
         pendingPlexUserApplyToAccountIDs = []
     }
 
-    /// Removes one account; drops to onboarding if it was the last.
+    /// Removes one account; the last removal onboards only server-only installs.
     public func removeAccount(id: String) {
         let removedAccount = accountsProviders.accounts.first { $0.id == id }
         let shareAccountKey = mediaShare.accountService.mediaShareAccountKey(for: removedAccount)
@@ -2245,7 +2331,7 @@ public final class AppState {
         }
     }
 
-    /// Removes every account (full reset).
+    /// Removes every media account without revoking standalone admission.
     public func signOutAll() {
         let removedAccounts = accountsProviders.accounts
         let shareAccountKeys = mediaShare.accountService.mediaShareAccountKeys(in: removedAccounts)
@@ -2319,6 +2405,10 @@ public final class AppState {
         }
         plexHomeUsers.resetAllForDebug()
         profilesModel.resetToPristineDefaultForDebugging()
+        #if DEBUG
+        resetLiveTVPortableSync()
+        #endif
+        appAdmission.resetForDebugging()
         var recents = lastServerStore
         recents.recentServers = []
         pendingLibrarySelectionAccountIDs = []
@@ -2469,7 +2559,7 @@ public final class AppState {
     }
 
     private func apply(_ event: SessionEvent) {
-        machine.apply(event)
+        machine.apply(event, allowsStandalonePlayback: allowsStandalonePlayback)
         state = machine.state
     }
 

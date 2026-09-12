@@ -93,7 +93,26 @@ public final class HomeHeroRuntimeState {
 @MainActor
 @Observable
 final class HomeHeroRecedeModel {
+    static let animationDuration: TimeInterval = 0.9
     var isReceded = false
+}
+
+/// Refresh scheduling state, not render state. Remote repeats must not invalidate Home.
+@MainActor
+final class HomeNavigationActivity {
+    private var lastInteractionAt: ContinuousClock.Instant
+
+    init(now: ContinuousClock.Instant = .now) {
+        lastInteractionAt = now
+    }
+
+    func recordInteraction(at now: ContinuousClock.Instant = .now) {
+        lastInteractionAt = now
+    }
+
+    func isIdle(for interval: Duration, at now: ContinuousClock.Instant = .now) -> Bool {
+        lastInteractionAt.duration(to: now) >= interval
+    }
 }
 
 /// The Home screen: an optional cinematic **hero** carousel followed by
@@ -118,9 +137,7 @@ public struct HomeView: View {
     /// Lets Home give the media shares a chance to notice new files while the
     /// viewer sits on it. `nil` disables polling (previews, hosts with no shares).
     private let onPollShares: () -> Void
-    /// When the viewer last pressed a direction. Tracked on Home's own body,
-    /// which IS an ancestor of the focused rails, so it actually sees their moves.
-    @State private var lastInteractionAt: ContinuousClock.Instant = .now
+    @State private var navigationActivity = HomeNavigationActivity()
     private let heroTrailerResolver: HeroTrailerResolving
     private let heroIsFrontmost: Bool
     private let heroCurator: HeroCurator
@@ -186,7 +203,7 @@ public struct HomeView: View {
     /// `.offset` transforms (not layout), a long duration costs nothing extra. The
     /// backdrop artwork uses its OWN, even slower curve (see HomeHeroBackdrop) so
     /// it lags behind and settles last — the Apple TV parallax feel.
-    private static let recedeAnimationDuration: CGFloat = 0.9
+    private static let recedeAnimationDuration = HomeHeroRecedeModel.animationDuration
 
     /// Page-scroll distance (points) past which the hero is considered "receded".
     /// The focus engine scrolls the page ~480pt in a single frame the instant
@@ -450,6 +467,10 @@ public struct HomeView: View {
                                 // way UP feel much slower than the way down. The
                                 // observer still clears it as a backstop.)
                                 onFocusGained: {
+                                    HomePerfDiagnostics.emitLine("HOME-TRANSITION hero-focus UP")
+                                    if heroRecedeModel.isReceded {
+                                        HomePerfDiagnostics.recordNavigationAnimation(receding: false)
+                                    }
                                     withAnimation(.smooth(duration: Self.recedeAnimationDuration)) {
                                         heroRecedeModel.isReceded = false
                                         heroScrollProxy.scrollTo(Self.heroTopID, anchor: .top)
@@ -569,6 +590,10 @@ public struct HomeView: View {
                 .onScrollGeometryChange(for: Bool.self) { geometry in
                     heroActive && geometry.contentOffset.y > Self.recedeScrollThreshold
                 } action: { _, shouldRecede in
+                    HomePerfDiagnostics.emitLine("HOME-TRANSITION receded=\(shouldRecede)")
+                    if shouldRecede {
+                        HomePerfDiagnostics.recordNavigationAnimation(receding: true)
+                    }
                     withAnimation(.smooth(duration: Self.recedeAnimationDuration)) {
                         heroRecedeModel.isReceded = shouldRecede
                     }
@@ -669,7 +694,7 @@ public struct HomeView: View {
         // New content that lands while the viewer sits on Home appears without a
         // navigation round trip. Zero-size and render-isolated — see the type.
         .onMoveCommand { _ in
-            lastInteractionAt = .now
+            navigationActivity.recordInteraction()
             viewModel.noteHomeNavigationInteraction()
         }
         .background(
@@ -677,7 +702,7 @@ public struct HomeView: View {
                 onRefresh: { Task { await viewModel.load(showLoadingState: false) } },
                 isTrailerPlaying: heroTrailerController.isPlaying,
                 onPollShares: onPollShares,
-                lastInteractionAt: lastInteractionAt
+                navigationActivity: navigationActivity
             )
         )
         .onReceive(NotificationCenter.default.publisher(for: .identityIndexDidUpdate)) { _ in
@@ -1417,14 +1442,9 @@ private struct HomeShareScanRefreshObserver: View {
     /// walk is declined for being too soon.
     private static let pollInterval: Duration = .seconds(120)
 
-    /// When the viewer last moved, supplied by Home itself.
-    ///
-    /// Deliberately not observed here: this view is a zero-size `.background`, so
-    /// it is a *sibling* of the focused rails rather than an ancestor, and
-    /// `onMoveCommand` attached to it never sees the moves those rails dispatch.
-    /// The gate would then always read as idle — which is how a refresh could land
-    /// mid-browse, the exact thing it exists to prevent.
-    let lastInteractionAt: ContinuousClock.Instant
+    /// Updated by the ancestor's move handler, read only when deciding to refresh.
+    /// A background view cannot receive the focused rails' move commands itself.
+    let navigationActivity: HomeNavigationActivity
 
     /// Whether content may be swapped in without disturbing the viewer: they have
     /// been still for a while *and* nothing is playing.
@@ -1456,7 +1476,7 @@ private struct HomeShareScanRefreshObserver: View {
     }
 
     private var isSafeToRefresh: Bool {
-        !isTrailerPlaying && lastInteractionAt.duration(to: .now) >= Self.idleGrace
+        !isTrailerPlaying && navigationActivity.isIdle(for: Self.idleGrace)
     }
 
     /// The newest *change*, not the newest scan. A pass that found nothing must
@@ -1799,7 +1819,7 @@ private struct HomeRowsRecedeModifier: ViewModifier {
     let lift: CGFloat
 
     func body(content: Content) -> some View {
-        content.offset(y: active && model.isReceded ? -lift : 0)
+        content.modifier(HomeVerticalMotion(y: active && model.isReceded ? -lift : 0))
     }
 }
 

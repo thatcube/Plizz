@@ -287,9 +287,17 @@ struct HomeTab: View {
                     // at play time (requestPlay).
                     let item = $0
                     Task { @MainActor in
-                        await heroTrailerController.captureHandoffFrame()
+                        if heroTrailerController.isShowing(item.id), heroTrailerController.isPlaying {
+                            await heroTrailerController.captureHandoffFrame()
+                        }
                         if heroTrailerController.isShowing(item.id),
                            heroTrailerController.isPlaying {
+                            #if os(tvOS)
+                            DetailTransitionNavigation.prepare(
+                                for: item,
+                                artworkSnapshot: heroTrailerController.handoffImage
+                            )
+                            #endif
                             // A system NavigationStack push snapshots/composites
                             // the newly-created detail hierarchy before its video
                             // layer is live, which exposes a backdrop for a few
@@ -433,6 +441,9 @@ struct HomeTab: View {
             .onChange(of: pendingTitleRoute) { _, item in
                 guard isActiveTab, let item else { return }
                 pendingTitleRoute = nil
+                #if os(tvOS)
+                DetailTransitionNavigation.prepare(for: item)
+                #endif
                 path.append(item)
             }
             .onChange(of: pendingPersonRoute) { _, route in
@@ -605,6 +616,9 @@ struct HomeTab: View {
                 // sense, and costs nothing on the way in: the player is presented
                 // over the stack, so the page is simply already there underneath.
                 onResolved: { item in
+                    #if os(tvOS)
+                    DetailTransitionNavigation.suppressNextEntranceForPlayback()
+                    #endif
                     navigate(item)
                     // Next runloop turn, so the push is committed before the
                     // player is presented over it. Presenting into a navigation
@@ -1000,6 +1014,9 @@ struct HomeTab: View {
         libraryOrigin: String? = nil,
         asOwnSubject: Bool = false
     ) {
+        #if os(tvOS)
+        DetailTransitionNavigation.prepare(for: item)
+        #endif
         if item.kind == .episode, asOwnSubject {
             path.append(item)
         } else if item.kind == .episode, item.seriesID != nil {

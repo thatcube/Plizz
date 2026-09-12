@@ -58,8 +58,8 @@ public final class NavigationStyleSettingsStore: NavigationStyleSettingsStoring,
 /// `CardStyleSettingsModel`.
 ///
 /// Owns all navigation preferences — which chrome, whether Back may leave the app
-/// from top-level navigation, and (for the custom rail) how its library list is
-/// arranged. Keeping them together lets every shell and the Settings page share
+/// from top-level navigation, and how destinations are arranged in every style.
+/// Keeping them together lets every shell and the Settings page share
 /// one profile-scoped model.
 @MainActor
 @Observable
@@ -99,7 +99,13 @@ public final class NavigationStyleSettingsModel {
         self.layoutStore = layoutStore
         self.style = store.load()
         self.preventsAccidentalExit = store.loadPreventsAccidentalExit()
-        self.libraryLayout = layoutStore.load()
+        let loadedLayout = layoutStore.load()
+        var layout = loadedLayout
+        layout.enforceRequiredVisibility()
+        self.libraryLayout = layout
+        if layout != loadedLayout {
+            layoutStore.save(layout)
+        }
     }
 
     /// The editable enabled/hidden split for the Settings reorder control.
@@ -119,13 +125,9 @@ public final class NavigationStyleSettingsModel {
         layoutStore.save(next)
     }
 
-    /// Restores the default arrangement: every library shown, in discovery order.
+    /// Restores every destination's default visibility and order.
     public func resetLibraryLayout() {
-        var next = NavigationLibraryLayout.default
-        next.hiddenKeys = libraryLayout.hiddenKeys.intersection([
-            NavigationLibraryLayout.watchlistKey,
-            NavigationLibraryLayout.musicKey,
-        ])
+        let next = NavigationLibraryLayout.default
         guard libraryLayout != next else { return }
         libraryLayout = next
         layoutStore.save(libraryLayout)

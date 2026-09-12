@@ -101,6 +101,31 @@ final class NavigationStyleSettingsStoreTests: XCTestCase {
         )
     }
 
+    func testSettingsCannotBeHiddenByMutationOrPersistedLegacyData() {
+        let defaults = makeDefaults()
+        let key = "com.plozz.navigationLibraryLayout"
+        defaults.set(
+            Data(
+                """
+                {"order":[],"hiddenKeys":["\(NavigationLibraryLayout.settingsKey)"]}
+                """.utf8
+            ),
+            forKey: key
+        )
+
+        let store = NavigationLibraryLayoutStore(defaults: defaults)
+        var layout = store.load()
+        XCTAssertTrue(layout.isVisible(NavigationLibraryLayout.settingsKey))
+        XCTAssertFalse(layout.hiddenKeys.contains(NavigationLibraryLayout.settingsKey))
+
+        layout.hiddenKeys.insert(NavigationLibraryLayout.settingsKey)
+        store.save(layout)
+        XCTAssertFalse(store.load().hiddenKeys.contains(NavigationLibraryLayout.settingsKey))
+
+        layout.setVisible(false, for: NavigationLibraryLayout.settingsKey)
+        XCTAssertTrue(layout.isVisible(NavigationLibraryLayout.settingsKey))
+    }
+
     @MainActor
     func testWatchlistVisibilityPersistsPerProfile() {
         let defaults = makeDefaults()
@@ -126,5 +151,65 @@ final class NavigationStyleSettingsStoreTests: XCTestCase {
 
         XCTAssertFalse(model(namespace: nil).showsWatchlist)
         XCTAssertTrue(model(namespace: "child").showsWatchlist)
+    }
+
+    @MainActor
+    func testResetNavigationRestoresEveryShortcutIncludingFormerSeparateToggles() {
+        let defaults = makeDefaults()
+        let model = NavigationStyleSettingsModel(
+            store: NavigationStyleSettingsStore(defaults: defaults),
+            layoutStore: NavigationLibraryLayoutStore(defaults: defaults)
+        )
+        let available = NavigationRailPlan.customizableKeys(visibleLibraries: [])
+        model.applyLibrarySections(
+            .init(
+                enabled: [NavigationLibraryLayout.settingsKey],
+                disabled: available.filter { $0 != NavigationLibraryLayout.settingsKey }
+            ),
+            available: available
+        )
+        XCTAssertFalse(model.showsWatchlist)
+        XCTAssertFalse(model.showsMusic)
+        model.resetLibraryLayout()
+        XCTAssertEqual(model.librarySections(available: available).enabled, available)
+        XCTAssertTrue(model.showsWatchlist)
+        XCTAssertTrue(model.showsMusic)
+        XCTAssertEqual(NavigationLibraryLayoutStore(defaults: defaults).load(), .default)
+    }
+
+    @MainActor
+    func testFullNavigationLayoutRemainsIndependentAcrossProfiles() {
+        let defaults = makeDefaults()
+        func model(namespace: String?) -> NavigationStyleSettingsModel {
+            NavigationStyleSettingsModel(
+                store: NavigationStyleSettingsStore(defaults: defaults, namespace: namespace),
+                layoutStore: NavigationLibraryLayoutStore(defaults: defaults, namespace: namespace)
+            )
+        }
+        let available = [
+            NavigationLibraryLayout.homeKey,
+            NavigationLibraryLayout.searchKey,
+            NavigationLibraryLayout.settingsKey,
+        ]
+        let primary = model(namespace: nil)
+        primary.applyLibrarySections(
+            .init(
+                enabled: [
+                    NavigationLibraryLayout.settingsKey,
+                    NavigationLibraryLayout.searchKey,
+                ],
+                disabled: [NavigationLibraryLayout.homeKey]
+            ),
+            available: available
+        )
+
+        XCTAssertEqual(
+            model(namespace: nil).librarySections(available: available).enabled,
+            [NavigationLibraryLayout.settingsKey, NavigationLibraryLayout.searchKey]
+        )
+        XCTAssertEqual(
+            model(namespace: "child").librarySections(available: available).enabled,
+            available
+        )
     }
 }

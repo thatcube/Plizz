@@ -5,6 +5,35 @@ import XCTest
 /// they're wrong — a library that vanishes when a server is added, an order that
 /// resets, or a hidden library that comes back on relaunch.
 final class NavigationRailPlanTests: XCTestCase {
+    func testEditorDefaultsMatchEachTVNavigationStyle() {
+        XCTAssertEqual(
+            NavigationRailPlan.customizableKeys(visibleLibraries: [], style: .rail),
+            NavigationDestinationDefaults.rail(visibleLibraries: [], hasMusic: true)
+        )
+        XCTAssertEqual(
+            NavigationRailPlan.customizableKeys(visibleLibraries: [], style: .tabBar),
+            NavigationDestinationDefaults.compact(hasMusic: true)
+        )
+        XCTAssertFalse(
+            NavigationRailPlan.customizableKeys(visibleLibraries: [], style: .tabBar)
+                .contains(NavigationLibraryLayout.allLibrariesKey)
+        )
+    }
+
+    func testIOSCanHideEveryContentDestinationIncludingDownloads() {
+        let available = NavigationDestinationDefaults.iOS
+        XCTAssertTrue(available.contains(NavigationLibraryLayout.downloadsKey))
+        let layout = NavigationLibraryLayout(hiddenKeys: Set(available))
+        XCTAssertEqual(layout.visibleKeys(available: available), [NavigationLibraryLayout.settingsKey])
+    }
+
+    func testIOSDownloadsAndSearchCanMoveAheadOfHome() {
+        let available = NavigationDestinationDefaults.iOS
+        let first = [NavigationLibraryLayout.downloadsKey, NavigationLibraryLayout.searchKey]
+        let layout = NavigationLibraryLayout(order: first)
+        XCTAssertEqual(Array(layout.visibleKeys(available: available).prefix(2)), first)
+    }
+
 
     private func library(
         _ id: String,
@@ -39,6 +68,32 @@ final class NavigationRailPlanTests: XCTestCase {
         XCTAssertEqual(
             NavigationRailPlan.availableKeys(visibleLibraries: libraries),
             [NavigationLibraryLayout.allLibrariesKey, "a:1", "a:3"]
+        )
+    }
+
+    func testCustomizableKeysIncludeEveryBuiltInAndExcludeMusicLibraries() {
+        let libraries = [
+            library("1", title: "Movies", account: "a"),
+            library("2", title: "Songs", account: "a", isMusic: true),
+        ]
+        var expected = [
+            NavigationLibraryLayout.homeKey,
+            NavigationLibraryLayout.watchlistKey,
+        ]
+        #if DEBUG
+        expected.append(NavigationLibraryLayout.liveTVKey)
+        #endif
+        expected += [
+            NavigationLibraryLayout.searchKey,
+            NavigationLibraryLayout.musicKey,
+            NavigationLibraryLayout.allLibrariesKey,
+            "a:1",
+            NavigationLibraryLayout.settingsKey,
+        ]
+
+        XCTAssertEqual(
+            NavigationRailPlan.customizableKeys(visibleLibraries: libraries),
+            expected
         )
     }
 
@@ -93,6 +148,68 @@ final class NavigationRailPlanTests: XCTestCase {
         )
     }
 
+    func testLegacyLibraryOnlyOrderKeepsEachStylesBuiltInDefaults() {
+        let libraries = [
+            library("1", title: "Movies", account: "a"),
+            library("2", title: "Shows", account: "a", kind: .series),
+        ]
+        let layout = NavigationLibraryLayout(
+            order: ["a:2", NavigationLibraryLayout.allLibrariesKey, "a:1"]
+        )
+        let available = [
+            NavigationLibraryLayout.searchKey,
+            NavigationLibraryLayout.homeKey,
+            NavigationLibraryLayout.watchlistKey,
+            NavigationLibraryLayout.allLibrariesKey,
+            "a:1",
+            "a:2",
+            NavigationLibraryLayout.settingsKey,
+        ]
+
+        XCTAssertEqual(
+            NavigationRailPlan.destinations(
+                visibleLibraries: libraries,
+                layout: layout,
+                availableKeys: available
+            ),
+            [.search, .home, .watchlist, .library("a:2"), .allLibraries, .library("a:1"), .settings]
+        )
+    }
+
+    func testExplicitBuiltInOrderWinsAcrossSupportedDestinations() {
+        let libraries = [
+            library("1", title: "Movies", account: "a"),
+            library("2", title: "Shows", account: "a", kind: .series),
+        ]
+        let layout = NavigationLibraryLayout(order: [
+            NavigationLibraryLayout.settingsKey,
+            "a:2",
+            NavigationLibraryLayout.searchKey,
+            NavigationLibraryLayout.homeKey,
+            NavigationLibraryLayout.allLibrariesKey,
+            "a:1",
+            NavigationLibraryLayout.watchlistKey,
+        ])
+        let available = [
+            NavigationLibraryLayout.homeKey,
+            NavigationLibraryLayout.watchlistKey,
+            NavigationLibraryLayout.searchKey,
+            NavigationLibraryLayout.allLibrariesKey,
+            "a:1",
+            "a:2",
+            NavigationLibraryLayout.settingsKey,
+        ]
+
+        XCTAssertEqual(
+            NavigationRailPlan.destinations(
+                visibleLibraries: libraries,
+                layout: layout,
+                availableKeys: available
+            ),
+            [.settings, .library("a:2"), .search, .home, .allLibraries, .library("a:1"), .watchlist]
+        )
+    }
+
     func testApplyingAnEditPreservesTheArrangementOfAnOfflineLibrary() {
         // A server that is briefly unreachable must not cost the viewer the
         // arrangement they set for its libraries.
@@ -134,95 +251,75 @@ final class NavigationRailPlanTests: XCTestCase {
 
     // MARK: Selection pruning
 
-    func testSelectionFallsBackToHomeWhenItsDestinationIsGone() {
-        let entries = NavigationRailPlan.entries(
-            visibleLibraries: [
-                library("1", title: "Movies", account: "a"),
-                library("2", title: "Shows", account: "a", kind: .series)
-            ],
-            layout: .default
-        )
+    func testSelectionFallsBackToFirstVisibleDestinationInsteadOfHiddenHome() {
+        let destinations: [NavigationRailDestination] = [
+            .search,
+            .library("a:1"),
+            .settings,
+        ]
         XCTAssertEqual(
             NavigationRailPlan.resolvedSelection(
                 .library("a:1"),
-                entries: entries,
-                showsWatchlist: true,
-                showsMusic: false
+                destinations: destinations
             ),
             .library("a:1")
         )
         XCTAssertEqual(
             NavigationRailPlan.resolvedSelection(
                 .library("gone:9"),
-                entries: entries,
-                showsWatchlist: true,
-                showsMusic: false
+                destinations: destinations
             ),
-            .home
+            .search
+        )
+    }
+
+    func testAllHiddenDestinationsStillRenderAndFallBackToSettings() {
+        var hidden: Set<String> = [
+            NavigationLibraryLayout.homeKey,
+            NavigationLibraryLayout.searchKey,
+            NavigationLibraryLayout.watchlistKey,
+            NavigationLibraryLayout.musicKey,
+            NavigationLibraryLayout.allLibrariesKey,
+            "a:1",
+        ]
+        #if DEBUG
+        hidden.insert(NavigationLibraryLayout.liveTVKey)
+        #endif
+        let layout = NavigationLibraryLayout(hiddenKeys: hidden)
+        let libraries = [library("1", title: "Movies", account: "a")]
+
+        XCTAssertEqual(
+            NavigationRailPlan.destinations(
+                visibleLibraries: libraries,
+                layout: layout,
+                availableKeys: NavigationRailPlan.customizableKeys(
+                    visibleLibraries: libraries
+                )
+            ),
+            [.settings]
         )
         XCTAssertEqual(
-            NavigationRailPlan.resolvedSelection(
-                .music,
-                entries: entries,
-                showsWatchlist: true,
-                showsMusic: false
-            ),
-            .home
+            NavigationRailPlan.resolvedSelection(.home, destinations: [.settings]),
+            .settings
         )
+
+        // Even a style bug that supplies no destinations cannot fall back Home.
         XCTAssertEqual(
-            NavigationRailPlan.resolvedSelection(
-                .music,
-                entries: entries,
-                showsWatchlist: true,
-                showsMusic: true
-            ),
-            .music
-        )
-        XCTAssertEqual(
-            NavigationRailPlan.resolvedSelection(
-                .watchlist,
-                entries: [],
-                showsWatchlist: true,
-                showsMusic: false
-            ),
-            .watchlist
-        )
-        XCTAssertEqual(
-            NavigationRailPlan.resolvedSelection(
-                .watchlist,
-                entries: [],
-                showsWatchlist: false,
-                showsMusic: true
-            ),
-            .home
-        )
-        XCTAssertEqual(
-            NavigationRailPlan.resolvedSelection(
-                .allLibraries,
-                entries: entries,
-                showsWatchlist: true,
-                showsMusic: false
-            ),
-            .allLibraries
-        )
-        XCTAssertEqual(
-            NavigationRailPlan.resolvedSelection(
-                .allLibraries,
-                entries: [],
-                showsWatchlist: true,
-                showsMusic: false
-            ),
-            .home
+            NavigationRailPlan.resolvedSelection(.home, destinations: []),
+            .settings
         )
     }
 
     // MARK: Scene-storage round trip
 
     func testDestinationStorageValueRoundTrips() {
-        let cases: [NavigationRailDestination] = [
+        var cases: [NavigationRailDestination] = [
             .home, .search, .watchlist, .music, .settings, .allLibraries,
             .library("acct:lib:with:colons")
         ]
+        #if DEBUG
+        cases.append(.liveTV)
+        #endif
         for destination in cases {
             XCTAssertEqual(
                 NavigationRailDestination(storageValue: destination.storageValue),

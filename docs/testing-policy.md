@@ -165,6 +165,18 @@ focus changes, scrolling to Cast, and reopening. The shared
 subtracting a fixed overscan margin. Its artwork-first reveal is checked with
 rendered pixels and live focus targets, including the Reduce Motion path.
 
+`CinematicDetailTransitionHostedTests` exercises the card-to-artwork compositor
+over a real navigation stack. It checks the actual expanding and shrinking
+frames, artwork-only pause, ordered foreground stages, early Back, direct-play
+bypass, missing/replaced source fallback, nested-page ownership, and removal of
+input guards and visual covers. Real framed and borderless poster tests also
+check that the source crop excludes the caption under Reduce Transparency.
+The new entrance uses 550ms for the zoom, a 500ms artwork pause, and overlapping
+320ms foreground reveals spaced 180ms apart. Back uses a 380ms return without
+the pause. Reduce Motion bypasses the custom sequence and its input wait.
+Source snapshots are per-activation, not per-frame; full-window covers are
+released after the zoom, and the small return-card image is scoped to its page.
+
 ## Guards that run before the compile
 
 Both are host-side Python (the tests run inside the tvOS Simulator sandbox and

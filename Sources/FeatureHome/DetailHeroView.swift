@@ -80,6 +80,9 @@ struct DetailHeroView: View, Equatable {
     let item: MediaItem
     @Environment(HeroTrailerController.self) private var heroTrailerController
     @Environment(HeroBackgroundSettingsModel.self) private var heroBackground
+    #if os(tvOS)
+    @Environment(\.detailEntranceSession) private var detailEntrance
+    #endif
     /// The item whose artwork fills the backdrop *and* supplies the branded title
     /// logo. Defaults to `item`. A series page pins this to the series itself so
     /// the background and logo stay a single, stable, show-level identity even as
@@ -788,9 +791,11 @@ struct DetailHeroView: View, Equatable {
             // breadcrumb above the episode's own title instead.
             if let scheduleLine {
                 scheduleBadge(scheduleLine)
+                    .detailEntranceStage(.logo)
             }
             if presentsEpisodeStill {
                 titleText(hideText: hideText)
+                    .detailEntranceStage(.logo)
             } else {
                 HeroLogoArtwork(
                     references: backdrop.artworkReferences(for: .logo),
@@ -815,6 +820,7 @@ struct DetailHeroView: View, Equatable {
                 // asked for rather than inherited from leftover frame slack — which
                 // is what made it vary by logo. On top of the stack's own 12pt.
                 .padding(.vertical, 16)
+                .detailEntranceStage(.logo)
             }
             // The season/episode ("S{n} · E{m}") is now shown only in the Play
             // button, so it's omitted here for episodes to avoid a redundant line.
@@ -835,6 +841,7 @@ struct DetailHeroView: View, Equatable {
                     .lineLimit(1)
                     .contentTransition(.opacity)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .detailEntranceStage(.metadata)
             }
             let comps = HeroContentPolicy.detailFacts(
                 focused: focusedPresentation
@@ -865,6 +872,7 @@ struct DetailHeroView: View, Equatable {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .detailEntranceStage(.metadata)
             }
             // Description directly beneath the genres line.
             SpoilerSafeOverviewText(
@@ -888,6 +896,7 @@ struct DetailHeroView: View, Equatable {
             // to a single line. `fixedSize` makes it claim its natural height for
             // however many lines it actually has, up to `lineCount`.
             .fixedSize(horizontal: false, vertical: true)
+            .detailEntranceStage(.metadata)
             // Bottom facts region just above the action buttons: year · runtime,
             // ratings, then capability badges (4K / Atmos / HDR …). One wrapping
             // layout owns every item so an unusually rich title can add a real
@@ -901,6 +910,7 @@ struct DetailHeroView: View, Equatable {
                     )
                 }
             }
+            .detailEntranceStage(.metadata)
             if isDiscoveryItem
                 ? (showsRequestPill
                     || onPlayTrailer != nil
@@ -918,6 +928,7 @@ struct DetailHeroView: View, Equatable {
                             .modifier(HeroActionButtonStyle(prominent: !showsRequestPill))
                             .prefersDefaultFocus(!showsRequestPill, in: heroActionsScope)
                             .focused($heroActionRowFocus, equals: .trailer)
+                            .accessibilityIdentifier("detail-hero-trailer")
                         }
                         // Watchlisting is the whole point of a title you do NOT
                         // have: it is how you say "get this later". The row's own
@@ -937,6 +948,7 @@ struct DetailHeroView: View, Equatable {
                         }
                         .modifier(HeroActionButtonStyle(prominent: false))
                         .focused($heroActionRowFocus, equals: .trailer)
+                        .accessibilityIdentifier("detail-hero-trailer")
                     }
                     if let heroWatchlistAction {
                         watchlistButton(action: heroWatchlistAction)
@@ -985,6 +997,7 @@ struct DetailHeroView: View, Equatable {
                         onHeroActionBlurred?()
                     }
                 }
+                .detailEntranceStage(.controls)
             }
         }
         .padding(.top, PlozzTheme.Metrics.screenVerticalPadding)
@@ -1001,7 +1014,7 @@ struct DetailHeroView: View, Equatable {
             alignment: .bottomLeading
         )
         .modifier(SeriesHeroContentLiftModifier(model: seriesRecedeModel))
-        .modifier(DetailHeroContentReveal(isVisible: heroVisible, reduceMotion: reduceMotion))
+        .modifier(DetailHeroContentReveal(isVisible: heroVisible || hasCinematicEntrance, reduceMotion: reduceMotion))
         // The full-bleed backdrop lives in a `.background`, which by definition is
         // sized to the host and does NOT contribute to the host's measured size.
         // That is the fix: previously the backdrop was a ZStack *sibling* whose
@@ -1069,7 +1082,8 @@ struct DetailHeroView: View, Equatable {
                 .contentTransition(.opacity)
                 .allowsHitTesting(false)
                 .modifier(SeriesHeroContentLiftModifier(model: seriesRecedeModel))
-                .modifier(DetailHeroContentReveal(isVisible: heroVisible, reduceMotion: reduceMotion))
+                .modifier(DetailHeroContentReveal(isVisible: heroVisible || hasCinematicEntrance, reduceMotion: reduceMotion))
+                .detailEntranceStage(.metadata)
             }
         }
         .contextMenu {
@@ -1105,6 +1119,14 @@ struct DetailHeroView: View, Equatable {
             if showsMoreMenu { heroActionRowFocus = .more }
         }
 
+    }
+
+    private var hasCinematicEntrance: Bool {
+        #if os(tvOS)
+        detailEntrance != nil
+        #else
+        false
+        #endif
     }
 
     /// The episode's own 16:9 still, inset opposite the text on an episode page.
@@ -1148,9 +1170,8 @@ struct DetailHeroView: View, Equatable {
     /// ignore the horizontal/top overscan safe area and span the screen edge to
     /// edge *without* inflating the hero's (and the scroll column's) layout width.
     private func heroBackdrop() -> some View {
-        // The shared `HeroBackdropLayer` (CoreUI) owns the exact scrim + dissolve
-        // + full-bleed treatment, so the detail hero and the Home hero carousel
-        // render an identical backdrop. Hero artwork is never spoiler-blurred;
+        // `HeroBackdropLayer` shares Home's static shading while preserving the
+        // detail page's own dissolve and full-bleed treatment. Hero artwork is never spoiler-blurred;
         // episode spoiler masking remains limited to episode text and cards.
         let ladder = backdrop.artworkReferences(for: .detailBackdrop)
         HeroArtDiagnostics.emitOnce(
@@ -1219,6 +1240,7 @@ struct DetailHeroView: View, Equatable {
         .disabled(action == nil)
         .focused($playButtonHasFocus)
         .focused($heroActionRowFocus, equals: .play)
+        .accessibilityIdentifier("detail-hero-play")
         .onChange(of: liveResumeText) { _, new in
             if let new { reservedResumeText = new }
         }
@@ -1435,6 +1457,7 @@ struct DetailHeroView: View, Equatable {
         }
         .modifier(HeroActionButtonStyle(prominent: false, circular: true))
         .focused($heroActionRowFocus, equals: .more)
+        .accessibilityIdentifier("detail-hero-more")
         .accessibilityLabel("More actions")
     }
 
@@ -1529,6 +1552,7 @@ struct DetailHeroView: View, Equatable {
         .modifier(HeroActionButtonStyle(prominent: false, circular: true))
         .animation(.easeInOut(duration: 0.2), value: isWatchlisted)
         .focused($heroActionRowFocus, equals: .watchlist)
+        .accessibilityIdentifier("detail-hero-watchlist")
         .accessibilityLabel(action.title)
         .accessibilityValue(
             isWatchlisted ? "In Watchlist" : "Not in Watchlist"
@@ -1581,6 +1605,7 @@ struct DetailHeroView: View, Equatable {
         }
         .modifier(HeroActionButtonStyle(prominent: false, circular: true))
         .focused($heroActionRowFocus, equals: .watched)
+        .accessibilityIdentifier("detail-hero-watched")
         .accessibilityLabel(action.title)
         .accessibilityValue(watchedActionItem.isPlayed ? "Watched" : "Not watched")
     }
@@ -1608,6 +1633,7 @@ struct DetailHeroView: View, Equatable {
         .modifier(HeroActionButtonStyle(prominent: false, circular: true))
         .focused($refreshButtonHasFocus)
         .focused($heroActionRowFocus, equals: .refresh)
+        .accessibilityIdentifier("detail-hero-refresh")
         .accessibilityLabel(MediaItemAction.refreshMetadata.title)
     }
 
