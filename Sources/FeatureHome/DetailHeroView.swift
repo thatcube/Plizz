@@ -918,6 +918,7 @@ struct DetailHeroView: View, Equatable {
                             .modifier(HeroActionButtonStyle(prominent: !showsRequestPill))
                             .prefersDefaultFocus(!showsRequestPill, in: heroActionsScope)
                             .focused($heroActionRowFocus, equals: .trailer)
+                            .accessibilityIdentifier("detail-hero-trailer")
                         }
                         // Watchlisting is the whole point of a title you do NOT
                         // have: it is how you say "get this later". The row's own
@@ -937,6 +938,7 @@ struct DetailHeroView: View, Equatable {
                         }
                         .modifier(HeroActionButtonStyle(prominent: false))
                         .focused($heroActionRowFocus, equals: .trailer)
+                        .accessibilityIdentifier("detail-hero-trailer")
                     }
                     if let heroWatchlistAction {
                         watchlistButton(action: heroWatchlistAction)
@@ -1159,9 +1161,8 @@ struct DetailHeroView: View, Equatable {
     /// ignore the horizontal/top overscan safe area and span the screen edge to
     /// edge *without* inflating the hero's (and the scroll column's) layout width.
     private func heroBackdrop() -> some View {
-        // The shared `HeroBackdropLayer` (CoreUI) owns the exact scrim + dissolve
-        // + full-bleed treatment, so the detail hero and the Home hero carousel
-        // render an identical backdrop. Hero artwork is never spoiler-blurred;
+        // `HeroBackdropLayer` shares Home's static shading while preserving the
+        // detail page's own dissolve and full-bleed treatment. Hero artwork is never spoiler-blurred;
         // episode spoiler masking remains limited to episode text and cards.
         let ladder = backdrop.artworkReferences(for: .detailBackdrop)
         HeroArtDiagnostics.emitOnce(
@@ -1230,6 +1231,7 @@ struct DetailHeroView: View, Equatable {
         .disabled(action == nil)
         .focused($playButtonHasFocus)
         .focused($heroActionRowFocus, equals: .play)
+        .accessibilityIdentifier("detail-hero-play")
         .onChange(of: liveResumeText) { _, new in
             if let new { reservedResumeText = new }
         }
@@ -1446,6 +1448,7 @@ struct DetailHeroView: View, Equatable {
         }
         .modifier(HeroActionButtonStyle(prominent: false, circular: true))
         .focused($heroActionRowFocus, equals: .more)
+        .accessibilityIdentifier("detail-hero-more")
         .accessibilityLabel("More actions")
     }
 
@@ -1540,6 +1543,7 @@ struct DetailHeroView: View, Equatable {
         .modifier(HeroActionButtonStyle(prominent: false, circular: true))
         .animation(.easeInOut(duration: 0.2), value: isWatchlisted)
         .focused($heroActionRowFocus, equals: .watchlist)
+        .accessibilityIdentifier("detail-hero-watchlist")
         .accessibilityLabel(action.title)
         .accessibilityValue(
             isWatchlisted ? "In Watchlist" : "Not in Watchlist"
@@ -1592,6 +1596,7 @@ struct DetailHeroView: View, Equatable {
         }
         .modifier(HeroActionButtonStyle(prominent: false, circular: true))
         .focused($heroActionRowFocus, equals: .watched)
+        .accessibilityIdentifier("detail-hero-watched")
         .accessibilityLabel(action.title)
         .accessibilityValue(watchedActionItem.isPlayed ? "Watched" : "Not watched")
     }
@@ -1619,6 +1624,7 @@ struct DetailHeroView: View, Equatable {
         .modifier(HeroActionButtonStyle(prominent: false, circular: true))
         .focused($refreshButtonHasFocus)
         .focused($heroActionRowFocus, equals: .refresh)
+        .accessibilityIdentifier("detail-hero-refresh")
         .accessibilityLabel(MediaItemAction.refreshMetadata.title)
     }
 

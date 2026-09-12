@@ -7,21 +7,39 @@ import SwiftUI
 
 public struct LibraryChannelEditorView: View {
     @State private var model: LibraryChannelEditorModel
-    @State private var action: Task<Void, Never>?
     private let prepareLibraries: (@MainActor () async throws -> Void)?
-    @Environment(\.dismiss) private var dismiss
 
     public init(
         service: LibraryChannelService, editingChannelID: UUID? = nil,
-        prepareLibraries: (@MainActor () async throws -> Void)? = nil
+        prepareLibraries: (@MainActor () async throws -> Void)? = nil,
+        canManage: @escaping @MainActor () -> Bool = { true }
     ) {
-        _model = State(initialValue: LibraryChannelEditorModel(service: service, editingChannelID: editingChannelID))
+        _model = State(initialValue: LibraryChannelEditorModel(
+            service: service, editingChannelID: editingChannelID, canManage: canManage))
         self.prepareLibraries = prepareLibraries
     }
 
     public var body: some View {
-        @Bindable var model = model
-        LiveTVSettingsPage(title: model.editingChannelID == nil ? "Create channel" : "Edit channel") {
+        if model.isAutomaticChannel {
+            ContentUnavailableView(
+                "Automatic channel",
+                systemImage: "calendar",
+                description: Text("Plozz manages this channel's schedule. Use the Plozz channels switch to control your automatic lineup.")
+            )
+        } else {
+            LibraryChannelEditorContent(model: model, prepareLibraries: prepareLibraries)
+        }
+    }
+}
+
+private struct LibraryChannelEditorContent: View {
+    @Bindable var model: LibraryChannelEditorModel
+    let prepareLibraries: (@MainActor () async throws -> Void)?
+    @State private var action: Task<Void, Never>?
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        LiveTVSettingsPage(title: model.editingChannelID == nil ? "Create custom channel" : "Edit custom channel") {
             LibraryChannelRecipeFields(recipe: $model.recipe, genres: $model.genres)
                 .disabled(model.isWorking)
             LibraryChannelLibraryFields(
@@ -195,10 +213,15 @@ final class LibraryChannelEditorModel {
     private(set) var isWorking = false
     private(set) var issue: LibraryChannelError?
     private var reviewed: LibraryChannelPreview?
+    private let canManage: @MainActor () -> Bool
 
-    init(service: LibraryChannelService, editingChannelID: UUID?) {
+    init(
+        service: LibraryChannelService, editingChannelID: UUID?,
+        canManage: @escaping @MainActor () -> Bool = { true }
+    ) {
         self.service = service
         self.editingChannelID = editingChannelID
+        self.canManage = canManage
         let recipe = service.definitions.first { $0.id == editingChannelID }?.revisions.last?.recipe
             ?? LibraryChannelRecipe()
         self.recipe = recipe
@@ -210,9 +233,13 @@ final class LibraryChannelEditorModel {
     }
 
     var currentPreview: LibraryChannelPreview? {
-        guard UInt64(seed) != nil, let reviewed, reviewed.recipe == input,
+        guard canManage(), !isAutomaticChannel, UInt64(seed) != nil, let reviewed, reviewed.recipe == input,
               reviewed.authorizationGeneration == service.generation else { return nil }
         return reviewed
+    }
+
+    var isAutomaticChannel: Bool {
+        service.definitions.first { $0.id == editingChannelID }?.isAutomatic == true
     }
 
     private var input: LibraryChannelRecipe {
@@ -226,6 +253,8 @@ final class LibraryChannelEditorModel {
     }
 
     func load(prepareLibraries: (@MainActor () async throws -> Void)? = nil) async {
+        guard canManage() else { issue = .authorizationChanged; return }
+        guard !isAutomaticChannel else { issue = .invalidRecipe; return }
         isWorking = true
         defer { isWorking = false }
         do {
@@ -240,6 +269,8 @@ final class LibraryChannelEditorModel {
 
     func preview() async {
         guard !isWorking else { return }
+        guard canManage() else { issue = .authorizationChanged; return }
+        guard !isAutomaticChannel else { issue = .invalidRecipe; return }
         guard UInt64(seed) != nil else { issue = .invalidRecipe; return }
         isWorking = true
         issue = nil
@@ -250,6 +281,8 @@ final class LibraryChannelEditorModel {
     }
 
     func save() async -> Bool {
+        guard canManage() else { issue = .authorizationChanged; return false }
+        guard !isAutomaticChannel else { issue = .invalidRecipe; return false }
         guard !isWorking, let preview = currentPreview else { return false }
         isWorking = true
         defer { isWorking = false }
@@ -271,54 +304,150 @@ public struct LibraryChannelManagementView: View {
     public let service: LibraryChannelService
     public let history: LibraryChannelHistorySettings
     private let prepareLibraries: (@MainActor () async throws -> Void)?
-    @State private var issue: LibraryChannelError?
+    private let automaticChannels: LiveTVAutomaticChannelsState?
 
     public init(
         service: LibraryChannelService, history: LibraryChannelHistorySettings,
-        prepareLibraries: (@MainActor () async throws -> Void)? = nil
+        prepareLibraries: (@MainActor () async throws -> Void)? = nil,
+        automaticChannels: LiveTVAutomaticChannelsState? = nil
     ) {
         self.service = service
         self.history = history
         self.prepareLibraries = prepareLibraries
+        self.automaticChannels = automaticChannels
     }
 
     public var body: some View {
+        LiveTVLibraryChannelAccessGate { canManage in
+            LibraryChannelManagementContent(
+                service: service, history: history, prepareLibraries: prepareLibraries,
+                automaticChannels: automaticChannels, canManage: canManage)
+        }
+    }
+}
+
+private struct LibraryChannelManagementContent: View {
+    let service: LibraryChannelService
+    let history: LibraryChannelHistorySettings
+    let prepareLibraries: (@MainActor () async throws -> Void)?
+    let automaticChannels: LiveTVAutomaticChannelsState?
+    let canManage: @MainActor () -> Bool
+    @State private var issue: LibraryChannelError?
+
+    var body: some View {
         LiveTVSettingsPage(title: "Plozz channels") {
-            SettingsSectionGroup {
-                NavigationLink {
-                    LibraryChannelEditorView(service: service, prepareLibraries: prepareLibraries)
-                } label: {
-                    Label("Create channel", systemImage: "plus")
-                }
-                ForEach(service.visibleDefinitions) { channel in
-                    NavigationLink {
-                        LibraryChannelEditorView(
-                            service: service, editingChannelID: channel.id, prepareLibraries: prepareLibraries)
-                    } label: {
-                        Text(channel.revisions.last?.recipe.name ?? "")
-                    }
-                    .contextMenu {
-                        Button("Delete channel", role: .destructive) {
-                            Task {
-                                do { try await service.delete(channelID: channel.id) }
-                                catch { issue = (error as? LibraryChannelError) ?? .storageFailed }
-                            }
-                        }
-                    }
-                }
+            if let automaticChannels {
+                LiveTVAutomaticChannelsSection(state: automaticChannels, canManage: canManage)
             }
+            let lineup = LibraryChannelManagementLineup(definitions: service.visibleDefinitions)
+            LibraryChannelAutomaticLineupView(channels: lineup.automatic)
+            LibraryChannelCustomSection(
+                service: service, channels: lineup.custom, prepareLibraries: prepareLibraries,
+                canManage: canManage, reportIssue: { issue = $0 })
             SettingsSectionGroup("Watch history") {
-                Toggle("Update library watch history from Plozz channels", isOn: Binding(
-                    get: { history.isEnabled }, set: { history.setEnabled($0) }
-                ))
+                Toggle(isOn: Binding(
+                    get: { history.isEnabled },
+                    set: {
+                        guard canManage() else { issue = .authorizationChanged; return }
+                        history.setEnabled($0)
+                    }
+                )) {
+                    Text("Update library watch history from Plozz channels")
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             } footer: {
                 Text("Off leaves library progress and trackers untouched. On records completion only after you watch 90% of a programme, not from where you joined. Channel playback uses original files; server transcoding is unavailable when it cannot preserve this policy.")
             }
             if let issue = issue ?? service.issue { Text(issue.message) }
         }
+        #if os(tvOS)
+        .toggleStyle(SettingsSwitchToggleStyle(flushLeading: false))
+        #elseif os(iOS)
+        .toggleStyle(SettingsTouchSwitchToggleStyle())
+        #endif
         .task {
+            guard canManage(), automaticChannels == nil else { return }
             do { if !service.isLoaded { try await service.load() } }
             catch { issue = (error as? LibraryChannelError) ?? .storageFailed }
+        }
+    }
+}
+
+struct LibraryChannelManagementLineup {
+    let automatic: [LibraryChannelDefinition]
+    let custom: [LibraryChannelDefinition]
+
+    init(definitions: [LibraryChannelDefinition]) {
+        automatic = definitions.filter(\.isAutomatic)
+        custom = definitions.filter { !$0.isAutomatic }
+    }
+}
+
+private struct LibraryChannelAutomaticLineupView: View {
+    let channels: [LibraryChannelDefinition]
+
+    var body: some View {
+        if !channels.isEmpty {
+            SettingsSectionGroup("Generated channels") {
+                ForEach(channels) { channel in
+                    Label {
+                        Text(channel.revisions.last?.recipe.name ?? "")
+                    } icon: {
+                        Image(systemName: channel.revisions.last?.recipe.symbol ?? "tv")
+                    }
+                    .accessibilityIdentifier("live-tv-generated-channel-\(channel.id.uuidString)")
+                }
+            } footer: {
+                Text("Plozz creates and updates these schedules automatically. Use the guide to watch, search or favorite a channel.")
+            }
+        }
+    }
+}
+
+private struct LibraryChannelCustomSection: View {
+    let service: LibraryChannelService
+    let channels: [LibraryChannelDefinition]
+    let prepareLibraries: (@MainActor () async throws -> Void)?
+    let canManage: @MainActor () -> Bool
+    let reportIssue: (LibraryChannelError) -> Void
+
+    var body: some View {
+        SettingsSectionGroup("Custom channels") {
+            NavigationLink {
+                LibraryChannelEditorView(
+                    service: service, prepareLibraries: prepareLibraries, canManage: canManage)
+            } label: {
+                SettingsRowLabel(icon: "plus", title: "Create custom channel")
+            }
+            .buttonStyle(SettingsFocusButtonStyle(size: .contained))
+            .accessibilityIdentifier("live-tv-create-custom-channel")
+            ForEach(channels) { channel in
+                NavigationLink {
+                    LibraryChannelEditorView(
+                        service: service, editingChannelID: channel.id,
+                        prepareLibraries: prepareLibraries, canManage: canManage)
+                } label: {
+                    SettingsRowLabel(icon: nil, title: Text(channel.revisions.last?.recipe.name ?? ""))
+                }
+                .buttonStyle(SettingsFocusButtonStyle(size: .contained))
+                .accessibilityIdentifier("live-tv-custom-channel-\(channel.id.uuidString)")
+                .contextMenu {
+                    Button("Delete channel", role: .destructive) {
+                        Task {
+                            guard canManage() else { reportIssue(.authorizationChanged); return }
+                            guard service.definitions.first(where: { $0.id == channel.id })?.isAutomatic == false else {
+                                reportIssue(.invalidRecipe)
+                                return
+                            }
+                            do { try await service.delete(channelID: channel.id) }
+                            catch { reportIssue((error as? LibraryChannelError) ?? .storageFailed) }
+                        }
+                    }
+                }
+            }
+        } footer: {
+            Text("Optional: choose your own libraries and rules for an additional channel.")
         }
     }
 }

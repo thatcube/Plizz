@@ -10,6 +10,7 @@ struct LiveTVSetupWelcome: View {
     var serverStatuses: [LiveTVServerEnrollmentStatus] = []
     var createChannel: (() -> Void)?
     var retryLibrary: (() -> Void)?
+    var automaticChannels: LiveTVAutomaticChannelsState? = nil
     @Environment(\.themePalette) private var palette
     @Environment(\.dynamicTypeSize) private var typeSize
 
@@ -47,16 +48,22 @@ struct LiveTVSetupWelcome: View {
                         .accessibilityIdentifier("live-tv-setup-server")
                         if let createChannel {
                             LiveTVSetupChoice(
-                                title: "Plozz channel",
-                                detail: "Turn movies and episodes from your libraries into a scheduled channel.",
-                                actionTitle: "Create channel",
+                                title: "Plozz channels",
+                                detail: "Your authorized library becomes themed channels with automatic guides.",
+                                actionTitle: automaticChannels?.enabled == true
+                                    ? "Manage channels" : "Enable channels",
                                 symbol: "calendar",
                                 action: createChannel
                             )
                             .accessibilityIdentifier("live-tv-setup-library")
+                            .accessibilityLabel(automaticChannels?.enabled == true
+                                ? Text("Manage Plozz channels") : Text("Enable Plozz channels"))
                         }
                     }
                     .fixedSize(horizontal: false, vertical: true)
+                    if let automaticChannels, automaticChannels.needsEmptyState {
+                        LiveTVAutomaticChannelsStatusView(state: automaticChannels)
+                    }
                     if let issue {
                         Label {
                             Text(issue)

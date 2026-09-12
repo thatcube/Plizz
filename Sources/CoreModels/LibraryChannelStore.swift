@@ -52,7 +52,9 @@ public final class LibraryChannelDefinitionStore: LibraryChannelDefinitionCompar
     }
 
     private func persist(_ definitions: [LibraryChannelDefinition], expected: [LibraryChannelDefinition]?) throws {
-        guard definitions.count <= 100, Set(definitions.map(\.id)).count == definitions.count else {
+        guard definitions.count <= 100, Set(definitions.map(\.id)).count == definitions.count,
+              Set(definitions.map(\.sourceID)).count == definitions.count,
+              Set(definitions.map(\.profileID)).count <= 1 else {
             throw LibraryChannelError.invalidRecipe
         }
         for definition in definitions { try definition.validate() }
@@ -60,6 +62,10 @@ public final class LibraryChannelDefinitionStore: LibraryChannelDefinitionCompar
         defer { Self.lock.unlock() }
         let previous = try read()
         guard expected.map({ $0 == previous }) ?? true else { throw LibraryChannelError.publicationConflict }
+        let origins = Dictionary(uniqueKeysWithValues: previous.map { ($0.id, $0) })
+        guard definitions.allSatisfy({ value in
+            origins[value.id].map { $0.automaticKey == value.automaticKey } ?? true
+        }) else { throw LibraryChannelError.publicationConflict }
         let data = try JSONEncoder().encode(Document(version: 1, definitions: definitions))
         guard data.count <= 2_000_000, let value = String(data: data, encoding: .utf8) else {
             throw LibraryChannelError.storageFailed
@@ -73,7 +79,9 @@ public final class LibraryChannelDefinitionStore: LibraryChannelDefinitionCompar
         let document = try JSONDecoder().decode(Document.self, from: Data(value.utf8))
         guard document.version == 1 else { throw LibraryChannelError.unsupportedVersion }
         guard document.definitions.count <= 100,
-              Set(document.definitions.map(\.id)).count == document.definitions.count else {
+              Set(document.definitions.map(\.id)).count == document.definitions.count,
+              Set(document.definitions.map(\.sourceID)).count == document.definitions.count,
+              Set(document.definitions.map(\.profileID)).count <= 1 else {
             throw LibraryChannelError.invalidRecipe
         }
         for definition in document.definitions { try definition.validate() }

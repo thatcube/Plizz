@@ -598,6 +598,27 @@ hitches: mean Down/Up ratios of 5.8/1.1 ms/s in the control. Isolation ON measur
 was not accepted as an overall improvement and remains off. Keep the successful
 cached-shading change separate from that unresolved experiment.
 
+#### TV show detail backdrops
+
+`HeroBackdropLayer` uses the same `HeroLegibilityTexture` and generated alpha
+asset as Home on tvOS. Its fixed wash, leading/bottom edges, peak and side ramp
+are identical. Only those static layers are cached: detail's own linear bottom
+dissolve, series hero masks, recede/return animation, episode rail and trailer
+handoff remain unchanged. RTL and custom tones retain native shading; iOS keeps
+its existing default.
+
+Use `PLZDETAIL_CACHED_SCRIM=0` for an analytic control. The layer also accepts
+`prefersCachedScrim` for embedding and visual comparisons. Hosted coverage
+compares the complete backdrop across themes, directions, full/short heights
+and vertical offsets, including clipping of a video-like UIKit layer.
+
+Long-show checks should use a real large episode collection, such as the
+animated One Piece series. `SeriesHeroCaptureTests` verifies hero/browser focus
+round trips when explicitly enabled with `PLOZZ_DETAIL_REMOTE_CAPTURE=1`.
+That is functional coverage, not a performance claim: empty native timing
+results and disconnected Instruments captures must not be counted as zero
+hitches. Episode-count-dependent work may require separate CPU investigation.
+
 ---
 
 ## 8. Case study: the "whole app is laggy" player re-render (June 2026)

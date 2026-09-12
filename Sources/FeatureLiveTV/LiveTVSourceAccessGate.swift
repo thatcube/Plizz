@@ -11,7 +11,24 @@ struct LiveTVSourceAccessGate<Content: View>: View {
 
     var body: some View {
         if let profiles {
-            LiveTVProfileSourceAccessGate(model: model, profiles: profiles, content: content)
+            LiveTVProfileSourceAccessGate(model: model, profiles: profiles) { _ in content() }
+        } else {
+            ContentUnavailableView(
+                "Profile settings unavailable",
+                systemImage: "lock",
+                description: Text("Return to Live TV and reopen Sources.")
+            )
+        }
+    }
+}
+
+struct LiveTVLibraryChannelAccessGate<Content: View>: View {
+    @ViewBuilder let content: (@escaping @MainActor () -> Bool) -> Content
+    @Environment(ProfilesModel.self) private var profiles: ProfilesModel?
+
+    var body: some View {
+        if let profiles {
+            LiveTVProfileSourceAccessGate(model: nil, profiles: profiles, content: content)
         } else {
             ContentUnavailableView(
                 "Profile settings unavailable",
@@ -23,15 +40,15 @@ struct LiveTVSourceAccessGate<Content: View>: View {
 }
 
 private struct LiveTVProfileSourceAccessGate<Content: View>: View {
-    let model: LiveTVSourceManagementModel
+    let model: LiveTVSourceManagementModel?
     @State private var access: LiveTVSourceManagementAccess
-    @ViewBuilder let content: () -> Content
+    @ViewBuilder let content: (@escaping @MainActor () -> Bool) -> Content
     @Environment(\.dismiss) private var dismiss
 
     init(
-        model: LiveTVSourceManagementModel,
+        model: LiveTVSourceManagementModel?,
         profiles: ProfilesModel,
-        @ViewBuilder content: @escaping () -> Content
+        @ViewBuilder content: @escaping (@escaping @MainActor () -> Bool) -> Content
     ) {
         self.model = model
         _access = State(initialValue: LiveTVSourceManagementAccess(profiles: profiles))
@@ -41,7 +58,7 @@ private struct LiveTVProfileSourceAccessGate<Content: View>: View {
     var body: some View {
         Group {
             if access.canManage {
-                content()
+                content { [weak access] in access?.canManage ?? false }
             } else {
                 PINEntryScaffold(
                     title: KidsProfileCopy.parentalPINEnter,
@@ -58,7 +75,7 @@ private struct LiveTVProfileSourceAccessGate<Content: View>: View {
             }
         }
         .onAppear {
-            model.authorizeMutations { [weak access] in access?.canManage ?? false }
+            model?.authorizeMutations { [weak access] in access?.canManage ?? false }
         }
     }
 }

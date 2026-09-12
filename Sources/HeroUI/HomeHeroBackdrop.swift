@@ -306,7 +306,7 @@ public struct HomeHeroBackdrop: View {
             sideDarkeningStart: 0.34
         )
         if HomeBackdropCompositing.usesCachedScrim {
-            HomeHeroLegibilityTexture(tone: scrimTone)
+            HeroLegibilityTexture(tone: scrimTone)
         } else {
             shading
         }

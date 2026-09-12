@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public enum LibraryChannelError: Error, Equatable, Sendable {
@@ -44,6 +45,7 @@ public enum LibraryChannelOrdering: String, Codable, CaseIterable, Sendable {
 
 /// Only provider-native identifiers; never URLs, access tokens or resume state.
 public struct LibraryChannelLibrary: Codable, Hashable, Identifiable, Sendable {
+    private static let accountIdentifierCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_.|"))
     public let accountID: String
     public let libraryID: String
     public var id: String { "\(accountID.utf8.count):\(accountID)\(libraryID)" }
@@ -54,8 +56,7 @@ public struct LibraryChannelLibrary: Codable, Hashable, Identifiable, Sendable {
     }
 
     static func isSafeAccountIdentifier(_ value: String) -> Bool {
-        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_.|"))
-        return !value.isEmpty && value.utf8.count <= 512 && value.unicodeScalars.allSatisfy(allowed.contains)
+        !value.isEmpty && value.utf8.count <= 512 && value.unicodeScalars.allSatisfy(accountIdentifierCharacters.contains)
     }
 }
 
@@ -136,6 +137,7 @@ public struct LibraryChannelRecipe: Codable, Equatable, Sendable {
 }
 
 public struct LibraryChannelItem: Codable, Hashable, Identifiable, Sendable {
+    private static let nativeIdentifierCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
     public let library: LibraryChannelLibrary
     public let serverID: String
     public let userID: String
@@ -204,9 +206,7 @@ public struct LibraryChannelItem: Codable, Hashable, Identifiable, Sendable {
     }
 
     static func isNativeIdentifier(_ value: String) -> Bool {
-        !value.isEmpty && value.utf8.count <= 512 && value.unicodeScalars.allSatisfy {
-            CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_.")).contains($0)
-        }
+        !value.isEmpty && value.utf8.count <= 512 && value.unicodeScalars.allSatisfy(nativeIdentifierCharacters.contains)
     }
 }
 
@@ -257,6 +257,8 @@ public struct LibraryChannelDefinition: Codable, Equatable, Identifiable, Sendab
     public let id: UUID
     public let sourceID: UUID
     public let profileID: String
+    public let automaticKey: String?
+    public var isAutomatic: Bool { automaticKey != nil }
     public var revisions: [LibraryChannelRevision]
     public var isEnabled: Bool
     /// The entire published guide, not just the currently playing slot, is frozen.
@@ -265,11 +267,13 @@ public struct LibraryChannelDefinition: Codable, Equatable, Identifiable, Sendab
 
     public init(
         id: UUID = UUID(), sourceID: UUID = UUID(), profileID: String,
-        revisions: [LibraryChannelRevision], isEnabled: Bool = true, publishedThrough: Int64 = 0
+        revisions: [LibraryChannelRevision], isEnabled: Bool = true, publishedThrough: Int64 = 0,
+        automaticKey: String? = nil
     ) {
         self.id = id
         self.sourceID = sourceID
         self.profileID = profileID
+        self.automaticKey = automaticKey
         self.revisions = revisions
         self.isEnabled = isEnabled
         self.publishedThrough = publishedThrough
@@ -279,6 +283,13 @@ public struct LibraryChannelDefinition: Codable, Equatable, Identifiable, Sendab
         guard !profileID.isEmpty, !revisions.isEmpty, revisions.count <= 32,
               publishedThrough >= 0, publishedThrough < 253_402_300_799,
               Set(revisions.map(\.id)).count == revisions.count else { throw LibraryChannelError.invalidRecipe }
+        if let automaticKey {
+            guard LibraryChannelAutomaticIdentity.isValidKey(automaticKey),
+                  id == LibraryChannelAutomaticIdentity.channelID(profileID: profileID, key: automaticKey),
+                  sourceID == LibraryChannelAutomaticIdentity.sourceID(profileID: profileID, key: automaticKey) else {
+                throw LibraryChannelError.invalidRecipe
+            }
+        }
         var previous: Int64?
         for revision in revisions {
             guard revision.algorithmVersion == 1 else { throw LibraryChannelError.unsupportedVersion }
@@ -289,6 +300,41 @@ public struct LibraryChannelDefinition: Codable, Equatable, Identifiable, Sendab
             }
             previous = revision.epochSeconds
         }
+    }
+}
+
+/// Profile and logical group, never provider order, translated title or Swift's randomized hash.
+public enum LibraryChannelAutomaticIdentity {
+    public static func channelID(profileID: String, key: String) -> UUID {
+        identifier(profileID: profileID, key: key, purpose: "channel")
+    }
+
+    public static func sourceID(profileID: String, key: String) -> UUID {
+        identifier(profileID: profileID, key: key, purpose: "source")
+    }
+
+    public static func seed(profileID: String, key: String) -> UInt64 {
+        digest(profileID: profileID, key: key, purpose: "seed").prefix(8).reduce(0) { ($0 << 8) | UInt64($1) }
+    }
+
+    public static func isValidKey(_ key: String) -> Bool {
+        key.hasPrefix("v1/") && key.utf8.count > 3 && key.utf8.count <= 512
+            && key.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) }
+            && key == key.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func digest(profileID: String, key: String, purpose: String) -> [UInt8] {
+        Array(SHA256.hash(data: Data("plozz-automatic:\(purpose):\(profileID.utf8.count):\(profileID):\(key)".utf8)))
+    }
+
+    private static func identifier(profileID: String, key: String, purpose: String) -> UUID {
+        var bytes = Array(digest(profileID: profileID, key: key, purpose: purpose).prefix(16))
+        bytes[6] = (bytes[6] & 0x0f) | 0x80
+        bytes[8] = (bytes[8] & 0x3f) | 0x80
+        return UUID(uuid: (
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
+        ))
     }
 }
 

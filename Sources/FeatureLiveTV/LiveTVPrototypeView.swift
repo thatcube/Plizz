@@ -123,6 +123,7 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
     private let libraryService: LibraryChannelService?
     private let libraryHistory: LibraryChannelHistorySettings?
     private let libraryIssue: LibraryChannelError?
+    private let automaticChannels: LiveTVAutomaticChannelsState?
     private let reloadLibrary: (() -> Void)?
     private let prepareLibraryChannels: (@MainActor () async throws -> Void)?
     private let libraryIsAuthorized: @MainActor @Sendable () -> Bool
@@ -161,6 +162,7 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
         libraryService: LibraryChannelService? = nil,
         libraryHistory: LibraryChannelHistorySettings? = nil,
         libraryIssue: LibraryChannelError? = nil,
+        automaticChannels: LiveTVAutomaticChannelsState? = nil,
         reloadLibrary: (() -> Void)? = nil,
         prepareLibraryChannels: (@MainActor () async throws -> Void)? = nil,
         libraryIsAuthorized: @escaping @MainActor @Sendable () -> Bool = { true },
@@ -182,6 +184,7 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
         self.libraryService = libraryService
         self.libraryHistory = libraryHistory
         self.libraryIssue = libraryIssue
+        self.automaticChannels = automaticChannels
         self.reloadLibrary = reloadLibrary
         self.prepareLibraryChannels = prepareLibraryChannels
         self.libraryIsAuthorized = libraryIsAuthorized
@@ -822,6 +825,14 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
                         retry: { loadedRequest = nil; reloadRequest &+= 1 }
                     )
                 }
+            } else if model.channels.isEmpty, let automaticChannels,
+                      automaticChannels.needsEmptyState, canManageLibraryChannels {
+                PrototypeGuidePlacement(frame: layout.contentFrame, canvasWidth: canvasWidth) {
+                    LiveTVAutomaticChannelsEmptyView(state: automaticChannels) {
+                        managesLibraryChannels = true
+                        sheet = .sources
+                    }
+                }
             } else if model.channels.isEmpty, blockedPlaylistCount > 0 {
                 PrototypeGuidePlacement(frame: layout.contentFrame, canvasWidth: canvasWidth) {
                     ContentUnavailableView {
@@ -839,13 +850,13 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
                     LiveTVSetupWelcome(
                         addPlaylist: { sheet = .addPlaylist },
                         useServer: { sheet = .serverSetup },
-                        issue: sources.mutationIssue?.message ?? libraryGuideIssue?.message ?? libraryIssue?.message,
+                        issue: sources.mutationIssue?.message,
                         serverStatuses: enrollment.statuses.filter { $0.phase != .idle },
                         createChannel: canManageLibraryChannels ? {
                             managesLibraryChannels = true
                             sheet = .sources
                         } : nil,
-                        retryLibrary: libraryGuideIssue != nil || libraryIssue != nil ? reloadLibrary : nil
+                        automaticChannels: automaticChannels
                     )
                 }
             } else if let sources,
@@ -953,11 +964,9 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
                 )
                 .navigationDestination(isPresented: $managesLibraryChannels) {
                     if let libraryService, let libraryHistory {
-                        LiveTVSourceAccessGate(model: sources) {
-                            LibraryChannelManagementView(
-                                service: libraryService, history: libraryHistory,
-                                prepareLibraries: prepareLibraryChannels)
-                        }
+                        LibraryChannelManagementView(
+                            service: libraryService, history: libraryHistory,
+                            prepareLibraries: prepareLibraryChannels, automaticChannels: automaticChannels)
                         .navigationDestination(isPresented: $showsScanSources) {
                             LiveTVSourceAccessGate(model: sources) {
                                 if scanBinding.issue != nil {
@@ -996,7 +1005,7 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
     }
 
     private var canManageLibraryChannels: Bool {
-        libraryService?.isLoaded == true && libraryHistory != nil && libraryIsAuthorized()
+        libraryService != nil && libraryHistory != nil
     }
 
     private func publishLibraryGuide(channelIDs: Set<String>, range: DateInterval) {

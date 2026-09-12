@@ -65,6 +65,11 @@ does not regenerate the shipping app project or install the app on an Apple TV.
 - Setup-card coverage checks matching dimensions, all three remote actions,
   stacked narrow/accessibility layouts, and right-to-left Light appearance.
   Screenshot attachments preserve each layout for visual review.
+- Automatic-channel fixtures exercise the enable-first management route,
+  preparing/empty/failure states, opt-out and optional custom-channel creation.
+  They use isolated state and never generate channels from the user's libraries.
+  Progress fixtures show a named library, real-shaped page/total counts, elapsed
+  and waiting states, and verify that cancellation remains reachable.
 - The actual Live TV Settings split view embeds source management directly.
   Smokes enter its playlist editor without a Manage sources intermediary, toggle
   a saved fixture source, and edit it directly. All stores remain isolated; the

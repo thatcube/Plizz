@@ -265,8 +265,10 @@ private struct LiveTVSourcesContent: View {
             if browseSource != nil || createChannel != nil || scanChannels != nil {
                 SettingsSectionGroup {
                     if let createChannel {
-                        Button("Create channel", systemImage: "sparkles.tv", action: createChannel)
+                        Button("Plozz channels", systemImage: "sparkles.tv", action: createChannel)
                             .buttonStyle(SettingsFocusButtonStyle(size: .contained))
+                            .accessibilityHint("Manage your automatic lineup and optional custom channels.")
+                            .accessibilityIdentifier("live-tv-manage-library-channels")
                     }
                     if let scanChannels {
                         Button("Check channel availability", systemImage: "checkmark.circle", action: scanChannels)

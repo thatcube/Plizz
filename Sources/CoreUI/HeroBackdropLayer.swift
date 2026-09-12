@@ -2,11 +2,17 @@
 import SwiftUI
 import CoreModels
 
+#if os(tvOS)
+private enum DetailBackdropCompositing {
+    static let usesCachedScrim =
+        ProcessInfo.processInfo.environment["PLZDETAIL_CACHED_SCRIM"] != "0"
+}
+#endif
+
 /// The shared, full-bleed hero **backdrop** treatment: a wide landscape image
 /// with a mode-appropriate legibility scrim and a bottom dissolve that melts the
-/// artwork into the app background. This is the single source of truth for the
-/// "cinematic hero" look used by both the item **detail** page (`DetailHeroView`)
-/// and the Home **hero carousel** (`HomeHeroView`), so the two can never drift.
+/// artwork into the app background. Detail pages share Home's fixed legibility
+/// shading while retaining their own dissolve geometry.
 ///
 /// It is deliberately *purely visual and layout-neutral*: it renders as the host
 /// view's `.background`, ignores the tvOS overscan safe area, and never reports a
@@ -53,6 +59,9 @@ public struct HeroBackdropLayer<Video: View>: View {
     /// until the newly-mounted AVPlayerLayer presents its first frame.
     private let stillImageOpacity: Double
     private let pinIdentity: String?
+    /// Overrides the platform default for embedding and controlled comparisons.
+    /// Unsupported tones/directions still retain the original analytic shading.
+    private let prefersCachedScrim: Bool?
     /// Overlaid on the still image; empty today, hosts a faded-in trailer later.
     private let backgroundVideo: () -> Video
 
@@ -66,6 +75,7 @@ public struct HeroBackdropLayer<Video: View>: View {
         ignoresOverscan: Bool = true,
         stillImageOpacity: Double = 1,
         pinIdentity: String? = nil,
+        prefersCachedScrim: Bool? = nil,
         @ViewBuilder backgroundVideo: @escaping () -> Video
     ) {
         self.references = urls.map(ArtworkReference.remote)
@@ -77,6 +87,7 @@ public struct HeroBackdropLayer<Video: View>: View {
         self.ignoresOverscan = ignoresOverscan
         self.stillImageOpacity = stillImageOpacity
         self.pinIdentity = pinIdentity
+        self.prefersCachedScrim = prefersCachedScrim
         self.backgroundVideo = backgroundVideo
     }
 
@@ -90,6 +101,7 @@ public struct HeroBackdropLayer<Video: View>: View {
         ignoresOverscan: Bool = true,
         stillImageOpacity: Double = 1,
         pinIdentity: String? = nil,
+        prefersCachedScrim: Bool? = nil,
         @ViewBuilder backgroundVideo: @escaping () -> Video
     ) {
         self.references = references
@@ -101,6 +113,7 @@ public struct HeroBackdropLayer<Video: View>: View {
         self.ignoresOverscan = ignoresOverscan
         self.stillImageOpacity = stillImageOpacity
         self.pinIdentity = pinIdentity
+        self.prefersCachedScrim = prefersCachedScrim
         self.backgroundVideo = backgroundVideo
     }
 
@@ -141,7 +154,25 @@ public struct HeroBackdropLayer<Video: View>: View {
     /// the artwork while the darkening blends evenly across the whole hero instead
     /// of pooling on one side — matching the Home hero. Lives *under* the dissolve
     /// mask so it fades away with the image and never tints the revealed background.
+    @ViewBuilder
     private var scrim: some View {
+        if usesCachedScrim {
+            HeroLegibilityTexture(tone: scrimTone)
+        } else {
+            analyticScrim
+        }
+    }
+
+    private var usesCachedScrim: Bool {
+        if let prefersCachedScrim { return prefersCachedScrim }
+        #if os(tvOS)
+        return DetailBackdropCompositing.usesCachedScrim
+        #else
+        return false
+        #endif
+    }
+
+    private var analyticScrim: some View {
         // TEST: top and trailing dropped. Detail-page content runs along the
         // LEFT and fades out at the BOTTOM, so those two edges are the only ones
         // doing legibility work; darkening the other two only costs contrast on
@@ -212,7 +243,8 @@ public extension HeroBackdropLayer where Video == EmptyView {
         verticalOffset: CGFloat = 0,
         dissolveStart: CGFloat = 0.33,
         ignoresOverscan: Bool = true,
-        stillImageOpacity: Double = 1
+        stillImageOpacity: Double = 1,
+        prefersCachedScrim: Bool? = nil
     ) {
         self.init(
             urls: urls,
@@ -223,6 +255,7 @@ public extension HeroBackdropLayer where Video == EmptyView {
             dissolveStart: dissolveStart,
             ignoresOverscan: ignoresOverscan,
             stillImageOpacity: stillImageOpacity,
+            prefersCachedScrim: prefersCachedScrim,
             backgroundVideo: { EmptyView() }
         )
     }
@@ -235,7 +268,8 @@ public extension HeroBackdropLayer where Video == EmptyView {
         verticalOffset: CGFloat = 0,
         dissolveStart: CGFloat = 0.33,
         ignoresOverscan: Bool = true,
-        stillImageOpacity: Double = 1
+        stillImageOpacity: Double = 1,
+        prefersCachedScrim: Bool? = nil
     ) {
         self.init(
             references: references,
@@ -246,6 +280,7 @@ public extension HeroBackdropLayer where Video == EmptyView {
             dissolveStart: dissolveStart,
             ignoresOverscan: ignoresOverscan,
             stillImageOpacity: stillImageOpacity,
+            prefersCachedScrim: prefersCachedScrim,
             backgroundVideo: { EmptyView() }
         )
     }

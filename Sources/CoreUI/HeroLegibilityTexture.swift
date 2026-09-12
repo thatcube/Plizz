@@ -1,9 +1,9 @@
 #if canImport(SwiftUI)
 import SwiftUI
 
-/// Pre-rendered alpha for Home's fixed legibility treatment. Only the image
+/// Pre-rendered alpha for the shared Home/detail legibility treatment. Only the image
 /// shading is baked; the theme's opaque black/white tone stays live.
-public struct HomeHeroLegibilityTexture: View {
+public struct HeroLegibilityTexture: View {
     private let tone: Color
     @Environment(\.layoutDirection) private var layoutDirection
 
@@ -28,4 +28,6 @@ public struct HomeHeroLegibilityTexture: View {
         }
     }
 }
+
+public typealias HomeHeroLegibilityTexture = HeroLegibilityTexture
 #endif

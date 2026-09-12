@@ -476,18 +476,25 @@ private final class LibraryStoredChangeRecords {
     var values: [[LibraryChannelDefinition]] = []
 }
 
-private final class LibraryDefinitionMemory: LibraryChannelDefinitionStoring, @unchecked Sendable {
+final class LibraryDefinitionMemory: LibraryChannelDefinitionStoring, @unchecked Sendable {
     private let lock = NSLock()
     private var values: [LibraryChannelDefinition] = []
     private var readFailure: LibraryChannelError?
+    private var writeFailure: LibraryChannelError?
     func load() throws -> [LibraryChannelDefinition] {
         try lock.withLock {
             if let readFailure { throw readFailure }
             return values
         }
     }
-    func save(_ definitions: [LibraryChannelDefinition]) throws { lock.withLock { values = definitions } }
+    func save(_ definitions: [LibraryChannelDefinition]) throws {
+        try lock.withLock {
+            if let writeFailure { throw writeFailure }
+            values = definitions
+        }
+    }
     func setReadFailure(_ error: LibraryChannelError?) { lock.withLock { readFailure = error } }
+    func setWriteFailure(_ error: LibraryChannelError?) { lock.withLock { writeFailure = error } }
 }
 
 private enum LibraryStoredAuthorityChange: CaseIterable {
@@ -514,7 +521,7 @@ private enum LibraryStoredAuthorityChange: CaseIterable {
     }
 }
 
-private actor LibrarySnapshotInterleavingStore: LibraryChannelSnapshotStaging {
+actor LibrarySnapshotInterleavingStore: LibraryChannelSnapshotStaging {
     private let cache = LibraryChannelSnapshotStore(databaseURL: nil)
     private var readHook: (@Sendable () throws -> Void)?
     private var stageHook: (@Sendable () throws -> Void)?
@@ -562,23 +569,37 @@ private actor LibrarySnapshotInterleavingStore: LibraryChannelSnapshotStaging {
     }
 }
 
-private actor LibraryCatalogFixture: LibraryChannelCatalogProviding {
-    let kind = ProviderKind.jellyfin
-    nonisolated let session = UserSession(
-        server: MediaServer(id: "server", name: "Server", baseURL: URL(string: "https://server.invalid")!, provider: .jellyfin),
-        userID: "user", userName: "User", deviceID: "device", accessToken: "fixture"
-    )
-    let items: [MediaItem]
+actor LibraryCatalogFixture: LibraryChannelCatalogProviding {
+    nonisolated let kind: ProviderKind
+    nonisolated let session: UserSession
+    var items: [MediaItem]
     private(set) var pages: [PageRequest] = []
+    private(set) var queries: [(libraryID: String, kind: MediaItemKind, page: PageRequest)] = []
     private(set) var details = 0
-    init(items: [MediaItem]) { self.items = items }
+    var accessibleLibraries = [MediaLibrary(id: "library", title: "Library", kind: .unknown)]
+    private var pageHook: (@Sendable () async throws -> Void)?
+    init(items: [MediaItem], session: UserSession? = nil, kind: ProviderKind = .jellyfin) {
+        self.items = items
+        self.kind = kind
+        self.session = session ?? UserSession(
+            server: MediaServer(id: "server", name: "Server", baseURL: URL(string: "https://server.invalid")!, provider: .jellyfin),
+            userID: "user", userName: "User", deviceID: "device", accessToken: "fixture"
+        )
+    }
+    func replaceItems(_ items: [MediaItem]) { self.items = items }
+    func replaceLibraries(_ libraries: [MediaLibrary]) { accessibleLibraries = libraries }
+    func beforeNextPage(_ hook: @escaping @Sendable () async throws -> Void) { pageHook = hook }
     func libraryChannelItems(in libraryID: String, kind: MediaItemKind, page: PageRequest) async throws -> MediaPage {
         pages.append(page)
-        let selected = items.filter { $0.kind == kind }
+        queries.append((libraryID, kind, page))
+        let hook = pageHook
+        pageHook = nil
+        try await hook?()
+        let selected = items.filter { $0.kind == kind && $0.libraryID == libraryID }
         return MediaPage(items: Array(selected.dropFirst(page.startIndex).prefix(page.limit)),
                          startIndex: page.startIndex, totalCount: selected.count)
     }
-    func libraries() async throws -> [MediaLibrary] { [] }
+    func libraries() async throws -> [MediaLibrary] { accessibleLibraries }
     func continueWatching(limit: Int) async throws -> [MediaItem] { [] }
     func latest(limit: Int) async throws -> [MediaItem] { [] }
     func item(id: String) async throws -> MediaItem { details += 1; throw AppError.notFound }

@@ -96,6 +96,7 @@ struct PlozziOSLiveTVDestination: View {
             libraryService: runtime.service,
             libraryHistory: runtime.history,
             libraryIssue: runtime.issue,
+            automaticChannels: runtime.automaticChannelsPresentation,
             reloadLibrary: runtime.retry,
             prepareLibraryChannels: runtime.prepareForEditing,
             libraryIsAuthorized: { [weak runtime] in runtime?.authorizationID != nil },
@@ -286,9 +287,14 @@ private struct PlozziOSLiveTVSourcesContent: View {
         }
         .navigationTitle("Sources")
         .navigationDestination(isPresented: $managesChannels) {
-            LiveTVSourcesLibraryView(runtime: runtime, library: library) {
+            if runtime.isCurrent {
                 LibraryChannelManagementView(
-                    service: library.service, history: library.history, prepareLibraries: library.prepareForEditing)
+                    service: library.service, history: library.history, prepareLibraries: library.prepareForEditing,
+                    automaticChannels: library.automaticChannelsPresentation)
+            } else {
+                ContentUnavailableView(
+                    "Profile access changed", systemImage: "lock",
+                    description: Text("Reopen Sources to continue."))
             }
         }
         .navigationDestination(isPresented: $scansChannels) {
@@ -306,6 +312,22 @@ private struct PlozziOSLiveTVSourcesContent: View {
             scansChannels = false
             scanOfferSourceID = nil
         }
+    }
+}
+
+private extension LiveTVLibraryRuntime {
+    var automaticChannelsPresentation: LiveTVAutomaticChannelsState {
+        LiveTVAutomaticChannelsState(
+            enabled: automaticChannelsEnabled,
+            isWorking: isPreparingAutomaticChannels,
+            issue: automaticChannelsIssue,
+            channelCount: automaticChannelCount,
+            skippedItemCount: automaticSkippedItemCount,
+            setEnabled: setAutomaticChannelsEnabled,
+            retry: retry,
+            unavailableSources: automaticUnavailableSources,
+            preparation: automaticPreparation
+        )
     }
 }
 #endif

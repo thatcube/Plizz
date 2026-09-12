@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bake the static Home legibility alpha field; never bake artwork or theme color."""
+"""Bake the shared Home/detail legibility alpha field; never bake artwork or theme color."""
 
 import argparse
 from pathlib import Path
