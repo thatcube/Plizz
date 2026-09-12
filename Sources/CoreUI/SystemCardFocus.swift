@@ -234,7 +234,8 @@ private struct SystemCardRepresentable<Content: View>: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> SystemCardControl {
-        let view = SystemCardControl(configuration: configuration(in: context))
+        let view = SystemCardControl(type: .system)
+        view.hostedContent.configuration = configuration(in: context)
         view.artwork = context.coordinator.artwork
         context.coordinator.artwork.owner = view
         return view
@@ -275,7 +276,7 @@ private struct SystemCardRepresentable<Content: View>: UIViewRepresentable {
 /// The button owns its image and its single native focus treatment.
 @MainActor
 private final class SystemCardControl: UIButton {
-    let hostedContent: UIView & UIContentView
+    let hostedContent: UIView & UIContentView = UIHostingConfiguration { Color.clear }.makeContentView()
     var focusContext: SystemCardFocusContext?
     var cornerRadius: CGFloat = 0
     var surfaceColor: UIColor = .black
@@ -283,9 +284,8 @@ private final class SystemCardControl: UIButton {
     private var carrierKey = ""
     private var pendingFocusRequest = false
 
-    init(configuration: any UIContentConfiguration) {
-        hostedContent = configuration.makeContentView()
-        super.init(frame: .zero)
+    override init(frame: CGRect) {
+        super.init(frame: frame)
         setImage(
             UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1))
                 .image { _ in }.withRenderingMode(.alwaysOriginal),
@@ -333,8 +333,6 @@ private final class SystemCardControl: UIButton {
     override func layoutSubviews() {
         super.layoutSubviews()
         guard !bounds.isEmpty, let focusImageView = imageView else { return }
-        focusImageView.adjustsImageWhenAncestorFocused = true
-        focusImageView.masksFocusEffectToContents = true
         focusImageView.clipsToBounds = false
         focusImageView.overlayContentView.clipsToBounds = false
         if hostedContent.superview !== focusImageView.overlayContentView {

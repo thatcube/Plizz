@@ -205,9 +205,9 @@ released after returning, on a memory warning, or with the page's lifetime.
 Card focus has three independent options: System (native tvOS projection),
 Highlight (custom sheen/lean) and Outline (custom glass). Absent per-profile
 preferences use System; saved `highlight` and `outlined` values are not migrated.
-The System path uses one image `UIButton` with `setImage(_:for:)` and standard
-press handling. Its built-in image view uses `adjustsImageWhenAncestorFocused`;
-there is no separate button configuration focus treatment to stack with it.
+The System path uses `UIButton(type: .system)` with `setImage(_:for:)` and
+standard press handling. It does not override the built-in image view's focus
+effect or stack a separate button configuration treatment with it.
 No additional focusable image view, app-supplied scale, sheen, arrival lean,
 halo or settling task is added.
 Resolved artwork is composed into the button's image; only captions, badges and other live decorations stay in
