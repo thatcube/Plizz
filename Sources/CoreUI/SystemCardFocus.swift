@@ -275,7 +275,7 @@ private struct SystemCardRepresentable<Content: View>: UIViewRepresentable {
 /// UIKit owns focus, including tvOS's High Contrast ring and default motion.
 /// The hosting configuration remains live inside the native image's overlay.
 @MainActor
-private final class SystemCardControl: UIControl {
+private final class SystemCardControl: UIButton {
     let focusImageView = UIImageView()
     let hostedContent: UIView & UIContentView
     var focusContext: SystemCardFocusContext?
@@ -283,14 +283,12 @@ private final class SystemCardControl: UIControl {
     var surfaceColor: UIColor = .black
     var artwork: NativeCardArtwork?
     private var carrierKey = ""
-    private var selecting = false
     private var pendingFocusRequest = false
-
-    override var canBecomeFocused: Bool { isEnabled }
 
     init(configuration: any UIContentConfiguration) {
         hostedContent = configuration.makeContentView()
         super.init(frame: .zero)
+        self.configuration = .plain()
         focusImageView.adjustsImageWhenAncestorFocused = true
         focusImageView.masksFocusEffectToContents = true
         focusImageView.overlayContentView.clipsToBounds = false
@@ -385,31 +383,7 @@ private final class SystemCardControl: UIControl {
     override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
         super.didUpdateFocus(in: context, with: coordinator)
         pendingFocusRequest = false
-        if !isFocused { selecting = false }
-        let scale: CGFloat = isFocused && !UIAccessibility.isReduceMotionEnabled
-            ? PlozzTheme.Metrics.mediumFocusedCardScale : 1
-        coordinator.addCoordinatedAnimations {
-            self.transform = CGAffineTransform(scaleX: scale, y: scale)
-        }
         focusContext?.onFocus(isFocused)
-    }
-
-    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        if presses.contains(where: { $0.type == .select }) { selecting = true }
-        super.pressesBegan(presses, with: event)
-    }
-
-    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        if presses.contains(where: { $0.type == .select }) {
-            if selecting, isEnabled, isFocused { sendActions(for: .primaryActionTriggered) }
-            selecting = false
-        }
-        super.pressesEnded(presses, with: event)
-    }
-
-    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        selecting = false
-        super.pressesCancelled(presses, with: event)
     }
 }
 
