@@ -286,13 +286,11 @@ private final class SystemCardControl: UIButton {
     init(configuration: any UIContentConfiguration) {
         hostedContent = configuration.makeContentView()
         super.init(frame: .zero)
-        var buttonConfiguration = UIButton.Configuration.plain()
-        buttonConfiguration.contentInsets = .zero
-        buttonConfiguration.imagePadding = 0
-        buttonConfiguration.cornerStyle = .fixed
-        buttonConfiguration.image = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1))
-            .image { _ in }.withRenderingMode(.alwaysOriginal)
-        self.configuration = buttonConfiguration
+        setImage(
+            UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1))
+                .image { _ in }.withRenderingMode(.alwaysOriginal),
+            for: .normal
+        )
         clipsToBounds = false
         contentHorizontalAlignment = .fill
         contentVerticalAlignment = .fill
@@ -335,6 +333,8 @@ private final class SystemCardControl: UIButton {
     override func layoutSubviews() {
         super.layoutSubviews()
         guard !bounds.isEmpty, let focusImageView = imageView else { return }
+        focusImageView.adjustsImageWhenAncestorFocused = true
+        focusImageView.masksFocusEffectToContents = true
         focusImageView.clipsToBounds = false
         focusImageView.overlayContentView.clipsToBounds = false
         if hostedContent.superview !== focusImageView.overlayContentView {
@@ -378,11 +378,7 @@ private final class SystemCardControl: UIButton {
                         context.cgContext.restoreGState()
                     }
                 }
-            if var buttonConfiguration = configuration {
-                buttonConfiguration.image = image.withRenderingMode(.alwaysOriginal)
-                buttonConfiguration.background.cornerRadius = cornerRadius
-                configuration = buttonConfiguration
-            }
+            setImage(image.withRenderingMode(.alwaysOriginal), for: .normal)
             for (picture, _) in rendered {
                 DispatchQueue.main.async { picture.didRender() }
             }
