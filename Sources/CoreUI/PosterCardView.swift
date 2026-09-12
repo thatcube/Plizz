@@ -1435,7 +1435,7 @@ public extension View {
         #endif
     }
 
-    /// Native media buttons for System, existing custom focus for other styles.
+    /// Media-card focus with separate native observations and explicit requests.
     func focusableCard(
         isFocused: PlozzCardFocus.Binding,
         cornerRadius: CGFloat,
@@ -1465,11 +1465,23 @@ private struct CardFocusOwner: ViewModifier {
 
     func body(content: Content) -> some View {
         if style.usesSystemEffect {
-            Button(action: action) { content }
-                .buttonStyle(.card)
-                .buttonBorderShape(.roundedRectangle(radius: cornerRadius))
+            content
+                .environment(\.systemCardFocusContext, SystemCardFocusContext(
+                    requestsFocus: isFocused.focusState.wrappedValue,
+                    isEnabled: isEnabled && parentEnabled,
+                    onFocus: { focused in
+                        if isFocused.observed.wrappedValue != focused {
+                            isFocused.observed.wrappedValue = focused
+                        }
+                    },
+                    action: action
+                ))
                 .focused(isFocused.focusState)
-                .disabled(!isEnabled || !parentEnabled)
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction {
+                    if isEnabled && parentEnabled { action() }
+                }
         } else {
             content
                 .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))

@@ -242,7 +242,7 @@ final class DetailTransitionVisualRegressionTests: XCTestCase {
         add(attachment)
         let painted = try redArtworkBounds(in: window)
         XCTAssertEqual(painted.width, painted.height, accuracy: 2)
-        XCTAssertNotNil(UIFocusSystem.focusSystem(for: window)?.focusedItem)
+        XCTAssertTrue(UIFocusSystem.focusSystem(for: window)?.focusedItem is UIControl)
         let cgImage = try XCTUnwrap(image.cgImage)
         for corner in [
             CGPoint(x: painted.minX + 4, y: painted.minY + 4),
