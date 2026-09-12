@@ -272,11 +272,9 @@ private struct SystemCardRepresentable<Content: View>: UIViewRepresentable {
     }
 }
 
-/// UIKit owns focus, including tvOS's High Contrast ring and default motion.
-/// The hosting configuration remains live inside the native image's overlay.
+/// The button owns its image and its single native focus treatment.
 @MainActor
 private final class SystemCardControl: UIButton {
-    let focusImageView = UIImageView()
     let hostedContent: UIView & UIContentView
     var focusContext: SystemCardFocusContext?
     var cornerRadius: CGFloat = 0
@@ -288,14 +286,17 @@ private final class SystemCardControl: UIButton {
     init(configuration: any UIContentConfiguration) {
         hostedContent = configuration.makeContentView()
         super.init(frame: .zero)
-        self.configuration = .plain()
-        focusImageView.adjustsImageWhenAncestorFocused = true
-        focusImageView.masksFocusEffectToContents = true
-        focusImageView.overlayContentView.clipsToBounds = false
-        focusImageView.overlayContentView.addSubview(hostedContent)
+        var buttonConfiguration = UIButton.Configuration.plain()
+        buttonConfiguration.contentInsets = .zero
+        buttonConfiguration.imagePadding = 0
+        buttonConfiguration.cornerStyle = .fixed
+        buttonConfiguration.image = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1))
+            .image { _ in }.withRenderingMode(.alwaysOriginal)
+        self.configuration = buttonConfiguration
+        contentHorizontalAlignment = .fill
+        contentVerticalAlignment = .fill
         hostedContent.backgroundColor = .clear
         hostedContent.isUserInteractionEnabled = false
-        addSubview(focusImageView)
         isAccessibilityElement = false
         accessibilityElements = [hostedContent]
         addAction(UIAction { [weak self] _ in self?.focusContext?.action() }, for: .primaryActionTriggered)
@@ -332,8 +333,10 @@ private final class SystemCardControl: UIButton {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        guard !bounds.isEmpty else { return }
-        focusImageView.frame = bounds
+        guard !bounds.isEmpty, let focusImageView = imageView else { return }
+        if hostedContent.superview !== focusImageView.overlayContentView {
+            focusImageView.overlayContentView.addSubview(hostedContent)
+        }
         hostedContent.frame = focusImageView.overlayContentView.bounds
         let color = surfaceColor.resolvedColor(with: traitCollection)
         var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
@@ -372,7 +375,11 @@ private final class SystemCardControl: UIButton {
                         context.cgContext.restoreGState()
                     }
                 }
-                focusImageView.image = image
+            if var buttonConfiguration = configuration {
+                buttonConfiguration.image = image.withRenderingMode(.alwaysOriginal)
+                buttonConfiguration.background.cornerRadius = cornerRadius
+                configuration = buttonConfiguration
+            }
             for (picture, _) in rendered {
                 DispatchQueue.main.async { picture.didRender() }
             }
