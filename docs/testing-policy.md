@@ -207,7 +207,7 @@ Highlight (custom sheen/lean) and Outline (custom glass). Absent per-profile
 preferences use System; saved `highlight` and `outlined` values are not migrated.
 The System path must not instantiate custom focus growth, sheen, lean, halo or
 settling tasks. System uses standard SwiftUI `Button` controls with the native
-`.borderless` style and `.hoverEffect(.automatic)` on artwork. The OS owns focus
+`.card` style, without an artwork hover override. The OS owns focus
 motion and accessibility appearance. There is no UIKit carrier image, hosted
 overlay, custom focus callback bridge, forced lift, or app-level High Contrast
 override. Highlight and Outline retain their existing custom treatments.

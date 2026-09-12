@@ -1466,7 +1466,7 @@ private struct CardFocusOwner: ViewModifier {
     func body(content: Content) -> some View {
         if style.usesSystemEffect {
             Button(action: action) { content }
-                .buttonStyle(.borderless)
+                .buttonStyle(.card)
                 .buttonBorderShape(.roundedRectangle(radius: cornerRadius))
                 .focused(isFocused.focusState)
                 .disabled(!isEnabled || !parentEnabled)

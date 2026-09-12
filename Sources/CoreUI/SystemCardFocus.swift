@@ -28,14 +28,9 @@ public extension View {
         modifier(CardFocusEffectAvailability())
     }
 
-    /// Mark the artwork for the native button's automatic focus treatment.
+    /// System focus belongs to the native card button, not an artwork hover override.
     func plozzSystemCardProjection(cornerRadius: CGFloat) -> some View {
-        #if os(tvOS)
-        contentShape(.hoverEffect, RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .hoverEffect(.automatic)
-        #else
         self
-        #endif
     }
 
     func plozzRestingCardShadow(isFocused: Bool) -> some View {
@@ -130,7 +125,7 @@ private struct CardFocusButtonStyle<Style: ButtonStyle>: ViewModifier {
         #if os(tvOS)
         if style.usesSystemEffect {
             content
-                .buttonStyle(.borderless)
+                .buttonStyle(.card)
                 .buttonBorderShape(.roundedRectangle(radius: cornerRadius))
         } else {
             content.buttonStyle(fallback).focusEffectDisabled()
