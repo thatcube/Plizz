@@ -226,6 +226,13 @@ Hosted text uses a light-surface palette inside TVCardView so the native light
 platter does not receive white text from the surrounding dark app. Card fitting
 honors finite width proposals; unspecified-width probes must not install the
 10,000-point expanded fitting size as the card's content width.
+Unspecified-height queries use compressed Auto Layout fitting, not an expanded
+height: flexible rating labels otherwise become 10,000 points tall and inflate
+the About column's text measurements. Subtract the control's native chrome
+(`intrinsicContentSize - contentSize`) before measuring its hosted content, then
+add it back once to the returned size. `NativeInformationCardHostedTests` covers
+the actual information grid with a long synopsis and four ratings, checking
+bounded, stable card dimensions and matching native/SwiftUI widths.
 Native monogram photos are prepared as square, circular-alpha image data, so a
 tall source portrait cannot protrude into its caption on focus.
 System bypasses app-defined focus surfaces, edge strokes, resting shadows and

@@ -102,14 +102,31 @@ struct NativeTVCard<Content: View>: UIViewRepresentable {
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: Card, context: Context) -> CGSize? {
         guard let content = uiView.hostedContent,
               let width = proposal.width, width.isFinite, width > 0 else { return nil }
-        let size = content.sizeThatFits(CGSize(
-            width: width,
-            height: proposal.height ?? UIView.layoutFittingExpandedSize.height
-        ))
-        guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else { return nil }
-        let boundedSize = CGSize(width: min(width, size.width), height: size.height)
-        if uiView.contentSize != boundedSize { uiView.contentSize = boundedSize }
-        return CGSize(width: width, height: max(size.height, uiView.intrinsicContentSize.height))
+        let intrinsic = uiView.intrinsicContentSize
+        let chrome = CGSize(
+            width: max(0, intrinsic.width - uiView.contentSize.width),
+            height: max(0, intrinsic.height - uiView.contentSize.height)
+        )
+        let contentWidth = width - chrome.width
+        guard contentWidth > 0 else { return CGSize(width: width, height: chrome.height) }
+        let contentHeight = proposal.height.flatMap { height in
+            height.isFinite ? max(0, height - chrome.height) : nil
+        }
+        // An unspecified height is an intrinsic-height query, not a 10,000pt
+        // offer. Flexible rating labels otherwise stretch and inflate About's
+        // cross-column text measurements. Reserve TVCardView's own insets too.
+        let size = content.systemLayoutSizeFitting(
+            CGSize(width: contentWidth, height: contentHeight ?? 0),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: (contentHeight ?? 0) > 0 ? .required : .fittingSizeLevel
+        )
+        guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height >= 0 else {
+            PlozzLog.app.error("Native card content returned invalid fitting dimensions")
+            return nil
+        }
+        let contentSize = CGSize(width: contentWidth, height: size.height)
+        if uiView.contentSize != contentSize { uiView.contentSize = contentSize }
+        return CGSize(width: width, height: size.height + chrome.height)
     }
 
     private func configuration(in context: Context) -> any UIContentConfiguration {
