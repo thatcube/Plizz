@@ -169,7 +169,7 @@ struct NativeTVPoster<Overlay: View>: UIViewRepresentable {
             format.scale = scale
             format.opaque = true
             let loadingImage = UIGraphicsImageRenderer(size: size, format: format).image {
-                UIColor.secondarySystemBackground.setFill()
+                UIColor.darkGray.setFill()
                 $0.fill(CGRect(origin: .zero, size: size))
             }
             placeholder = loadingImage
