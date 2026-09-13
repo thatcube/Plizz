@@ -737,11 +737,14 @@ private struct PendingProgram {
     var end: Date
     var details = LiveTVProgramDetails()
     var textBytes: Int {
-        title.utf8.count + subtitle.utf8.count + (details.description?.utf8.count ?? 0)
-            + details.categories.reduce(0) { $0 + $1.utf8.count }
-            + details.languages.reduce(0) { $0 + $1.utf8.count }
-            + (details.episode?.utf8.count ?? 0) + (details.rating?.utf8.count ?? 0)
-            + (details.artworkURL?.absoluteString.utf8.count ?? 0)
+        var count = title.utf8.count + subtitle.utf8.count
+        count += details.description?.utf8.count ?? 0
+        count += details.categories.reduce(0) { $0 + $1.utf8.count }
+        count += details.languages.reduce(0) { $0 + $1.utf8.count }
+        count += details.episode?.utf8.count ?? 0
+        count += details.rating?.utf8.count ?? 0
+        count += details.artworkURL?.absoluteString.utf8.count ?? 0
+        return count
     }
 }
 
