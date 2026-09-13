@@ -573,6 +573,7 @@ struct SeriesDetailView: View {
                             episodeRail { revealBrowser(using: proxy) }
                         }
                     )
+                    .detailEntranceStage(.episodes)
 
                     DetailExtrasView(
                         item: series,

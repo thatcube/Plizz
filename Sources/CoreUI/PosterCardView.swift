@@ -177,6 +177,7 @@ public struct PosterCardView: View {
             // strength on focus. No-op off tvOS.
             .plozzChromeFocused(isFocused)
             .mediaItemContextMenu(for: item)
+            .preloadDetailBackdropOnFocus(for: item, isFocused: isFocused)
             #if os(tvOS)
             .coordinateSpace(name: detailTransitionSource.coordinateSpace)
             .background {

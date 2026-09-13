@@ -7,6 +7,26 @@ import XCTest
 
 @MainActor
 final class CinematicDetailTransitionHostedTests: XCTestCase {
+    func testEpisodeRowEntersAfterControlsAndBeforeNavigationUnlocks() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.close() }
+        fixture.model.revealsEpisodesLast = true
+        fixture.model.open(in: fixture.window, usesCard: true)
+        try await waitUntil { fixture.model.session?.stage == .controls }
+        let session = try XCTUnwrap(fixture.model.session)
+        let frame = try XCTUnwrap(fixture.model.frames[.episodes])
+        XCTAssertLessThan(try pixel(fixture.window, at: frame)[0], 30)
+        try await waitUntil { session.stage == .episodes }
+        XCTAssertTrue(session.blocksNavigation)
+        try await Task.sleep(for: .milliseconds(150))
+        let fading = try pixel(fixture.window, at: frame)[0]
+        XCTAssertGreaterThan(fading, 20)
+        try await waitUntil { session.stage == .complete }
+        XCTAssertGreaterThan(try pixel(fixture.window, at: frame)[0], 240)
+        XCTAssertFalse(session.blocksNavigation)
+        XCTAssertEqual(fixture.model.stages, [.artwork, .logo, .metadata, .controls, .episodes, .complete])
+    }
+
     func testCardZoomPauseStagesAndReverseReturnUseTheRealSource() async throws {
         let fixture = try await makeFixture()
         defer { fixture.close() }
@@ -228,7 +248,9 @@ final class CinematicDetailTransitionHostedTests: XCTestCase {
     func testForegroundPauseStartsWhenTheLateBackdropBecomesVisible() async throws {
         let fixture = try await makeFixture()
         defer { fixture.close() }
-        fixture.model.source.prepare(for: fixture.model.item)
+        let coldItem = MediaItem(id: UUID().uuidString, title: "Cold movie", kind: .movie)
+        let originalFrame = try XCTUnwrap(fixture.model.source.visibleFrame(in: fixture.window))
+        DetailTransitionNavigation.prepare(for: coldItem, in: fixture.window, source: fixture.model.source)
         let session = TVDetailEntranceSession()
         defer { session.finishImmediately() }
         session.attach(to: fixture.window, enabled: true, waitsForBackdrop: true)
@@ -237,6 +259,8 @@ final class CinematicDetailTransitionHostedTests: XCTestCase {
         XCTAssertEqual(session.stage, .artwork)
         XCTAssertTrue(session.blocksNavigation)
         XCTAssertTrue(cover.superview === fixture.window)
+        XCTAssertEqual(cover.screen.alpha, 1, "An unresolved backdrop must not fade the source into black.")
+        XCTAssertEqual(cover.cardContainer.frame, originalFrame, "Do not animate an empty destination.")
         let image = UIGraphicsImageRenderer(size: CGSize(width: 32, height: 18)).image {
             UIColor.blue.setFill()
             $0.fill(CGRect(x: 0, y: 0, width: 32, height: 18))
@@ -370,6 +394,97 @@ final class CinematicDetailTransitionHostedTests: XCTestCase {
         try await waitUntil { session.stage == .complete }
     }
 
+    func testFocusedPreferredBackdropPaintsAtSelectionWithoutAnotherLookup() async throws {
+        let store = MetadataProviderSettingsStore()
+        let original = store.load()
+        var settings = original
+        settings.preferOnlineArtwork = true
+        store.save(settings)
+        defer { store.save(original) }
+        let (library, _) = try await cachedPreview()
+        let (online, preview) = try await cachedPreview()
+        let item = MediaItem(id: UUID().uuidString, title: "Show", kind: .series, backdropURL: library)
+        let calls = ArtworkLookupCount()
+        let fallback: @Sendable () async -> URL? = {
+            await calls.record()
+            return online
+        }
+        let source = DetailBackdropArtworkSource(
+            references: item.artworkReferences(for: .detailBackdrop),
+            pinIdentity: "detail:\(item.id)", settings: settings, fallback: fallback
+        )
+        await DetailBackdropFocusPrewarmer.warm(source)
+        XCTAssertEqual(ArtworkSeedMemo.prepared(for: source.previewKey, variant: .heroPreview)?.reference, .remote(online))
+        let fixture = try await makeFixture()
+        defer { fixture.close() }
+        DetailTransitionNavigation.prepare(for: item, in: fixture.window, source: nil)
+        let cover = try XCTUnwrap(overlays(in: fixture.window).first)
+        XCTAssertTrue(cover.destination.image === preview, "The selected preferred image must exist in the first transition frame.")
+        let session = TVDetailEntranceSession()
+        defer { session.finishImmediately() }
+        session.attach(to: fixture.window, enabled: true, waitsForBackdrop: true)
+        let host = UIHostingController(rootView:
+            HeroBackdropLayer(
+                references: source.references, asyncFallbackURL: fallback,
+                height: 1080, scrimTone: .black, ignoresOverscan: false,
+                pinIdentity: "detail:\(item.id)", backgroundVideo: { EmptyView() }
+            ).environment(\.detailEntranceSession, session)
+        )
+        fixture.window.rootViewController = host
+        host.view.layoutIfNeeded()
+        try await waitUntil { session.stage == .complete }
+        let count = await calls.value
+        XCTAssertEqual(count, 1, "Mounting details must not choose the same image a second time.")
+    }
+
+    func testNavigationAdoptsFocusedLookupEvenWhenFocusLeaves() async throws {
+        let store = MetadataProviderSettingsStore()
+        let original = store.load()
+        var settings = original
+        settings.preferOnlineArtwork = true
+        store.save(settings)
+        defer { store.save(original) }
+        let (library, _) = try await cachedPreview()
+        let (online, _) = try await cachedPreview()
+        let item = MediaItem(id: UUID().uuidString, title: "Show", kind: .series, backdropURL: library)
+        let calls = ArtworkLookupCount()
+        let gate = AsyncStream<URL>.makeStream()
+        let source = DetailBackdropArtworkSource(
+            references: item.artworkReferences(for: .detailBackdrop),
+            pinIdentity: "detail:\(item.id)", settings: settings,
+            fallback: {
+                await calls.record()
+                var iterator = gate.stream.makeAsyncIterator()
+                return await iterator.next()
+            }
+        )
+        let warmer = Task { await DetailBackdropFocusPrewarmer.warm(source) }
+        defer {
+            warmer.cancel()
+            gate.continuation.finish()
+        }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while await calls.value == 0, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let request = try XCTUnwrap(DetailBackdropArtworkRequest(item: item))
+        warmer.cancel()
+        gate.continuation.yield(online)
+        gate.continuation.finish()
+        let result = await request.task.value
+        XCTAssertEqual(result?.reference, .remote(online))
+        let count = await calls.value
+        XCTAssertEqual(count, 1)
+        XCTAssertNil(ArtworkSeedMemo.prepared(for: source.previewKey, variant: .heroPreview))
+        request.cancel()
+        await warmer.value
+    }
+
+    private actor ArtworkLookupCount {
+        var value = 0
+        func record() { value += 1 }
+    }
+
     private func cachedPreview(decode: Bool = true) async throws -> (URL, UIImage) {
         let url = try XCTUnwrap(URL(string: "https://backdrop-fixture.example.test/\(UUID()).png"))
         let image = UIGraphicsImageRenderer(size: CGSize(width: 320, height: 180)).image {
@@ -414,7 +529,16 @@ final class CinematicDetailTransitionHostedTests: XCTestCase {
         let marker = UIView(frame: CGRect(x: 0, y: 500, width: 200, height: 300))
         marker.backgroundColor = .red
         scroll.addSubview(marker)
-        fixture.window.rootViewController?.view.addSubview(scroll)
+        let hosted = try XCTUnwrap(fixture.window.rootViewController)
+        fixture.window.rootViewController = nil
+        let container = UIViewController()
+        container.view.frame = fixture.window.bounds
+        container.addChild(hosted)
+        container.view.addSubview(hosted.view)
+        hosted.view.frame = container.view.bounds
+        hosted.didMove(toParent: container)
+        container.view.addSubview(scroll)
+        fixture.window.rootViewController = container
         fixture.model.source.view = marker
         scroll.setContentOffset(CGPoint(x: 0, y: 400), animated: false)
         fixture.model.source.prepare(for: fixture.model.item)
@@ -597,6 +721,18 @@ final class CinematicDetailTransitionHostedTests: XCTestCase {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
             .first { $0.activationState == .foregroundActive })
         let fixture = CinematicFixtureWindow(scene: scene)
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 320, height: 180)).image {
+            UIColor.blue.setFill()
+            $0.fill(CGRect(x: 0, y: 0, width: 320, height: 180))
+        }
+        let source = DetailBackdropArtworkSource(item: fixture.model.item)
+        ArtworkSeedMemo.store(
+            FirstPaintArtwork(
+                image: image, reference: .remote(URL(string: "https://cinematic-fixture.example.test/blue.png")!),
+                variant: .heroBackdrop
+            ),
+            for: source.key
+        )
         try await waitUntil { fixture.model.source.visibleFrame(in: fixture.window) != nil }
         try await Task.sleep(for: .milliseconds(150))
         return fixture
@@ -653,6 +789,7 @@ private final class CinematicFixtureModel {
     let item = MediaItem(id: "cinematic-movie", title: "Movie", kind: .movie)
     let source = DetailTransitionSourceReference()
     var path: [Int] = []
+    var revealsEpisodesLast = false
     @ObservationIgnored var session: TVDetailEntranceSession?
     @ObservationIgnored var stages: [DetailEntranceStage] = []
     @ObservationIgnored var frames: [DetailEntranceStage: CGRect] = [:]
@@ -680,7 +817,7 @@ private struct CinematicFixtureRoot: View {
                 .focusable()
                 .navigationDestination(for: Int.self) { _ in
                     CinematicFixturePage(model: model)
-                        .cinematicDetailPage(isEnabled: true)
+                        .cinematicDetailPage(isEnabled: true, revealsEpisodesLast: model.revealsEpisodesLast)
                 }
         }
     }
@@ -704,6 +841,14 @@ private struct CinematicFixturePage: View {
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
                     model.frames[.controls] = $0
                 }
+            if model.revealsEpisodesLast {
+                Color(red: 1, green: 0, blue: 1)
+                    .frame(width: 400, height: 60)
+                    .detailEntranceStage(.episodes)
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                        model.frames[.episodes] = $0
+                    }
+            }
         }
         .padding(80)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)

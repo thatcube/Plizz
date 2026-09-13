@@ -1565,6 +1565,7 @@ struct HomeHeroView: View {
         // Up is left to the system, and the Down-recede is driven by the page
         // scroll in `HomeView` — not by this handler.
         .onMoveCommand { _ in handleMove() }
+        .preloadDetailBackdropOnFocus(for: current, isFocused: focus != nil && isFrontmost)
         .onChange(of: focus) { old, new in
             pinnedSidebarInteraction?.setHeroFocused(new != nil)
             let oldName = old.map { "\($0)" } ?? "nil"

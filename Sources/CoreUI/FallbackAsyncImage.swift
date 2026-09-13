@@ -450,6 +450,15 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
             providerPolicyIdentity: providerPolicyIdentity
         )
         let prepared = ArtworkSeedMemo.prepared(for: memoKey, variant: variant)
+        let preparedPreview = previewVariant.flatMap { preview in
+            ArtworkSeedMemo.prepared(
+                for: ArtworkResolveKey.make(
+                    references: references, variant: preview, maxAspectRatio: maxAspectRatio,
+                    pinIdentity: pinIdentity, providerPolicyIdentity: providerPolicyIdentity
+                ),
+                variant: preview
+            )
+        }
         let seeded = prefersOnlineArtwork && asyncFallbackURL != nil
             ? nil
             : Self.cachedUsableImage(
@@ -472,9 +481,10 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
                 variant: $0
             )
         } : nil
-        _image = State(initialValue: prepared?.image ?? (seeded ?? seededPreview)?.image)
-        _resolved = State(initialValue: prepared != nil || seeded != nil || seededPreview != nil)
-        _isPreviewQuality = State(initialValue: prepared == nil && seeded == nil && seededPreview != nil)
+        _image = State(initialValue: prepared?.image ?? seeded?.image ?? preparedPreview?.image ?? seededPreview?.image)
+        _resolved = State(initialValue: prepared != nil || seeded != nil || preparedPreview != nil || seededPreview != nil)
+        _isPreviewQuality = State(initialValue: prepared == nil && seeded == nil
+            && (preparedPreview != nil || seededPreview != nil))
         _loadedKey = State(initialValue: prepared != nil || seeded?.index == references.startIndex
             ? ArtworkResolveKey.make(
                 references: references,
@@ -484,11 +494,12 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
                 providerPolicyIdentity: providerPolicyIdentity
             )
             : nil)
-        _pinnedIdentity = State(initialValue: prepared != nil || seeded != nil ? pinIdentity : nil)
+        _pinnedIdentity = State(initialValue: prepared != nil || seeded != nil
+            || preparedPreview != nil || seededPreview != nil ? pinIdentity : nil)
         _displayedReference = State(
             initialValue: prepared?.reference ?? seeded.flatMap {
                 references.indices.contains($0.index) ? references[$0.index] : nil
-            } ?? seededPreview.flatMap {
+            } ?? preparedPreview?.reference ?? seededPreview.flatMap {
                 references.indices.contains($0.index) ? references[$0.index] : nil
             }
         )
@@ -551,17 +562,15 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
             return
         }
         if isSameSubject, image != nil, isPreviewQuality,
-           let displayedReference,
-           let loaded = await ArtworkImageCache.shared.image(
-               for: displayedReference,
-               variant: variant
-           ),
-           Self.usableSize(loaded, maxAspectRatio: maxAspectRatio) != nil {
+           let displayedReference {
+            let loaded = await ArtworkImageCache.shared.image(for: displayedReference, variant: variant)
             guard !Task.isCancelled else { return }
-            image = loaded
-            isPreviewQuality = false
+            if let loaded, Self.usableSize(loaded, maxAspectRatio: maxAspectRatio) != nil {
+                image = loaded
+                isPreviewQuality = false
+                ArtworkSeedMemo.store(loaded, reference: displayedReference, for: key)
+            }
             loadedKey = key
-            ArtworkSeedMemo.store(loaded, reference: displayedReference, for: key)
             return
         }
         // Same show, different candidates: a better picture has been found for

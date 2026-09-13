@@ -172,7 +172,9 @@ bypass, missing/replaced source fallback, nested-page ownership, and removal of
 input guards and visual covers. Real framed and borderless poster tests also
 check that the source crop excludes the caption under Reduce Transparency.
 The entrance uses 550ms for the zoom, a 500ms visible-artwork pause, and overlapping
-320ms foreground reveals spaced 180ms apart. Back uses a 380ms return without
+320ms foreground reveals spaced 180ms apart. Shows reveal the episode browser
+after the controls, retaining the navigation guard through its final 320ms fade;
+movies do not acquire that extra stage. Back uses a 380ms return without
 the pause. Reduce Motion bypasses the custom sequence and its input wait.
 Source snapshots are per-activation, not per-frame; full-window covers are
 released at the artwork handoff, and the small return-card image is scoped to its page.
@@ -187,12 +189,16 @@ corners. The source's focused rectangle and radius are captured at activation;
 Back starts toward that shape immediately while native focus restores underneath.
 A replaced source or changed window size uses a nonspatial fallback. A temporarily
 unrealized source still returns to its captured shape without waiting for focus.
-Episode previews stay drawn but cannot take entry focus during a whole-show
-entrance; episode-context opens retain their existing initial-focus behavior.
+The episode browser keeps its layout while masked until its final reveal and
+cannot take entry focus during a whole-show entrance. Episode-context opens
+retain their existing initial-focus behavior; Reduce Motion reveals it directly.
 
-Opening motion starts in the card/router activation, before creating the detail
-page, and a late destination adopts that in-flight entrance instead of replaying
-it. Render-server snapshots avoid a full-window bitmap draw on the main thread.
+When its real backdrop is ready, opening motion starts in card/router activation,
+before creating the detail page. An empty destination must not animate: a cold
+request keeps the existing source image until the real preview is available,
+then starts the same zoom. There is no substitute image or added loading screen.
+A late destination adopts an in-flight entrance rather than replaying it.
+Render-server snapshots avoid a full-window bitmap draw on the main thread.
 The hosted tests also delay destination mounting and withhold return focus to
 verify that neither creates a new pre-animation wait.
 
@@ -206,16 +212,31 @@ not restart that sequence. Exhausted artwork candidates release the cover and
 controls without a picture; Back remains available while artwork is pending,
 and a playing trailer satisfies backdrop readiness without waiting for a still.
 
-For known movie/show backdrop candidates, selection starts the same
-policy-qualified first-paint request used by the destination. It is scoped to
-the navigation, joined rather than duplicated by the backdrop loader, and
-cancelled on discard/Back. Its preview can feed the in-flight expansion before
-the page mounts. Poster-only discovery still waits for its authoritative
+Known movie/show backdrops warm after 350ms of stable card/hero focus, with only
+one unclaimed focus warmup active and image work on the background lane. The
+warmup preserves provider priority rather than pinning a provisional fallback.
+The exact preferred preview is retained under its policy-qualified preview key
+and can paint the first frame at selection. If selection happens during lookup,
+navigation adopts that lookup and uses foreground image loading; it does not
+start another provider lookup or let focus loss cancel the selected request.
+Blur/disappearance cancels unclaimed work. A full-quality upgrade keeps the
+chosen reference, including when the upgrade fails.
+
+Selection starts any still-needed first-paint request, scoped to the navigation
+and joined by the destination. Its preview can feed the expansion before the
+page mounts. Poster-only discovery still waits for its authoritative
 enrichment. `ArtworkResolutionState` relays the displayed image itself (including
 cached and fallback previews) and terminal failure, rather than making the
 transition wait for a final-resolution URL callback and another cache lookup.
 Focused regressions check request adoption, preview delivery within 500ms,
 late-artwork ordering, failure, trailer readiness, and Back during the wait.
+
+`PlozzHomeFixtureTests` builds the real Home view with local provider/artwork data
+and drives native left/right/up/down movements without manual input. It is an
+isolated simulator workload, not an emulation of an older TV's processor.
+`ArtworkLatencyDiagnosticsTests` is separately opt-in: explicit environment
+paths identify a sanitized Home snapshot and a local configuration bundle; its
+attachment records provider lookup/image durations, never credentials.
 
 Back restores the captured source page behind the moving artwork immediately,
 not a snapshot of the outgoing detail page. The popped content stays hidden

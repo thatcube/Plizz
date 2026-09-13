@@ -446,6 +446,10 @@ targets:
         product: CoreUI
       - package: Plozz
         product: CoreModels
+      - package: Plozz
+        product: FeatureHome
+      - package: Plozz
+        product: FeatureHomeCore
 
   PlozzHomeRemoteTests:
     type: bundle.ui-testing
@@ -480,6 +484,15 @@ targets:
         product: FeatureHomeCore
 
 schemes:
+  PlozzHomeFixtureTests:
+    build:
+      targets:
+        PlozzFocusHost: all
+        PlozzHomeRemoteTests: [test]
+    test:
+      config: Debug
+      targets:
+        - PlozzHomeRemoteTests
   PlozzHomeRemoteTests:
     build:
       targets:

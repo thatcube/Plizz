@@ -7,7 +7,9 @@ import CoreModels
 struct FocusHostApp: App {
     var body: some Scene {
         WindowGroup {
-            if ProcessInfo.processInfo.arguments.contains("--native-media-cell-comparison") {
+            if ProcessInfo.processInfo.arguments.contains("--production-home-fixture") {
+                ProductionHomeFixture()
+            } else if ProcessInfo.processInfo.arguments.contains("--native-media-cell-comparison") {
                 NativeMediaCellComparisonScreen()
             } else if ProcessInfo.processInfo.arguments.contains("--native-poster-comparison") {
                 NativePosterComparisonScreen()
