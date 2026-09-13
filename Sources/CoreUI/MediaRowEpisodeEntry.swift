@@ -85,18 +85,7 @@ struct EpisodeRowEntryPlaceholder: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            RoundedRectangle(cornerRadius: metrics.landscapeCardCornerRadius)
-                // Like real artwork, the tile must hide the center of its
-                // expanding focus halo rather than reveal a second surface.
-                .fill(palette.cardOpaqueSurface)
-                .frame(width: EpisodeColumnCard.artworkSize.width, height: EpisodeColumnCard.artworkSize.height)
-                .plozzMediaEdge(cornerRadius: metrics.landscapeCardCornerRadius)
-                .plozzFocusHalo(
-                    cornerRadius: metrics.landscapeCardCornerRadius,
-                    focusScale: reduceMotion ? 1 : PlozzTheme.Metrics.mediumFocusedCardScale,
-                    isFocused: isFocused
-                )
-                .nativeArtworkFocus(nativeFocus, action: onSelect)
+            artwork
             VStack(alignment: .leading, spacing: 10) {
                 Group {
                     if showsStatus {
@@ -136,5 +125,37 @@ struct EpisodeRowEntryPlaceholder: View {
         .padding(.horizontal, EpisodeColumnCard.sideMargin)
         .compositingGroup()
         .plozzCardFocusTransition(isFocused: isFocused, animates: !reduceMotion)
+    }
+
+    @ViewBuilder
+    private var artwork: some View {
+        #if os(tvOS)
+        if focusStyle.usesSystemEffect, let nativeFocus {
+            NativeTVPoster(
+                image: nil, treatment: .original,
+                aspectRatio: EpisodeColumnCard.artworkSize.width / EpisodeColumnCard.artworkSize.height,
+                fallbackWidth: EpisodeColumnCard.artworkSize.width,
+                title: nil, subtitle: nil, overlay: EmptyView(), focus: nativeFocus, action: onSelect
+            )
+            .focused(nativeFocus.focusState)
+            .frame(width: EpisodeColumnCard.artworkSize.width, height: EpisodeColumnCard.artworkSize.height)
+        } else {
+            customArtwork
+        }
+        #else
+        customArtwork
+        #endif
+    }
+
+    private var customArtwork: some View {
+        RoundedRectangle(cornerRadius: metrics.landscapeCardCornerRadius)
+            .fill(palette.cardOpaqueSurface)
+            .frame(width: EpisodeColumnCard.artworkSize.width, height: EpisodeColumnCard.artworkSize.height)
+            .plozzMediaEdge(cornerRadius: metrics.landscapeCardCornerRadius)
+            .plozzFocusHalo(
+                cornerRadius: metrics.landscapeCardCornerRadius,
+                focusScale: reduceMotion ? 1 : PlozzTheme.Metrics.mediumFocusedCardScale,
+                isFocused: isFocused
+            )
     }
 }

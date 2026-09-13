@@ -256,6 +256,8 @@ public struct PosterCardView: View {
             fallbackWidth: size.width,
             title: nativePosterTitle,
             subtitle: showsSeriesArtwork ? nil : subtitleText,
+            titleFontSize: metrics.cardTitleFontSize,
+            subtitleFontSize: metrics.cardSubtitleFontSize,
             overlay: nativePosterOverlay,
             focus: $isFocused,
             source: detailTransitionSource,

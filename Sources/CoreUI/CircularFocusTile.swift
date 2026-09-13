@@ -94,8 +94,12 @@ public struct CircularFocusTile<Avatar: View, Caption: View>: View {
     private let caption: (Bool) -> Caption
     private let action: () -> Void
     private let onFocusChange: ((Bool) -> Void)?
+    private let nativeName: String?
 
     @PlozzCardFocus private var isFocused: Bool
+    #if os(tvOS)
+    @State private var nativeArtwork = NativePosterArtworkState()
+    #endif
     @Environment(\.plozzMetrics) private var metrics
     @Environment(\.plozzCardFocusStyle) private var focusStyle
 
@@ -106,6 +110,7 @@ public struct CircularFocusTile<Avatar: View, Caption: View>: View {
         captionSpacing: CGFloat = 12,
         action: @escaping () -> Void,
         onFocusChange: ((Bool) -> Void)? = nil,
+        nativeName: String? = nil,
         @ViewBuilder avatar: @escaping () -> Avatar,
         @ViewBuilder caption: @escaping (Bool) -> Caption
     ) {
@@ -115,6 +120,7 @@ public struct CircularFocusTile<Avatar: View, Caption: View>: View {
         self.captionSpacing = captionSpacing
         self.action = action
         self.onFocusChange = onFocusChange
+        self.nativeName = nativeName
         self.avatar = avatar
         self.caption = caption
     }
@@ -129,20 +135,15 @@ public struct CircularFocusTile<Avatar: View, Caption: View>: View {
         // transform (see `.offset`), so the drop never changes the tile's footprint.
         let push = metrics.focusCaptionPush(for: focusStyle)
         VStack(spacing: captionSpacing + push) {
-            avatar()
-                .frame(width: diameter, height: diameter)
-                .plozzCardArtworkClip(Circle())
-                .plozzFocusHalo(
-                    cornerRadius: diameter / 2,
-                    focusScale: focusScale,
-                    isFocused: isFocused
-                )
-                .frame(width: slot, height: slot)
+            avatarContent.frame(width: slot, height: slot)
             caption(isFocused)
                 .offset(y: focusStyle.usesSystemEffect || isFocused ? 0 : -push)
         }
         #if os(tvOS)
-        .focusableCard(isFocused: $isFocused, cornerRadius: diameter / 2, action: action)
+        .focusableCard(
+            isFocused: $isFocused, cornerRadius: diameter / 2,
+            nativeFocusInContent: true, action: action
+        )
         #else
         .focusable(true)
         .focused($isFocused.focusState)
@@ -152,6 +153,37 @@ public struct CircularFocusTile<Avatar: View, Caption: View>: View {
         .accessibilityAddTraits(.isButton)
         .plozzCardFocusTransition(isFocused: isFocused)
         .environment(\.plozzCardStyle, .borderless)
+    }
+
+    @ViewBuilder
+    private var avatarContent: some View {
+        #if os(tvOS)
+        if focusStyle.usesSystemEffect {
+            NativeTVMonogram(
+                image: nativeArtwork.image, name: nativeName,
+                diameter: diameter, focus: $isFocused, action: action
+            )
+            .focused($isFocused.focusState)
+            .background {
+                avatar()
+                    .environment(\.nativePosterArtworkState, nativeArtwork)
+                    .frame(width: diameter, height: diameter)
+                    .hidden()
+                    .accessibilityHidden(true)
+            }
+        } else {
+            customAvatar
+        }
+        #else
+        customAvatar
+        #endif
+    }
+
+    private var customAvatar: some View {
+        avatar()
+            .frame(width: diameter, height: diameter)
+            .plozzCardArtworkClip(Circle())
+            .plozzFocusHalo(cornerRadius: diameter / 2, focusScale: focusScale, isFocused: isFocused)
     }
 }
 #endif

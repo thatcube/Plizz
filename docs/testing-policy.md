@@ -227,8 +227,12 @@ focused z-index changes. Custom Highlight/Outline retain their styling.
 Horizontal rails do not clip native focus overflow.
 Captions reserve clearance without an additional custom focus animation.
 In the season episode row, the System focus owner encloses only the thumbnail
-and its artwork badges, not the title or synopsis below it. The loading/retry
-placeholder uses the same image-only target. Custom Highlight/Outline retain
+and its artwork badges, not the title or synopsis below it. Both the episode
+thumbnail and interactive loading/retry placeholder use TVPosterView, so the
+native outline and image use the same corner geometry. Cast/artist portraits use
+TVMonogramView, with their captions outside the native control rather than on a
+focused card platter. Regular media poster footer labels retain the existing
+density-aware title/subtitle font sizes. Custom Highlight/Outline retain
 their existing whole-column focus routing and artwork-only visuals.
 
 `NativePosterComparisonTests` is an opt-in, simulator-only comparison, enabled by

@@ -34,6 +34,9 @@ public struct EpisodeColumnCard: View, Equatable {
     private let action: () -> Void
 
     @PlozzCardFocus private var isFocused: Bool
+    #if os(tvOS)
+    @State private var nativeArtwork = NativePosterArtworkState()
+    #endif
     @State private var synopsisVisible = false
     @State private var synopsisAtRest = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -60,57 +63,7 @@ public struct EpisodeColumnCard: View, Equatable {
     public var body: some View {
         let _ = plozzTraceBodyChanges { Self._printChanges() }
         VStack(alignment: .leading, spacing: 0) {
-            artwork
-                .frame(width: Self.artworkSize.width, height: Self.artworkSize.height)
-                // A not-yet-aired episode reads as unavailable rather than merely
-                // unwatched: desaturated and dimmed, with the air date on the
-                // artwork so the card says what it's waiting for.
-                .saturation(presentation.isUpcoming ? 0 : 1)
-                .opacity(presentation.isUpcoming ? 0.05 : 1)
-                // The artwork is nearly transparent, so without an opaque surface
-                // beneath it the focus backing shows through and washes the card out
-                // further the moment it takes focus. This keeps the slot's own
-                // surface — and the focus outline's contrast — constant.
-                .background {
-                    if presentation.isUpcoming {
-                        palette.cardSurface
-                    }
-                }
-                .overlay {
-                    if presentation.isUpcoming, let air = item.upcomingReleaseText {
-                        // Spelled out rather than a bare date: "Releases Friday"
-                        // can't be mistaken for an air date already passed.
-                        Label(air, systemImage: "clock")
-                            .font(.system(size: 21, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(.ultraThinMaterial, in: Capsule())
-                    }
-                }
-                .overlay {
-                    if presentation.artworkTreatment != .blurred {
-                        ResumeChipOverlay(item: item)
-                            // Settles the chip's white at rest, full strength on
-                            // focus. No-op off tvOS.
-                            .plozzChromeFocused(isFocused)
-                    }
-                }
-                .overlay(alignment: .topTrailing) { statusIndicator }
-                .plozzCardArtworkClip(RoundedRectangle(
-                    cornerRadius: metrics.landscapeCardCornerRadius,
-                    style: .continuous
-                ))
-                .plozzMediaEdge(
-                    cornerRadius: metrics.landscapeCardCornerRadius,
-                    isEnabled: MediaArtworkPlaceholder.Symbol(for: item) == .playback
-                )
-                .plozzFocusHalo(
-                    cornerRadius: metrics.landscapeCardCornerRadius,
-                    focusScale: reduceMotion ? 1 : PlozzTheme.Metrics.mediumFocusedCardScale,
-                    isFocused: isFocused
-                )
-                .nativeArtworkFocus($isFocused, action: action)
+            episodeArtwork
 
             VStack(alignment: .leading, spacing: 0) {
                 presentation.titleLine
@@ -182,6 +135,82 @@ public struct EpisodeColumnCard: View, Equatable {
         let isFocused: Bool
         let reduceMotion: Bool
     }
+
+    @ViewBuilder
+    private var episodeArtwork: some View {
+        #if os(tvOS)
+        if focusStyle.usesSystemEffect {
+            nativeEpisodeArtwork
+        } else {
+            customEpisodeArtwork
+        }
+        #else
+        customEpisodeArtwork
+        #endif
+    }
+
+    private var customEpisodeArtwork: some View {
+        artwork
+            .frame(width: Self.artworkSize.width, height: Self.artworkSize.height)
+            .saturation(presentation.isUpcoming ? 0 : 1)
+            .opacity(presentation.isUpcoming ? 0.05 : 1)
+            .background { if presentation.isUpcoming { palette.cardSurface } }
+            .overlay { episodeOverlays }
+            .plozzCardArtworkClip(RoundedRectangle(cornerRadius: metrics.landscapeCardCornerRadius, style: .continuous))
+            .plozzMediaEdge(
+                cornerRadius: metrics.landscapeCardCornerRadius,
+                isEnabled: MediaArtworkPlaceholder.Symbol(for: item) == .playback
+            )
+            .plozzFocusHalo(
+                cornerRadius: metrics.landscapeCardCornerRadius,
+                focusScale: reduceMotion ? 1 : PlozzTheme.Metrics.mediumFocusedCardScale,
+                isFocused: isFocused
+            )
+    }
+
+    private var episodeOverlays: some View {
+        ZStack {
+            if presentation.isUpcoming, let air = item.upcomingReleaseText {
+                Label(air, systemImage: "clock")
+                    .font(.system(size: 21, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(.ultraThinMaterial, in: Capsule())
+            }
+            if presentation.artworkTreatment != .blurred {
+                ResumeChipOverlay(item: item).plozzChromeFocused(isFocused)
+            }
+        }
+        .overlay(alignment: .topTrailing) { statusIndicator }
+    }
+
+    #if os(tvOS)
+    private var nativeEpisodeArtwork: some View {
+        let source = EpisodeArtworkSource(item: item, spoilerSettings: spoilerSettings)
+        let treatment: NativePosterImageTreatment = presentation.isUpcoming
+            ? .upcoming(palette.cardSurface)
+            : (presentation.artworkTreatment == .blurred ? .blurred : .original)
+        return NativeTVPoster(
+            image: nativeArtwork.image, treatment: treatment,
+            aspectRatio: Self.artworkSize.width / Self.artworkSize.height,
+            fallbackWidth: Self.artworkSize.width, title: nil, subtitle: nil,
+            overlay: episodeOverlays, focus: $isFocused, action: action
+        )
+        .focused($isFocused.focusState)
+        .frame(width: Self.artworkSize.width, height: Self.artworkSize.height)
+        .background {
+            FallbackAsyncImage(
+                references: source.references, variant: .landscapeCard,
+                asyncFallbackURL: source.fallbackURL, pinIdentity: source.pinIdentity,
+                content: { _ in Color.clear }, placeholder: { Color.clear }
+            )
+            .environment(\.nativePosterArtworkState, nativeArtwork)
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+        }
+    }
+    #endif
 
     @ViewBuilder
     private var artwork: some View {

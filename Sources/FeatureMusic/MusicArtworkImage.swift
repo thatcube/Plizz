@@ -321,6 +321,7 @@ struct ArtistCard: View {
             diameter: diameter,
             focusPadding: metrics.circleFocusPadding,
             action: action,
+            nativeName: artist.name,
             avatar: {
                 MusicArtworkImage(
                     url: artist.artworkURL,

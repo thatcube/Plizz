@@ -88,6 +88,7 @@ private struct CastMemberCard: View {
             onFocusChange: { focused in
                 if focused { onFocusEntered?() }
             },
+            nativeName: person.name,
             avatar: { avatar },
             caption: { _ in
                 VStack(spacing: 2) {

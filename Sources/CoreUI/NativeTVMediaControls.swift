@@ -132,6 +132,7 @@ struct NativeTVCard<Content: View>: UIViewRepresentable {
 
 enum NativePosterImageTreatment: Equatable {
     case original, blurred, extended
+    case upcoming(Color)
 }
 
 struct NativeTVPoster<Overlay: View>: UIViewRepresentable {
@@ -141,9 +142,11 @@ struct NativeTVPoster<Overlay: View>: UIViewRepresentable {
     let fallbackWidth: CGFloat
     let title: NativePosterText?
     let subtitle: String?
+    var titleFontSize: CGFloat? = nil
+    var subtitleFontSize: CGFloat? = nil
     let overlay: Overlay
     let focus: PlozzCardFocus.Binding
-    let source: DetailTransitionSourceReference
+    var source: DetailTransitionSourceReference? = nil
     let action: () -> Void
 
     @MainActor
@@ -198,6 +201,11 @@ struct NativeTVPoster<Overlay: View>: UIViewRepresentable {
             let renderer = ImageRenderer(content: Group {
                 if treatment == .extended {
                     ExtendedArtworkFill(image: Image(uiImage: image))
+                } else if case .upcoming(let background) = treatment {
+                    Image(uiImage: image).resizable().scaledToFill()
+                        .saturation(0)
+                        .opacity(0.05)
+                        .background(background)
                 } else {
                     Image(uiImage: image).resizable().scaledToFill()
                         .blur(radius: treatment == .blurred ? 28 : 0)
@@ -249,13 +257,21 @@ struct NativeTVPoster<Overlay: View>: UIViewRepresentable {
         let resolvedTitle = title?.resolve(locale: context.environment.locale)
         if view.title != resolvedTitle { view.title = resolvedTitle }
         if view.subtitle != subtitle { view.subtitle = subtitle }
+        if let titleFontSize {
+            let font = UIFont.systemFont(ofSize: titleFontSize, weight: .semibold)
+            if view.footerView?.titleLabel?.font != font { view.footerView?.titleLabel?.font = font }
+        }
+        if let subtitleFontSize {
+            let font = UIFont.systemFont(ofSize: subtitleFontSize)
+            if view.footerView?.subtitleLabel?.font != font { view.footerView?.subtitleLabel?.font = font }
+        }
         view.hostedOverlay?.configuration = overlayConfiguration(in: context)
         let prepared = context.coordinator.presentationImage(
             image, treatment: treatment, size: view.contentSize, scale: context.environment.displayScale
         )
         if view.image !== prepared { view.image = prepared }
         view.isEnabled = context.environment.isEnabled
-        source.nativeArtworkView = view.imageView
+        source?.nativeArtworkView = view.imageView
         context.coordinator.focus.update(focus: focus, action: action, view: view)
     }
 
@@ -282,6 +298,53 @@ struct NativeTVPoster<Overlay: View>: UIViewRepresentable {
 
     final class Poster: TVPosterView {
         var hostedOverlay: (UIView & UIContentView)?
+        var onFocus: ((Bool) -> Void)?
+
+        override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
+            super.didUpdateFocus(in: context, with: coordinator)
+            onFocus?(isFocused)
+        }
+    }
+}
+
+struct NativeTVMonogram: UIViewRepresentable {
+    let image: UIImage?
+    let name: String?
+    let diameter: CGFloat
+    let focus: PlozzCardFocus.Binding
+    let action: () -> Void
+
+    func makeCoordinator() -> NativeTVMediaCoordinator {
+        NativeTVMediaCoordinator(focus: focus, action: action)
+    }
+
+    func makeUIView(context: Context) -> Monogram {
+        let view = Monogram()
+        view.contentSize = CGSize(width: diameter, height: diameter)
+        view.onFocus = { [weak coordinator = context.coordinator] in coordinator?.observe($0) }
+        view.addAction(UIAction { [weak coordinator = context.coordinator] _ in coordinator?.activate() },
+                       for: .primaryActionTriggered)
+        return view
+    }
+
+    func updateUIView(_ view: Monogram, context: Context) {
+        if view.image !== image { view.image = image }
+        if view.displayedName != name {
+            view.displayedName = name
+            view.personNameComponents = name.flatMap { PersonNameComponentsFormatter().personNameComponents(from: $0) }
+        }
+        let size = CGSize(width: diameter, height: diameter)
+        if view.contentSize != size { view.contentSize = size }
+        view.isEnabled = context.environment.isEnabled
+        context.coordinator.update(focus: focus, action: action, view: view)
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: Monogram, context: Context) -> CGSize? {
+        uiView.intrinsicContentSize
+    }
+
+    final class Monogram: TVMonogramView {
+        var displayedName: String?
         var onFocus: ((Bool) -> Void)?
 
         override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {

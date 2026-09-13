@@ -213,12 +213,14 @@ final class DetailTransitionVisualRegressionTests: XCTestCase {
 
     func testNativeCircularTileHasNoSquareFocusPlate() async throws {
         let scene = try await activeScene()
+        let artwork = try await seedArtwork(color: .red, size: CGSize(width: 200, height: 200))
         let previous = scene.windows.first(where: \.isKeyWindow)
         var focused = false
         let host = UIHostingController(rootView: CircularFocusTile(
             diameter: 200, focusPadding: 20, action: {},
             onFocusChange: { focused = $0 },
-            avatar: { Color(uiColor: .red) }, caption: { _ in Text("Circular portrait") }
+            avatar: { FallbackAsyncImage(urls: [artwork], variant: .personHeadshot) { Color.clear } },
+            caption: { _ in Text("Circular portrait") }
         )
         .environment(\.plozzCardFocusStyle, .system)
         .environment(\.themePalette, .dark)
