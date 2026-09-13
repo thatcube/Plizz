@@ -3,6 +3,87 @@ import SwiftUI
 import CoreModels
 @testable import FeaturePlayback
 
+@MainActor
+final class SubtitleMenuAvailabilityTests: XCTestCase {
+    func testDownloadsKeepEmptySubtitleMenuReachableWithoutInventingTracks() {
+        let model = PlayerControlsModel()
+        model.engineCapabilities = []
+        model.subtitleDownload.canSearch = true
+
+        XCTAssertEqual(model.trackControlCategories, [.subtitles])
+        XCTAssertFalse(model.hasSelectableSubtitles)
+        XCTAssertTrue(model.subtitleOptions.isEmpty)
+        XCTAssertEqual(model.subtitleTrackListFocus, .download)
+    }
+
+    func testEmptyUnsupportedSourceHasNoSubtitleControl() {
+        let model = PlayerControlsModel()
+        model.engineCapabilities = []
+
+        XCTAssertFalse(model.subtitleDownload.canSearch)
+        XCTAssertTrue(model.trackControlCategories.isEmpty)
+        XCTAssertEqual(model.subtitleTrackListFocus, .edit)
+    }
+
+    func testExistingTracksKeepTheirSelectedFocusWithOrWithoutDownloads() {
+        for canSearch in [false, true] {
+            let model = PlayerControlsModel()
+            model.engineCapabilities = []
+            model.subtitleDownload.canSearch = canSearch
+            model.subtitleOptions = [
+                PlayerTrackOption(id: PlayerTrackOption.offID, title: Text("Off"), isSelected: false),
+                PlayerTrackOption(id: 7, title: Text("English"), isSelected: true)
+            ]
+
+            XCTAssertEqual(model.trackControlCategories, [.subtitles])
+            XCTAssertEqual(model.subtitleTrackListFocus, .row(1))
+            model.subtitleOptions[0].isSelected = true
+            model.subtitleOptions[1].isSelected = false
+            XCTAssertEqual(model.subtitleTrackListFocus, .row(0))
+        }
+    }
+
+    func testUnselectedTracksFocusTheFirstRealRow() {
+        let model = PlayerControlsModel()
+        model.subtitleDownload.canSearch = true
+        model.subtitleOptions = [
+            PlayerTrackOption(id: 7, title: Text("English"), isSelected: false)
+        ]
+
+        XCTAssertEqual(model.subtitleTrackListFocus, .row(0))
+    }
+
+    func testTrackRefreshKeepsDownloadsAvailableAndUsesAnExistingFocusTarget() {
+        let model = PlayerControlsModel()
+        model.engineCapabilities = []
+        model.subtitleDownload.canSearch = true
+        XCTAssertEqual(model.subtitleTrackListFocus, .download)
+
+        model.subtitleOptions = [
+            PlayerTrackOption(id: 7, title: Text("English"), isSelected: true, isExternal: true)
+        ]
+        XCTAssertEqual(model.subtitleTrackListFocus, .row(0))
+        XCTAssertEqual(model.trackControlCategories, [.subtitles])
+
+        model.subtitleOptions = []
+        XCTAssertEqual(model.subtitleTrackListFocus, .download)
+        XCTAssertEqual(model.trackControlCategories, [.subtitles])
+    }
+
+    func testDownloadOnlySubtitleControlPreservesOtherControlsAndTheirOrder() {
+        let model = PlayerControlsModel()
+        model.engineCapabilities = [.playbackSpeed]
+        model.audioOptions = [
+            PlayerTrackOption(id: 1, title: Text("English"), isSelected: true)
+        ]
+        model.subtitleDownload.canSearch = true
+        XCTAssertEqual(model.trackControlCategories, [.speed, .audio, .subtitles])
+
+        model.subtitleDownload.canSearch = false
+        XCTAssertEqual(model.trackControlCategories, [.speed, .audio])
+    }
+}
+
 /// Direct unit tests for `TrackMenuBuilder`, the pure collaborator that builds
 /// the audio / subtitle / secondary-subtitle picker menus and the small
 /// selection/eligibility decisions that feed them. These pin the fiddly rules

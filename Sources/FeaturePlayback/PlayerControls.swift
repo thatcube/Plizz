@@ -1560,7 +1560,7 @@ struct PlayerControls: View {
         case .subtitles:
             switch subtitleScreen {
             case .tracks:
-                return .row(selectedRowIndex(for: .subtitles))
+                return model.subtitleTrackListFocus
             case .download:
                 // Land on the first result when we have them; while still searching
                 // (no rows yet) rest on Back. An async results arrival is handled by
@@ -2256,6 +2256,13 @@ struct PlayerControls: View {
 }
 
 extension PlayerControlsModel {
+    var subtitleTrackListFocus: PlayerControls.FocusSlot {
+        guard hasSelectableSubtitles else {
+            return subtitleDownload.canSearch ? .download : .edit
+        }
+        return .row(subtitleOptions.firstIndex(where: \.isSelected) ?? 0)
+    }
+
     /// The track controls the current engine/source can actually offer, in the
     /// order the track row lays them out: Speed · Audio · **Subtitles** (Subtitles
     /// nearest the trailing edge, where its panel opens from).
@@ -2274,7 +2281,7 @@ extension PlayerControlsModel {
         if !audioOptions.isEmpty || engineCapabilities.contains(.dialogEnhance) {
             result.append(.audio)
         }
-        if hasSelectableSubtitles {
+        if hasSelectableSubtitles || subtitleDownload.canSearch {
             result.append(.subtitles)
         }
         return result

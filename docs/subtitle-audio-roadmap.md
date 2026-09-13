@@ -54,6 +54,9 @@ Get more subtitles, keylessly, on both providers, and surface local sidecars.
   download → **appears in the running player** flow (was a "Coming soon" stub).
   Plex parity added via `GET/PUT /library/metadata/{ratingKey}/subtitles`
   (keyless; no Plex Pass needed).
+  The tvOS Subtitles control remains available when downloads are supported,
+  even without existing tracks, matching iOS. An empty track list opens focused
+  on the download action; existing tracks retain their selected-row focus.
 - ✅ **Automatic subtitle download** when a policy match is missing —
   `autoDownloadIfMissing` is now capability-gated (Plex included), applies the
   SDH/Forced preference, requires a genuine language match (no wrong-language
