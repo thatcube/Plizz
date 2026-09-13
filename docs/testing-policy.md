@@ -227,6 +227,22 @@ focused z-index changes. Custom Highlight/Outline retain their styling.
 Horizontal rails do not clip native focus overflow.
 Captions reserve clearance without an additional custom focus animation.
 
+`NativePosterComparisonTests` is an opt-in, simulator-only comparison, enabled by
+`TEST_RUNNER_PLOZZ_NATIVE_POSTER_COMPARISON=1` on `PlozzHomeRemoteTests`. It captures
+compositor screenshots of bare TVPosterView controls and the production adapter
+with the same source pixels/content size in Default and High Contrast modes.
+Red image landmarks and yellow overlay landmarks distinguish scaling from
+edge cropping. It also isolates initialization order, subclassing, SwiftUI
+hosting and overlay-hosting choices without changing production styling.
+
+On tvOS 27, accessing `TVPosterView.imageView` while `image` is nil reproduced a
+zero `focusSizeIncrease` that persisted after assigning an image. Image-first
+construction retained the native 20-point horizontal / 11-point vertical
+expansion defaults for the 400x225 fixture. Reading intrinsic size, subclassing,
+SwiftUI hosting and adding a SwiftUI overlay after the image did not cause that
+zero. Bare native controls also showed slight image-edge cropping under High
+Contrast, so that observation alone is not proof of an app-authored transform.
+
 Media-card focus uses `PlozzCardFocus`: native focus notifications update ordinary
 observed state, while explicit focus requests remain separate. A TVUIKit focus
 notification must not write back into `FocusState` and reset the containing scope.

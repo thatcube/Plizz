@@ -7,7 +7,9 @@ import CoreModels
 struct FocusHostApp: App {
     var body: some Scene {
         WindowGroup {
-            if ProcessInfo.processInfo.arguments.contains("--focus-navigation-fixture") {
+            if ProcessInfo.processInfo.arguments.contains("--native-poster-comparison") {
+                NativePosterComparisonScreen()
+            } else if ProcessInfo.processInfo.arguments.contains("--focus-navigation-fixture") {
                 SystemFocusNavigationFixture()
             } else if ProcessInfo.processInfo.arguments.contains("--focus-style-fixture") {
                 FocusStyleFixture()
