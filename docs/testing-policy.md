@@ -213,6 +213,9 @@ and spoiler-safe sources; a stable poster control stays mounted while it loads.
 Native titles/subtitles use the poster's footer. Badges and resume controls live
 in its documented image overlay. Series artwork extension and spoiler blur are
 content preparation only, not focus effects.
+Prepared poster images use the displayed content size in points and the device
+display scale in pixels. TVUIKit derives focus growth from the image, so raw
+high-resolution cache dimensions must not become the poster's logical size.
 `TVCardView` hosts live content in its documented `contentView`. Neither control
 overrides `focusSizeIncrease`, adds transforms or manufactures lighting/outlines.
 System bypasses app-defined focus surfaces, edge strokes, resting shadows and

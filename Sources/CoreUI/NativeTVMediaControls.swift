@@ -150,27 +150,31 @@ struct NativeTVPoster<Overlay: View>: UIViewRepresentable {
         var original: UIImage?
         var treatment = NativePosterImageTreatment.original
         var imageSize = CGSize.zero
+        var imageScale: CGFloat = 1
         var prepared: UIImage?
 
         init(focus: PlozzCardFocus.Binding, action: @escaping () -> Void) {
             self.focus = NativeTVMediaCoordinator(focus: focus, action: action)
         }
 
-        func prepare(_ image: UIImage?, treatment: NativePosterImageTreatment, size: CGSize) -> UIImage? {
-            if treatment == .original { return image }
+        func prepare(_ image: UIImage?, treatment: NativePosterImageTreatment, size: CGSize, scale: CGFloat) -> UIImage? {
             guard let image else { return nil }
-            if original === image, self.treatment == treatment, imageSize == size { return prepared }
+            if original === image, self.treatment == treatment, imageSize == size, imageScale == scale { return prepared }
             original = image
             self.treatment = treatment
             imageSize = size
+            imageScale = scale
+            // TVPosterView derives native focus growth from image.size in points,
+            // not the cached bitmap's pixel dimensions.
             let renderer = ImageRenderer(content: Group {
                 if treatment == .extended {
                     ExtendedArtworkFill(image: Image(uiImage: image))
                 } else {
-                    Image(uiImage: image).resizable().scaledToFill().blur(radius: 28)
+                    Image(uiImage: image).resizable().scaledToFill()
+                        .blur(radius: treatment == .blurred ? 28 : 0)
                 }
             }.frame(width: size.width, height: size.height).clipped())
-            renderer.scale = 1
+            renderer.scale = scale
             prepared = renderer.uiImage
             if prepared == nil {
                 PlozzLog.app.error("Unable to prepare native poster artwork; keeping the protected placeholder")
@@ -199,7 +203,9 @@ struct NativeTVPoster<Overlay: View>: UIViewRepresentable {
         if view.title != resolvedTitle { view.title = resolvedTitle }
         if view.subtitle != subtitle { view.subtitle = subtitle }
         view.hostedOverlay?.configuration = overlayConfiguration(in: context)
-        let prepared = context.coordinator.prepare(image, treatment: treatment, size: view.contentSize)
+        let prepared = context.coordinator.prepare(
+            image, treatment: treatment, size: view.contentSize, scale: context.environment.displayScale
+        )
         if view.image !== prepared { view.image = prepared }
         view.isEnabled = context.environment.isEnabled
         source.nativeArtworkView = view.imageView
@@ -211,7 +217,9 @@ struct NativeTVPoster<Overlay: View>: UIViewRepresentable {
         guard width.isFinite, width > 0 else { return nil }
         let size = CGSize(width: width, height: width / aspectRatio)
         if uiView.contentSize != size { uiView.contentSize = size }
-        let prepared = context.coordinator.prepare(image, treatment: treatment, size: size)
+        let prepared = context.coordinator.prepare(
+            image, treatment: treatment, size: size, scale: context.environment.displayScale
+        )
         if uiView.image !== prepared { uiView.image = prepared }
         return uiView.intrinsicContentSize
     }
