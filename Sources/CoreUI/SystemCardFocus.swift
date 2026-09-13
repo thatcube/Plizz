@@ -15,18 +15,27 @@ extension EnvironmentValues {
 @propertyWrapper
 public struct PlozzCardFocus: DynamicProperty {
     @FocusState private var focused: Bool
+    @State private var observed = false
+    @Environment(\.plozzCardFocusStyle) private var style
 
     public init() {}
 
     public var wrappedValue: Bool {
-        get { focused }
+        get {
+            #if os(tvOS)
+            style.usesSystemEffect ? observed : focused
+            #else
+            focused
+            #endif
+        }
         nonmutating set { focused = newValue }
     }
 
-    public var projectedValue: Binding { Binding(focusState: $focused) }
+    public var projectedValue: Binding { Binding(focusState: $focused, observed: $observed) }
 
     public struct Binding {
         public let focusState: FocusState<Bool>.Binding
+        let observed: SwiftUI.Binding<Bool>
     }
 }
 
@@ -35,13 +44,9 @@ public extension View {
         modifier(CardFocusEffectAvailability())
     }
 
-    /// Apple's tvOS projection, specular highlight and remote-driven parallax.
+    /// Focus presentation belongs to the surrounding TVUIKit control.
     func plozzSystemCardProjection(cornerRadius: CGFloat) -> some View {
-        #if os(tvOS)
-        hoverEffect(.highlight)
-        #else
         self
-        #endif
     }
 
     func plozzRestingCardShadow(isFocused: Bool) -> some View {
@@ -71,13 +76,7 @@ private struct CardFocusButtonStyle<Style: ButtonStyle>: ViewModifier {
     func body(content: Content) -> some View {
         #if os(tvOS)
         if style.usesSystemEffect {
-            if contentSuppliesProjection {
-                content.buttonStyle(.borderless)
-                    .environment(\.plozzNativeFocusSurface, true)
-            } else {
-                content.buttonStyle(.card)
-                    .environment(\.plozzNativeFocusSurface, true)
-            }
+            content.buttonStyle(NativeTVCardButtonStyle())
         } else {
             content.buttonStyle(fallback).focusEffectDisabled()
         }
@@ -92,11 +91,7 @@ private struct NativeMediaButtonStyle: ViewModifier {
 
     func body(content: Content) -> some View {
         #if os(tvOS)
-        if cardStyle == .borderless {
-            content.buttonStyle(.borderless)
-        } else {
-            content.buttonStyle(.card)
-        }
+        content.buttonStyle(NativeTVCardButtonStyle())
         #else
         content
         #endif

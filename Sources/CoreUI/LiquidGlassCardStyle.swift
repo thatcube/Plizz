@@ -293,10 +293,7 @@ public struct PlozzFocusableCardModifier: ViewModifier {
     public func body(content: Content) -> some View {
         #if os(tvOS)
         if focusStyle.usesSystemEffect {
-            Button {} label: {
-                content.environment(\.plozzNativeFocusSurface, true)
-            }
-                .buttonStyle(.card)
+            NativeTVCard(content: content, focus: $focused, isEnabled: true, action: {})
                 .focused($focused.focusState)
                 .accessibilityRemoveTraits(.isButton)
         } else {

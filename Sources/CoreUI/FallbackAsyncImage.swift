@@ -365,6 +365,9 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
     let placeholder: () -> Placeholder
 
     @State private var image: UIImage?
+    #if os(tvOS)
+    @Environment(\.nativePosterArtworkState) private var nativePosterArtwork
+    #endif
     @State private var resolved: Bool
     /// Whether `image` is the cheap pass, and so still owes a full-quality swap.
     @State private var isPreviewQuality = false
@@ -490,6 +493,11 @@ private struct FilteredArtworkImage<Content: View, Placeholder: View>: View {
                 palette.fill
             }
         }
+        #if os(tvOS)
+        .onChange(of: image, initial: true) { _, value in
+            nativePosterArtwork?.image = value
+        }
+        #endif
         .task(id: taskKey) {
             await resolve()
         }

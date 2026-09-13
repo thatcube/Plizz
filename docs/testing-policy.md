@@ -205,24 +205,25 @@ released after returning, on a memory warning, or with the page's lifetime.
 Card focus has three independent options: System (native tvOS projection),
 Highlight (custom sheen/lean) and Outline (custom glass). Absent per-profile
 preferences use System; saved `highlight` and `outlined` values are not migrated.
-The System path uses native `.borderless` buttons for Posters and native `.card`
-buttons for Cards and read-only information. Borderless artwork uses Apple's
-`.hoverEffect(.highlight)`. Despite the cross-platform
-API name, Apple documents its tvOS behavior as focus projection, specular light
-and remote-driven parallax. It is not the app's custom Highlight option and is
-not the scale-only `.lift` effect.
-There is no UIKit control wrapper, carrier bitmap, secondary focus image view,
-app-supplied focus scale, sheen, tilt or animation. Inside native button labels,
-System also bypasses app-defined rounded clipping, glass surfaces, edge strokes,
-resting card shadows and focused z-index changes. No custom button-border or
-hover-content shape is supplied. Custom Highlight/Outline retain their styling;
-unrelated panels and iOS styling are not stripped. Artwork remains live in its
-SwiftUI rendering path and horizontal rails do not clip focus overflow.
+The System path uses actual TVUIKit media controls: `TVPosterView` for media
+Posters and `TVCardView` for composed Cards and read-only information. Images are
+assigned to `TVPosterView.image`, never directly to its internal image view.
+The shared artwork loader remains responsible for caching, provider selection
+and spoiler-safe sources; a stable poster control stays mounted while it loads.
+Native titles/subtitles use the poster's footer. Badges and resume controls live
+in its documented image overlay. Series artwork extension and spoiler blur are
+content preparation only, not focus effects.
+`TVCardView` hosts live content in its documented `contentView`. Neither control
+overrides `focusSizeIncrease`, adds transforms or manufactures lighting/outlines.
+System bypasses app-defined focus surfaces, edge strokes, resting shadows and
+focused z-index changes. Custom Highlight/Outline retain their styling.
+Horizontal rails do not clip native focus overflow.
 Captions reserve clearance without an additional custom focus animation.
 
-Media-card focus uses `PlozzCardFocus`, a wrapper around SwiftUI's `FocusState`;
-there is no bidirectional UIKit notification bridge. Surfaces with independent
-focus chrome, such as multiview picture controls, retain ordinary SwiftUI focus.
+Media-card focus uses `PlozzCardFocus`: native focus notifications update ordinary
+observed state, while explicit focus requests remain separate. A TVUIKit focus
+notification must not write back into `FocusState` and reset the containing scope.
+Surfaces with independent focus chrome retain ordinary SwiftUI focus.
 `SystemDirectionalFocusTests` drives real remote arrows through production media
 rows with a preferred hero above, including horizontal scrolling, direction
 reversals and vertical row changes in both card layouts. Programmatically

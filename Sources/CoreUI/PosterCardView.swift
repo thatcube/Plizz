@@ -52,6 +52,7 @@ public struct PosterCardView: View {
     @PlozzCardFocus private var isFocused: Bool
     #if os(tvOS)
     @State private var detailTransitionSource = DetailTransitionSourceReference()
+    @State private var nativePosterArtwork = NativePosterArtworkState()
     #endif
     /// This card's resolved logo tone, and the tone of the artwork it sits on.
     /// Together they decide how far the artwork is dimmed behind it — see
@@ -192,6 +193,19 @@ public struct PosterCardView: View {
 
     @ViewBuilder
     private var cardBody: some View {
+        #if os(tvOS)
+        if focusStyle.usesSystemEffect && cardStyle == .borderless {
+            nativePosterCard
+        } else {
+            styledCardBody
+        }
+        #else
+        styledCardBody
+        #endif
+    }
+
+    @ViewBuilder
+    private var styledCardBody: some View {
         switch cardStyle {
         case .framed:
             switch style {
@@ -204,6 +218,91 @@ public struct PosterCardView: View {
             borderlessCard
         }
     }
+
+    #if os(tvOS)
+    private var nativePosterTitle: NativePosterText? {
+        guard !showsSeriesArtwork else { return nil }
+        if item.kind == .episode, let series = item.parentTitle, !series.isEmpty {
+            return .content(series)
+        }
+        if hideText { return .localized(spoilerSettings.maskedTitle(for: item)) }
+        return .content(item.title)
+    }
+
+    private var nativeUsesProtectedArtwork: Bool {
+        showsSpoilerSafePoster || (hideThumbnail && spoilerSettings.mode == .placeholder)
+    }
+
+    private var nativePosterTreatment: NativePosterImageTreatment {
+        if showsSeriesArtwork { return .extended }
+        return hideThumbnail && !nativeUsesProtectedArtwork ? .blurred : .original
+    }
+
+    private var nativePosterReferences: [ArtworkReference] {
+        if showsSeriesArtwork { return seriesArtworkReferences }
+        return nativeUsesProtectedArtwork ? placeholderArtworkReferences : artworkReferences
+    }
+
+    private var nativePosterFallback: (@Sendable () async -> URL?)? {
+        if showsSeriesArtwork { return seriesArtworkFallback }
+        return nativeUsesProtectedArtwork ? placeholderArtworkFallback : asyncArtworkFallback
+    }
+
+    private var nativePosterCard: some View {
+        NativeTVPoster(
+            image: nativePosterArtwork.image,
+            treatment: nativePosterTreatment,
+            aspectRatio: borderlessAspectRatio,
+            fallbackWidth: size.width,
+            title: nativePosterTitle,
+            subtitle: showsSeriesArtwork ? nil : subtitleText,
+            overlay: nativePosterOverlay,
+            focus: $isFocused,
+            source: detailTransitionSource,
+            action: selectCard
+        )
+        .focused($isFocused.focusState)
+        .padding(.horizontal, metrics.borderlessCardSideMargin)
+        .background {
+            FallbackAsyncImage(
+                references: nativePosterReferences,
+                maxAspectRatio: posterAspectGuard,
+                variant: artworkVariant,
+                previewVariant: style == .poster ? .posterPreview : nil,
+                asyncFallbackURL: nativePosterFallback,
+                onResolveReference: { reference in
+                    artworkAlreadyCarriesTitle = reference.map(titleBearingArtwork.contains) ?? false
+                },
+                pinIdentity: item.stablePresentationID,
+                content: { _ in Color.clear },
+                placeholder: { Color.clear }
+            )
+            .environment(\.nativePosterArtworkState, nativePosterArtwork)
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+        }
+    }
+
+    private var nativePosterOverlay: some View {
+        ZStack {
+            if nativePosterArtwork.image == nil { neutralPlaceholder }
+            if showsSeriesArtwork && !suppressesSeriesLogo { seriesLogo }
+            MediaCardPlaybackIndicators(
+                item: item,
+                hidesStatus: hideThumbnail,
+                showsProgressBar: !showsResumeChip,
+                badgeInset: borderlessBadgeInset,
+                progressHeight: metrics.progressBarHeight,
+                progressHorizontalInset: borderlessProgressInset,
+                progressBottomInset: borderlessProgressInset,
+                downloadState: showsResumeChip ? nil : downloadState
+            )
+            resumeChip
+            pendingRemovalOverlay
+        }
+        .overlay(alignment: .topLeading) { statusCue(inset: borderlessBadgeInset) }
+    }
+    #endif
 
     // MARK: Poster
 
@@ -1467,12 +1566,11 @@ private struct CardFocusOwner: ViewModifier {
 
     func body(content: Content) -> some View {
         if style.usesSystemEffect {
-            Button(action: action) {
-                content.environment(\.plozzNativeFocusSurface, true)
-            }
-                .plozzNativeMediaButtonStyle()
+            NativeTVCard(
+                content: content, focus: isFocused,
+                isEnabled: isEnabled && parentEnabled, action: action
+            )
                 .focused(isFocused.focusState)
-                .disabled(!isEnabled || !parentEnabled)
         } else {
             content
                 .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
