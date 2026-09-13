@@ -19,9 +19,12 @@ jobs:
     runs-on: macos-15
     env:
       GIT_CONFIG_PARAMETERS: "'safe.bareRepository=all'"
-      PLOZZ_CLONED_SOURCE_PACKAGES: ${{ runner.temp }}/plozz-source-packages
     steps:
       - uses: actions/checkout@v5
+
+      - name: Configure package storage
+        run: |
+          printf 'PLOZZ_CLONED_SOURCE_PACKAGES=%s/plozz-source-packages\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_26.2.app

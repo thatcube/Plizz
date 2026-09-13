@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -86,13 +87,38 @@ class PackageStorageTests(unittest.TestCase):
             self.assertIn(flag, l10n)
 
         workflow = self.source(".github/workflows/ci.yml")
-        self.assertIn("${{ runner.temp }}/plozz-source-packages", workflow)
+        self.assertNotIn("${{ runner.temp }}", workflow)
         self.assertIn('configure_plozz_package_resolution "$PLOZZ_CLONED_SOURCE_PACKAGES"', workflow)
 
         fastfile = self.source("fastlane/Fastfile")
         self.assertIn(".build\", \"package-workspaces\", \"fastlane", fastfile)
         for flag in REQUIRED_FLAGS:
             self.assertIn(flag, fastfile)
+
+    def test_ci_package_storage_is_initialized_on_the_runner(self) -> None:
+        workflow = self.source(".github/workflows/ci.yml")
+        step = re.search(
+            r"      - name: Configure package storage\n        run: \|\n((?:          .*\n)+)",
+            workflow,
+        )
+        self.assertIsNotNone(step)
+        script = "\n".join(line[10:] for line in step.group(1).splitlines())
+        with tempfile.TemporaryDirectory(prefix="plozz ci storage ") as temp:
+            runner_temp = Path(temp) / "runner temp"
+            github_env = Path(temp) / "github env"
+            result = subprocess.run(
+                ["/bin/bash", "-e", "-c", script],
+                cwd=ROOT,
+                env=dict(os.environ, RUNNER_TEMP=str(runner_temp), GITHUB_ENV=str(github_env)),
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            self.assertEqual(result.stdout, "")
+            self.assertEqual(
+                github_env.read_text(),
+                f"PLOZZ_CLONED_SOURCE_PACKAGES={runner_temp}/plozz-source-packages\n",
+            )
 
 
 if __name__ == "__main__":

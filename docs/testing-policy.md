@@ -159,6 +159,12 @@ changing the host or test target. Results are retained under
 
 ## Guards that run before the compile
 
+Validate workflow edits with `actionlint .github/workflows/ci.yml` before
+pushing. GitHub rejects invalid context references before creating a runner or
+job log. Runner-local package storage is initialized in a step via
+`RUNNER_TEMP` and `GITHUB_ENV`; the `runner` expression context is not available
+in job-level `env`.
+
 Both are host-side Python (the tests run inside the tvOS Simulator sandbox and
 cannot read the repo tree), both are wired into `run-tests.sh`, `test-fast.sh`
 and CI, and both are skippable via an env var for debugging:

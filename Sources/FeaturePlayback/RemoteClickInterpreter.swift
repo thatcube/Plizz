@@ -13,6 +13,10 @@ struct RemoteClickInterpreter {
     private(set) var suppressesPan = false
     private var pendingAction: Action = .select
 
+    init(edgeThreshold: Float = 0.7) {
+        self.edgeThreshold = edgeThreshold
+    }
+
     /// Correlates native presses with the independently updated controller
     /// snapshot. Old idle-remote positions must not affect keyboard/iPhone input.
     static func matchesInput(
