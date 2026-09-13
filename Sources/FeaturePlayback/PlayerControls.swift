@@ -1954,16 +1954,6 @@ struct PlayerControls: View {
             if model.subtitleDownload.canSearch {
                 downloadEntryRow
             }
-            #if DEBUG
-            if !model.subtitleDownload.primaryDiagnostic.isEmpty {
-                Text(model.subtitleDownload.primaryDiagnostic)
-                    .font(.caption2)
-                    .foregroundStyle(.yellow.opacity(0.85))
-                    .lineLimit(1)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 2)
-            }
-            #endif
         }
         .padding(.horizontal, 14)
     }

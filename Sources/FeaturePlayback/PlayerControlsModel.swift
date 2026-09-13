@@ -145,11 +145,9 @@ public final class SubtitleDownloadModel {
     public var state: SubtitleDownloadState = .idle
 
     #if DEBUG
-    /// DEBUG-only readout of how the *primary* selected subtitle is being routed:
+    /// DEBUG-only state for inspecting how the primary subtitle is routed:
     /// active engine · path (overlay-sidecar / avplayer-draw / live-feed) · live
-    /// cue count. Surfaced at the bottom of the Subtitles list so we can see — on
-    /// a device whose logs are unreadable in this environment — exactly why a
-    /// Plex embedded track lists but never draws. Empty when nothing is selected.
+    /// cue count. Not displayed in the player UI. Empty when nothing is selected.
     public var primaryDiagnostic: String = ""
     #endif
 

@@ -399,9 +399,8 @@ final class SubtitleTrackController {
     }
 
     #if DEBUG
-    /// Composes the DEBUG primary-subtitle route readout shown at the bottom of
-    /// the Subtitles list: active engine, the routing path taken, and (when known)
-    /// the cue count.
+    /// Captures the DEBUG primary-subtitle route for debugger inspection:
+    /// active engine, routing path, and (when known) cue count.
     func setPrimarySubtitleDiagnostic(route: String, cues: Int? = nil) {
         guard let host else { return }
         var text = "eng \(host.trackEngineKind) · \(route)"
