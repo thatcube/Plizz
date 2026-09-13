@@ -28,21 +28,7 @@ final class NativePosterComparisonController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        format.opaque = true
-        let image = UIGraphicsImageRenderer(size: CGSize(width: 1600, height: 900), format: format).image {
-            UIColor(red: 0.05, green: 0.15, blue: 0.6, alpha: 1).setFill()
-            $0.fill(CGRect(x: 0, y: 0, width: 1600, height: 900))
-            UIColor.green.setStroke()
-            let edge = UIBezierPath(rect: CGRect(x: 12, y: 12, width: 1576, height: 876))
-            edge.lineWidth = 16
-            edge.stroke()
-            UIColor.red.setFill()
-            for x in [CGFloat(400), CGFloat(1200)] {
-                $0.fill(CGRect(x: x - 20, y: 270, width: 40, height: 120))
-            }
-        }
+        let image = NativeComparisonPattern.makeImage()
         rawPoster.image = image
         normalizedPoster.image = image.cgImage.map {
             UIImage(cgImage: $0, scale: 4, orientation: .up)
@@ -236,7 +222,7 @@ private struct ContainedPosterRepresentable: UIViewRepresentable {
     }
 }
 
-private final class ComparisonUIKitOverlay: UIView {
+final class ComparisonUIKitOverlay: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         isOpaque = false
@@ -248,6 +234,27 @@ private final class ComparisonUIKitOverlay: UIView {
         UIColor.yellow.setFill()
         for x in [bounds.width * 0.25, bounds.width * 0.75] {
             UIBezierPath(rect: CGRect(x: x - 5, y: bounds.height * 0.7, width: 10, height: 25)).fill()
+        }
+    }
+}
+
+enum NativeComparisonPattern {
+    @MainActor
+    static func makeImage() -> UIImage {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: CGSize(width: 1600, height: 900), format: format).image {
+            UIColor(red: 0.05, green: 0.15, blue: 0.6, alpha: 1).setFill()
+            $0.fill(CGRect(x: 0, y: 0, width: 1600, height: 900))
+            UIColor.green.setStroke()
+            let edge = UIBezierPath(rect: CGRect(x: 12, y: 12, width: 1576, height: 876))
+            edge.lineWidth = 16
+            edge.stroke()
+            UIColor.red.setFill()
+            for x in [CGFloat(400), CGFloat(1200)] {
+                $0.fill(CGRect(x: x - 20, y: 270, width: 40, height: 120))
+            }
         }
     }
 }

@@ -23,6 +23,14 @@ final class NativePosterComparisonTests: XCTestCase {
     }
 
     func testCompareBareNativePosterWithAdapter() throws {
+        try compare(arguments: ["--native-poster-comparison"], reportName: "native-poster")
+    }
+
+    func testCompareModernNativeMediaCell() throws {
+        try compare(arguments: ["--native-media-cell-comparison"], reportName: "native-media-cell")
+    }
+
+    private func compare(arguments: [String], reportName: String) throws {
         #if targetEnvironment(simulator)
         try XCTSkipUnless(ProcessInfo.processInfo.environment["PLOZZ_NATIVE_POSTER_COMPARISON"] == "1")
         continueAfterFailure = false
@@ -31,7 +39,7 @@ final class NativePosterComparisonTests: XCTestCase {
         var measurements: [[String: Any]] = []
         for style in ["Default", "High Contrast"] {
             try FocusStyleSettingsCaptureTests.withFocusStyle(style) { _ in
-                app.launchArguments = ["--native-poster-comparison"]
+                app.launchArguments = arguments
                 app.launch()
                 let metadata = app.staticTexts["native-comparison-metadata"]
                 XCTAssertTrue(metadata.waitForExistence(timeout: 5))
@@ -45,18 +53,19 @@ final class NativePosterComparisonTests: XCTestCase {
                     Thread.sleep(forTimeInterval: 1)
                     let capture = app.screenshot()
                     let attachment = XCTAttachment(screenshot: capture)
-                    attachment.name = "native-poster-\(style)-focused-\(focusedIndex)"
+                    attachment.name = "\(reportName)-\(style)-focused-\(focusedIndex)"
                     attachment.lifetime = .keepAlways
                     add(attachment)
                     let geometry = XCTAttachment(string: metadata.label)
-                    geometry.name = "native-poster-geometry-\(style)-\(focusedIndex)"
+                    geometry.name = "\(reportName)-geometry-\(style)-\(focusedIndex)"
                     geometry.lifetime = .keepAlways
                     add(geometry)
                     for column in 0..<3 {
                         let spans = try landmarks(capture.image, column: column)
                         measurements.append([
                             "style": style, "focusedIndex": focusedIndex, "column": column,
-                            "imageSpan": spans.red, "overlaySpan": spans.yellow, "greenPixels": spans.green
+                            "imageSpan": spans.red, "overlaySpan": spans.yellow,
+                            "greenPixels": spans.green, "whitePixels": spans.white
                         ])
                     }
                 }
@@ -65,7 +74,7 @@ final class NativePosterComparisonTests: XCTestCase {
         }
         let data = try JSONSerialization.data(withJSONObject: measurements, options: [.prettyPrinted, .sortedKeys])
         let report = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
-        report.name = "native-poster-comparison-measurements"
+        report.name = "\(reportName)-comparison-measurements"
         report.lifetime = .keepAlways
         add(report)
         #else
@@ -73,7 +82,7 @@ final class NativePosterComparisonTests: XCTestCase {
         #endif
     }
 
-    private func landmarks(_ image: UIImage, column: Int) throws -> (red: Int, yellow: Int, green: Int) {
+    private func landmarks(_ image: UIImage, column: Int) throws -> (red: Int, yellow: Int, green: Int, white: Int) {
         let bitmap = try XCTUnwrap(image.cgImage)
         var bytes = [UInt8](repeating: 0, count: bitmap.width * bitmap.height * 4)
         try bytes.withUnsafeMutableBytes {
@@ -88,6 +97,7 @@ final class NativePosterComparisonTests: XCTestCase {
         let scale = CGFloat(bitmap.width) / image.size.width
         let region = CGRect(x: 30 + column * 600, y: 280, width: 560, height: 340)
         var redMin = Int.max, redMax = -1, yellowMin = Int.max, yellowMax = -1, green = 0
+        var white = 0
         for y in Int(region.minY * scale)..<Int(region.maxY * scale) {
             for x in Int(region.minX * scale)..<Int(region.maxX * scale) {
                 let pixel = (y * bitmap.width + x) * 4
@@ -99,10 +109,11 @@ final class NativePosterComparisonTests: XCTestCase {
                     yellowMin = min(yellowMin, x); yellowMax = max(yellowMax, x)
                 }
                 if g > 140 && g > r + 60 && g > b + 60 { green += 1 }
+                if r > 220 && g > 220 && b > 220 { white += 1 }
             }
         }
         XCTAssertGreaterThan(redMax, redMin, "Missing image landmarks in column \(column)")
         XCTAssertGreaterThan(yellowMax, yellowMin, "Missing overlay landmarks in column \(column)")
-        return (redMax - redMin + 1, yellowMax - yellowMin + 1, green)
+        return (redMax - redMin + 1, yellowMax - yellowMin + 1, green, white)
     }
 }

@@ -247,6 +247,15 @@ accessing imageView. While artwork loads, a cached opaque placeholder supplies
 the correct image geometry; it is content, not a replacement focus effect.
 Replacing that placeholder keeps the same native control and expansion defaults.
 
+The same opt-in comparison includes `TVMediaItemContentConfiguration.wideCell()`
+in stock collection-view cells, updated with the native cell configuration state.
+On the tested tvOS 27 runtime, image landmarks grew about 11% in Default mode;
+under High Contrast they became about 3% closer while a white outline appeared.
+Overlay landmarks stayed almost unchanged under High Contrast. This reproduced
+the contrast-specific behavior without Plozz's media adapter or custom focus
+styling. The focused frame guide alone is not evidence of actual image growth:
+use the captured image/overlay landmarks and screenshots.
+
 Media-card focus uses `PlozzCardFocus`: native focus notifications update ordinary
 observed state, while explicit focus requests remain separate. A TVUIKit focus
 notification must not write back into `FocusState` and reset the containing scope.
