@@ -44,14 +44,39 @@ final class EdgeFadeMaskTests: XCTestCase {
         XCTAssertLessThan(alpha(pixels, at: 1), 16)
     }
 
+    func testSemanticTrailingEdgeFollowsRightToLeftLayout() throws {
+        let pixels = try render(leading: 1, trailing: 0, direction: .rightToLeft)
+        XCTAssertLessThan(alpha(pixels, at: 198), 16)
+        XCTAssertGreaterThan(alpha(pixels, at: 1), 250)
+    }
+
+    func testLeadingOnlyMaskFollowsLayoutDirection() throws {
+        for direction in [LayoutDirection.leftToRight, .rightToLeft] {
+            let pixels = try render(
+                LeadingEdgeFadeMask(fadeWidth: 24)
+                    .frame(width: 200, height: 20)
+                    .environment(\.layoutDirection, direction)
+            )
+            let leading = direction == .leftToRight ? 1 : 198
+            let trailing = direction == .leftToRight ? 198 : 1
+            XCTAssertLessThan(alpha(pixels, at: leading), 16)
+            XCTAssertGreaterThan(alpha(pixels, at: trailing), 250)
+            XCTAssertGreaterThan(alpha(pixels, at: 100), 250)
+        }
+    }
+
     private func render(
         leading: CGFloat, trailing: CGFloat, direction: LayoutDirection = .leftToRight
     ) throws -> [UInt8] {
-        let renderer = ImageRenderer(content:
+        try render(
             HorizontalEdgeFadeMask(fadeWidth: 24, leadingStrength: leading, trailingStrength: trailing)
                 .frame(width: 200, height: 20)
                 .environment(\.layoutDirection, direction)
         )
+    }
+
+    private func render<Content: View>(_ content: Content) throws -> [UInt8] {
+        let renderer = ImageRenderer(content: content)
         renderer.scale = 1
         let image = try XCTUnwrap(renderer.cgImage)
         XCTAssertEqual(image.width, 200)

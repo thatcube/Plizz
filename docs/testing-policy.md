@@ -171,6 +171,10 @@ missing rather than silently choosing the first installed (possibly much older)
 runtime. The full matrix has a 40-minute wall-clock deadline; raw logs and
 result bundles are retained as workflow artifacts for seven days.
 
+Native typography tests compare against the runtime's `UIFontMetrics` behavior:
+older tvOS versions keep those metrics fixed, while newer runtimes scale them.
+Both paths assert the matching geometry rather than skipping older runtimes.
+
 Both are host-side Python (the tests run inside the tvOS Simulator sandbox and
 cannot read the repo tree), both are wired into `run-tests.sh`, `test-fast.sh`
 and CI, and both are skippable via an env var for debugging:

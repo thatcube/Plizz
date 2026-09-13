@@ -6,6 +6,41 @@ import XCTest
 
 @MainActor
 final class LiveTVScanCatalogBindingTests: XCTestCase {
+    func testReleasingBindingDeactivatesItsCoordinatorSynchronouslyOnMain() {
+        let model = LiveTVPrototypeModel(channels: [scanChannel()])
+        let coordinator = LiveTVChannelScanCoordinator(store: ScanMemoryHealthStore())
+        var binding: LiveTVScanCatalogBinding? = makeBinding(model: model, coordinator: coordinator)
+        weak var releasedBinding = binding
+        binding?.updateCatalog(configuration(), channels: [scanChannel()])
+        binding?.setActive(true)
+        XCTAssertEqual(coordinator.sourceIDs, ["source"])
+
+        binding = nil
+
+        XCTAssertNil(releasedBinding)
+        XCTAssertTrue(coordinator.sourceIDs.isEmpty)
+    }
+
+    func testReleasingReplacedBindingPreservesTheNewOwner() {
+        let oldModel = LiveTVPrototypeModel(channels: [scanChannel()])
+        let oldCoordinator = LiveTVChannelScanCoordinator(store: ScanMemoryHealthStore())
+        var old: LiveTVScanCatalogBinding? = makeBinding(model: oldModel, coordinator: oldCoordinator)
+        old?.updateCatalog(configuration(), channels: [scanChannel()])
+        old?.setActive(true)
+        let newModel = LiveTVPrototypeModel(channels: [scanChannel()])
+        let newCoordinator = LiveTVChannelScanCoordinator(store: ScanMemoryHealthStore())
+        let new = makeBinding(model: newModel, coordinator: newCoordinator)
+        new.updateCatalog(configuration(), channels: [scanChannel()])
+        new.setActive(true)
+
+        old = nil
+
+        XCTAssertTrue(oldCoordinator.sourceIDs.isEmpty)
+        XCTAssertEqual(newCoordinator.sourceIDs, ["source"])
+        new.retry()
+        XCTAssertEqual(newCoordinator.sourceIDs, ["source"])
+    }
+
     func testNewPresentationRevokesOldScanAndRejectsItsLateHealthWrite() async throws {
         let store = ScanMemoryHealthStore()
         let probe = ScanSuspendedProbe()
