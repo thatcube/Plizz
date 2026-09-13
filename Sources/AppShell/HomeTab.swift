@@ -436,10 +436,7 @@ struct HomeTab: View {
             .onChange(of: pendingTitleRoute) { _, item in
                 guard isActiveTab, let item else { return }
                 pendingTitleRoute = nil
-                #if os(tvOS)
-                DetailTransitionNavigation.prepare(for: item)
-                #endif
-                path.append(item)
+                withCinematicDetailNavigation(for: item) { path.append(item) }
             }
             .onChange(of: pendingPersonRoute) { _, route in
                 // Raised by the in-player Cast card and pushed once the player
@@ -1009,25 +1006,24 @@ struct HomeTab: View {
         libraryOrigin: String? = nil,
         asOwnSubject: Bool = false
     ) {
-        #if os(tvOS)
-        DetailTransitionNavigation.prepare(for: item)
-        #endif
-        if item.kind == .episode, asOwnSubject {
-            path.append(item)
-        } else if item.kind == .episode, item.seriesID != nil {
-            path.append(EpisodeContextRoute(
-                episode: item,
-                originAccountID: libraryOrigin
-            ))
-        } else if item.kind == .season, item.seriesID != nil {
-            path.append(SeasonContextRoute(
-                season: item,
-                originAccountID: libraryOrigin
-            ))
-        } else if let libraryOrigin {
-            path.append(LibraryDetailRoute(item: item, originAccountID: libraryOrigin))
-        } else {
-            path.append(item)
+        withCinematicDetailNavigation(for: item) {
+            if item.kind == .episode, asOwnSubject {
+                path.append(item)
+            } else if item.kind == .episode, item.seriesID != nil {
+                path.append(EpisodeContextRoute(
+                    episode: item,
+                    originAccountID: libraryOrigin
+                ))
+            } else if item.kind == .season, item.seriesID != nil {
+                path.append(SeasonContextRoute(
+                    season: item,
+                    originAccountID: libraryOrigin
+                ))
+            } else if let libraryOrigin {
+                path.append(LibraryDetailRoute(item: item, originAccountID: libraryOrigin))
+            } else {
+                path.append(item)
+            }
         }
     }
 

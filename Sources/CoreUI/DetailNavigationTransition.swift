@@ -18,6 +18,16 @@ public struct DetailEntranceTiming: Equatable, Sendable {
     public init() {}
 }
 
+@MainActor
+public func withCinematicDetailNavigation(for item: MediaItem, _ navigate: () -> Void) {
+    #if os(tvOS)
+    DetailTransitionNavigation.prepare(for: item)
+    DetailTransitionNavigation.performNavigation(navigate)
+    #else
+    navigate()
+    #endif
+}
+
 public extension View {
     @ViewBuilder
     func cinematicDetailPage(isEnabled: Bool) -> some View {
@@ -273,6 +283,34 @@ final class DetailTransitionSourceView: UIView {
 public enum DetailTransitionNavigation {
     private static var pending: [ObjectIdentifier: PendingDetailEntrance] = [:]
     private static var suppressed: [ObjectIdentifier: UUID] = [:]
+    private static var restoring: [ObjectIdentifier: (token: UUID, session: TVDetailEntranceSession)] = [:]
+
+    public static var isRestoringSourcePage: Bool {
+        activeWindow.map { restoring[ObjectIdentifier($0)] != nil } ?? false
+    }
+
+    static func beginSourceRestore(in window: UIWindow, token: UUID, session: TVDetailEntranceSession) {
+        let key = ObjectIdentifier(window)
+        if let previous = restoring[key], previous.token != token { previous.session.finishImmediately() }
+        // The dismissed SwiftUI page can die before the artwork animation ends.
+        restoring[key] = (token, session)
+    }
+
+    static func endSourceRestore(token: UUID) {
+        if let key = restoring.first(where: { $0.value.token == token })?.key {
+            restoring.removeValue(forKey: key)
+        }
+    }
+
+    static func performNavigation(_ navigate: () -> Void) {
+        guard let window = activeWindow, pending[ObjectIdentifier(window)] != nil else {
+            navigate()
+            return
+        }
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction, navigate)
+    }
 
     private static var activeWindow: UIWindow? {
         UIApplication.shared.connectedScenes
@@ -388,6 +426,7 @@ final class PendingDetailEntrance {
     private(set) var landedAt: CFTimeInterval?
     var onLanded: (() -> Void)?
     let windowSize: CGSize
+    let scrollPositions: [DetailTransitionScrollPosition]
 
     init(
         window: UIWindow, itemKey: String, source: DetailTransitionSourceReference?,
@@ -401,6 +440,11 @@ final class PendingDetailEntrance {
         self.card = card
         windowSize = window.bounds.size
         focusedItem = UIFocusSystem.focusSystem(for: window)?.focusedItem
+        scrollPositions = DetailTransitionScrollPosition.capture(
+            from: source?.view ?? (focusedItem as? any UIFocusItem).flatMap {
+                TVNavigationExitProtectionFocus.containingView(of: $0)
+            }
+        )
         overlay = DetailTransitionOverlay(screen: screen, card: card)
         overlay.frame = window.bounds
         window.addSubview(overlay)
@@ -431,6 +475,29 @@ final class PendingDetailEntrance {
     }
 }
 
+@MainActor
+struct DetailTransitionScrollPosition {
+    weak var view: UIScrollView?
+    let offset: CGPoint
+
+    static func capture(from view: UIView?) -> [Self] {
+        var result: [Self] = []
+        var ancestor = view
+        while let current = ancestor {
+            if let scroll = current as? UIScrollView {
+                result.append(Self(view: scroll, offset: scroll.contentOffset))
+            }
+            ancestor = current.superview
+        }
+        return result
+    }
+
+    func restore(in window: UIWindow) {
+        guard let view, view.window === window else { return }
+        view.setContentOffset(offset, animated: false)
+    }
+}
+
 @MainActor @Observable
 public final class TVDetailEntranceSession {
     public private(set) var stage = DetailEntranceStage.artwork
@@ -455,6 +522,13 @@ public final class TVDetailEntranceSession {
     @ObservationIgnored private var activationGeometry: DetailTransitionSourceGeometry?
     @ObservationIgnored private var activationWindowSize: CGSize?
     @ObservationIgnored private var artworkHasLanded = false
+    @ObservationIgnored private var waitsForPageAppearance = false
+    @ObservationIgnored private var pageIsVisible = false
+    @ObservationIgnored private var returnMotionFinished = false
+    @ObservationIgnored private var returnNavigationFinished = false
+    @ObservationIgnored private var returnHandoffScheduled = false
+    @ObservationIgnored private var scrollPositions: [DetailTransitionScrollPosition] = []
+    @ObservationIgnored private let restoreToken = UUID()
 
     public init(timing: DetailEntranceTiming = DetailEntranceTiming()) {
         self.timing = timing
@@ -474,9 +548,10 @@ public final class TVDetailEntranceSession {
         self.window = window
     }
 
-    func attach(to window: UIWindow, enabled: Bool) {
+    func attach(to window: UIWindow, enabled: Bool, waitsForPageAppearance: Bool = false) {
         self.window = window
         guard !hasStarted else { return }
+        self.waitsForPageAppearance = waitsForPageAppearance
         if DetailTransitionNavigation.consumesSuppression(in: window) {
             finishImmediately()
             return
@@ -500,6 +575,7 @@ public final class TVDetailEntranceSession {
         }
         activationWindowSize = pending?.windowSize
         returnFocus = pending?.focusedItem
+        scrollPositions = pending?.scrollPositions ?? []
         let cover = pending?.overlay
             ?? DetailTransitionOverlay(screen: DetailTransitionSnapshot.surface(of: window), card: nil)
         cover.frame = window.bounds
@@ -525,13 +601,37 @@ public final class TVDetailEntranceSession {
         let elapsed = opening?.landedAt.map { CACurrentMediaTime() - $0 } ?? 0
         opening?.onLanded = nil
         opening = nil
+        removeOpeningCoverIfReady()
+        animator = nil
+        startForegroundSequence(pause: max(0, timing.artworkPause - elapsed))
+    }
+
+    func pageAppeared() {
+        pageIsVisible = true
+        removeOpeningCoverIfReady()
+        finishEntranceIfReady()
+    }
+
+    func pageDisappeared() {
+        pageIsVisible = false
+        guard isClosing else { return }
+        returnNavigationFinished = true
+        finishReturnIfReady()
+    }
+
+    private func removeOpeningCoverIfReady() {
+        guard artworkHasLanded, !isClosing, !waitsForPageAppearance || pageIsVisible else { return }
         let cover = overlay
         UIView.animate(withDuration: 0.1, animations: { cover?.alpha = 0 }) { [weak self] _ in
             cover?.removeFromSuperview()
             if self?.overlay === cover { self?.overlay = nil }
         }
-        animator = nil
-        startForegroundSequence(pause: max(0, timing.artworkPause - elapsed))
+    }
+
+    private func finishEntranceIfReady() {
+        guard stage == .complete, !isClosing, !waitsForPageAppearance || pageIsVisible else { return }
+        blocksNavigation = false
+        releaseInput()
     }
 
     private func startForegroundSequence(pause: TimeInterval) {
@@ -546,8 +646,7 @@ public final class TVDetailEntranceSession {
                 stage = .controls
                 try await Task.sleep(for: .seconds(timing.reveal))
                 stage = .complete
-                blocksNavigation = false
-                releaseInput()
+                finishEntranceIfReady()
                 sequence = nil
             } catch is CancellationError {
                 // Disappearance, Reduce Motion, or Back owns the cancellation.
@@ -571,6 +670,10 @@ public final class TVDetailEntranceSession {
             return
         }
         isClosing = true
+        returnMotionFinished = false
+        returnNavigationFinished = !waitsForPageAppearance
+        returnHandoffScheduled = false
+        DetailTransitionNavigation.beginSourceRestore(in: window, token: restoreToken, session: self)
         blocksNavigation = true
         sequence?.cancel()
         sequence = nil
@@ -612,24 +715,13 @@ public final class TVDetailEntranceSession {
                 cover.card.alpha = 1
             }
         } else {
-            cover.cardContainer.isHidden = true
-            animation.addAnimations { cover.alpha = 0 }
+            cover.cardContainer.isHidden = interrupted
+            animation.addAnimations { cover.cardContainer.alpha = 0 }
         }
-        animation.addCompletion { [self, cover] _ in
-            cover.removeFromSuperview()
-            overlay = nil
-            animator = nil
-            releaseInput()
-            returnArtwork = nil
-            returnBackground = nil
-            destinationArtwork = nil
-            source = nil
-            activationGeometry = nil
-            activationWindowSize = nil
-            stage = .complete
-            isClosing = false
-            blocksNavigation = false
-            sequence = nil
+        animation.addCompletion { [weak self] position in
+            guard let self, isClosing, position == .end else { return }
+            returnMotionFinished = true
+            finishReturnIfReady()
         }
         animator = animation
         animation.startAnimation()
@@ -637,10 +729,53 @@ public final class TVDetailEntranceSession {
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) { dismiss() }
-        sequence = Task { @MainActor [weak self] in
-            await Task.yield()
-            guard let self, isClosing, source?.itemKey == sourceKey else { return }
-            source?.restoreFocus(in: window, preferred: returnFocus)
+    }
+
+    private func finishReturnIfReady() {
+        guard isClosing, returnMotionFinished, returnNavigationFinished,
+              !returnHandoffScheduled, let cover = overlay else { return }
+        guard let window else {
+            finishImmediately()
+            return
+        }
+        returnHandoffScheduled = true
+        // Restore only after the source is mounted. Keep its captured page over
+        // focus/scroll restoration and the following SwiftUI update, not just
+        // until the independent artwork animator happens to finish.
+        DispatchQueue.main.async { [self] in
+            guard isClosing, overlay === cover else { return }
+            UIView.performWithoutAnimation {
+                var transaction = Transaction(animation: nil)
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    if activationWindowSize == window.bounds.size {
+                        scrollPositions.forEach { $0.restore(in: window) }
+                    }
+                    if source?.itemKey == sourceKey {
+                        source?.restoreFocus(in: window, preferred: returnFocus)
+                    }
+                    window.layoutIfNeeded()
+                }
+            }
+            DispatchQueue.main.async { [self] in
+                guard isClosing, overlay === cover else { return }
+                cover.removeFromSuperview()
+                overlay = nil
+                animator = nil
+                releaseInput()
+                DetailTransitionNavigation.endSourceRestore(token: restoreToken)
+                returnArtwork = nil
+                returnBackground = nil
+                destinationArtwork = nil
+                source = nil
+                scrollPositions = []
+                activationGeometry = nil
+                activationWindowSize = nil
+                stage = .complete
+                blocksNavigation = false
+                sequence = nil
+                // The popped page stays hidden for its remaining lifetime.
+            }
         }
     }
 
@@ -670,6 +805,7 @@ public final class TVDetailEntranceSession {
         overlay?.removeFromSuperview()
         overlay = nil
         earlyDestinationArtwork = nil
+        DetailTransitionNavigation.endSourceRestore(token: restoreToken)
         releaseInput()
         stage = .complete
         isClosing = false
@@ -747,7 +883,7 @@ private struct TVDetailStageReveal: ViewModifier {
     }
 }
 
-private struct DetailEntrancePageAnchor: UIViewRepresentable {
+private struct DetailEntrancePageAnchor: UIViewControllerRepresentable {
     let session: TVDetailEntranceSession
     let enabled: Bool
 
@@ -758,20 +894,41 @@ private struct DetailEntrancePageAnchor: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(session: session) }
 
-    func makeUIView(context: Context) -> DetailEntranceAnchorView {
-        let view = DetailEntranceAnchorView()
-        view.isUserInteractionEnabled = false
-        return view
+    func makeUIViewController(context: Context) -> DetailEntranceController {
+        DetailEntranceController()
     }
 
-    func updateUIView(_ view: DetailEntranceAnchorView, context: Context) {
+    func updateUIViewController(_ controller: DetailEntranceController, context: Context) {
+        controller.session = session
+        let view = controller.anchor
         view.session = session
         view.enabled = enabled
         view.attach()
     }
 
-    static func dismantleUIView(_ view: DetailEntranceAnchorView, coordinator: Coordinator) {
+    static func dismantleUIViewController(_ controller: DetailEntranceController, coordinator: Coordinator) {
+        coordinator.session.pageDisappeared()
         coordinator.session.disappeared()
+    }
+}
+
+private final class DetailEntranceController: UIViewController {
+    let anchor = DetailEntranceAnchorView()
+    weak var session: TVDetailEntranceSession?
+
+    override func loadView() {
+        anchor.isUserInteractionEnabled = false
+        view = anchor
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        session?.pageAppeared()
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        session?.pageDisappeared()
     }
 }
 
@@ -790,7 +947,7 @@ private final class DetailEntranceAnchorView: UIView {
         let enabled = enabled
         DispatchQueue.main.async { [weak self, weak window, weak session] in
             guard self?.window === window, let window else { return }
-            session?.attach(to: window, enabled: enabled)
+            session?.attach(to: window, enabled: enabled, waitsForPageAppearance: true)
         }
     }
 }

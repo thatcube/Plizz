@@ -191,7 +191,7 @@ final class CinematicDetailTransitionHostedTests: XCTestCase {
         session.close {
             // Keep the real detail behind the cover briefly, just as a slow
             // native pop can on device. Home must not wait for this lifecycle.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
                 fixture.model.path.removeLast()
             }
         }
@@ -199,7 +199,87 @@ final class CinematicDetailTransitionHostedTests: XCTestCase {
         let cover = try XCTUnwrap(overlays(in: fixture.window).first)
         XCTAssertFalse(try XCTUnwrap(cover.cardContainer.layer.presentation()).frame.contains(corner.origin))
         XCTAssertEqual(try pixel(fixture.window, at: corner), homePixel)
+        try await Task.sleep(for: .milliseconds(350))
+        XCTAssertTrue(cover.superview === fixture.window, "Artwork completion must not uncover a pending pop.")
+        XCTAssertTrue(session.isClosing)
+        XCTAssertTrue(DetailTransitionNavigation.isRestoringSourcePage)
         try await waitUntil { self.overlays(in: fixture.window).isEmpty }
+        XCTAssertTrue(session.isClosing, "A popped detail must not become visible again during teardown.")
+        XCTAssertFalse(DetailTransitionNavigation.isRestoringSourcePage)
+    }
+
+    func testOpeningCoverWaitsForDestinationAppearanceWithoutRestartingTheZoom() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.close() }
+        fixture.model.source.prepare(for: fixture.model.item)
+        let session = TVDetailEntranceSession()
+        defer { session.finishImmediately() }
+        session.attach(to: fixture.window, enabled: true, waitsForPageAppearance: true)
+        let cover = try XCTUnwrap(overlays(in: fixture.window).first)
+        try await Task.sleep(for: .milliseconds(700))
+        XCTAssertTrue(cover.superview === fixture.window)
+        XCTAssertEqual(cover.alpha, 1)
+        XCTAssertEqual(cover.cardContainer.frame, fixture.window.bounds)
+        session.pageAppeared()
+        try await waitUntil { cover.superview == nil }
+        XCTAssertEqual(session.stage, .artwork, "Appearance must not restart the zoom or its reveal clock.")
+    }
+
+    func testNonspatialReturnAlsoKeepsTheSourceCoveredUntilThePopCompletes() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.close() }
+        fixture.model.open(in: fixture.window, usesCard: false)
+        try await waitUntil { fixture.model.session?.stage == .complete }
+        let session = try XCTUnwrap(fixture.model.session)
+        session.close {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { fixture.model.path.removeLast() }
+        }
+        let cover = try XCTUnwrap(overlays(in: fixture.window).first)
+        try await Task.sleep(for: .milliseconds(450))
+        XCTAssertTrue(cover.superview === fixture.window)
+        XCTAssertEqual(cover.alpha, 1, "Fade the artwork, not the source-page cover.")
+        try await waitUntil { cover.superview == nil }
+    }
+
+    func testReturnRestoresCapturedScrollOffsetBeforeRemovingTheCover() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.close() }
+        let scroll = UIScrollView(frame: CGRect(x: 100, y: 100, width: 500, height: 500))
+        scroll.contentSize = CGSize(width: 500, height: 1800)
+        let marker = UIView(frame: CGRect(x: 0, y: 500, width: 200, height: 300))
+        marker.backgroundColor = .red
+        scroll.addSubview(marker)
+        fixture.window.rootViewController?.view.addSubview(scroll)
+        fixture.model.source.view = marker
+        scroll.setContentOffset(CGPoint(x: 0, y: 400), animated: false)
+        fixture.model.source.prepare(for: fixture.model.item)
+        let session = TVDetailEntranceSession()
+        defer { session.finishImmediately() }
+        session.attach(to: fixture.window, enabled: true)
+        try await waitUntil { session.stage == .complete }
+        session.close { scroll.setContentOffset(.zero, animated: false) }
+        try await waitUntil { self.overlays(in: fixture.window).isEmpty }
+        XCTAssertEqual(scroll.contentOffset.y, 400, accuracy: 1)
+        XCTAssertFalse(DetailTransitionNavigation.isRestoringSourcePage)
+    }
+
+    func testPreparedNavigationDisablesTheUnderlyingStackAnimation() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.close() }
+        fixture.model.open(in: fixture.window, usesCard: true)
+        try await waitUntil { fixture.model.session?.stage == .complete }
+        XCTAssertFalse(fixture.model.navigationAnimations.isEmpty)
+        XCTAssertFalse(fixture.model.navigationAnimations.contains(true))
+    }
+
+    func testUnpreparedNavigationKeepsTheUnderlyingStackAnimation() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.close() }
+        withAnimation {
+            DetailTransitionNavigation.performNavigation { fixture.model.path.append(1) }
+        }
+        try await waitUntil { fixture.model.session?.stage == .complete }
+        XCTAssertTrue(fixture.model.navigationAnimations.contains(true))
     }
 
     func testMemoryPressureReleasesTheReturnBackdropWithoutBlockingBack() async throws {
@@ -290,6 +370,9 @@ final class CinematicDetailTransitionHostedTests: XCTestCase {
                     item: item, style: shape, enablesAsyncArtworkFallback: false
                 ) {}.frame(width: shape == .poster ? 240 : 520)
                     .environment(\.plozzCardStyle, style)
+                    // Rasterization belongs to custom focus; native projection
+                    // can change the presented artwork's aspect ratio.
+                    .environment(\.plozzCardFocusStyle, .outlined)
                     .environment(\.plozzReduceTransparency, true))
                 let window = UIWindow(windowScene: scene)
                 window.frame = CGRect(x: 0, y: 0, width: 1920, height: 1080)
@@ -409,10 +492,11 @@ private final class CinematicFixtureModel {
     @ObservationIgnored var stages: [DetailEntranceStage] = []
     @ObservationIgnored var frames: [DetailEntranceStage: CGRect] = [:]
     @ObservationIgnored var events: [String] = []
+    @ObservationIgnored var navigationAnimations: [Bool] = []
 
     func open(in window: UIWindow, usesCard: Bool) {
         DetailTransitionNavigation.prepare(for: item, in: window, source: usesCard ? source : nil)
-        path.append(1)
+        withCinematicDetailNavigation(for: item) { path.append(1) }
     }
 }
 
@@ -459,16 +543,44 @@ private struct CinematicFixturePage: View {
         .padding(80)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
         .background(.blue)
+        .background { NavigationAppearanceProbe(model: model) }
         .modifier(DetailTopSafeAreaBreakout())
         .onAppear {
             model.session = session
             model.stages = [.artwork]
         }
+
         .onChange(of: session?.stage) { _, stage in
             if let stage, model.stages.last != stage {
                 model.stages.append(stage)
                 model.events.append("\(Date().timeIntervalSince1970): \(stage)")
             }
+        }
+    }
+}
+
+private struct NavigationAppearanceProbe: UIViewControllerRepresentable {
+    let model: CinematicFixtureModel
+
+    func makeUIViewController(context: Context) -> Controller {
+        Controller(model: model)
+    }
+
+    func updateUIViewController(_ controller: Controller, context: Context) {}
+
+    final class Controller: UIViewController {
+        let model: CinematicFixtureModel
+
+        init(model: CinematicFixtureModel) {
+            self.model = model
+            super.init(nibName: nil, bundle: nil)
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        override func viewWillAppear(_ animated: Bool) {
+            super.viewWillAppear(animated)
+            model.navigationAnimations.append(transitionCoordinator?.isAnimated ?? animated)
         }
     }
 }

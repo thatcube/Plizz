@@ -669,6 +669,9 @@ public struct ItemDetailView: View {
                         // Whenever focus lands on (or moves between) any hero action
                         // button, re-pin the page to the hero top.
                         onHeroActionFocused: {
+                            #if os(tvOS)
+                            guard !DetailTransitionNavigation.isRestoringSourcePage else { return }
+                            #endif
                             withAnimation(.easeInOut(duration: 0.4)) {
                                 proxy.scrollTo(Self.topAnchorID, anchor: .top)
                             }
@@ -763,6 +766,9 @@ public struct ItemDetailView: View {
             // Without this the movie hero stays scrolled down after tvOS frames
             // the bottom-anchored Play button on first focus.
             .onChange(of: playFocused) { _, focused in
+                #if os(tvOS)
+                guard !DetailTransitionNavigation.isRestoringSourcePage else { return }
+                #endif
                 if focused {
                     withAnimation(.easeInOut(duration: 0.4)) {
                         proxy.scrollTo(Self.topAnchorID, anchor: .top)

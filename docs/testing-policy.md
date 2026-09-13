@@ -196,11 +196,23 @@ it. Render-server snapshots avoid a full-window bitmap draw on the main thread.
 The hosted tests also delay destination mounting and withhold return focus to
 verify that neither creates a new pre-animation wait.
 
+Prepared title routes use `withCinematicDetailNavigation` to commit the real
+stack change without a second native navigation animation. Unprepared routes
+retain their normal animation. A UIKit appearance observer keeps the opening
+cover until both the artwork has landed and the destination has appeared,
+without restarting the artwork pause or foreground sequence.
+
 Back restores the captured source page behind the moving artwork immediately,
-not a snapshot of the outgoing detail page. Its real content is hidden during
-the pop. Coverage deliberately delays the native pop by 250ms and samples an
-uncovered corner during the reverse animation. The source-page snapshot is
-released after returning, on a memory warning, or with the page's lifetime.
+not a snapshot of the outgoing detail page. The popped content stays hidden
+through teardown. The cover remains until both reverse motion and the real pop
+finish; source scroll offsets and focus are restored beneath it before removal.
+Home and detail hero focus handlers ignore these restoration events rather than
+starting another scroll/recede animation. Ordinary user-driven timing is unchanged.
+Coverage deliberately delays the pop by 700ms (longer than the reverse animation),
+checks both spatial and nonspatial covers, restores a displaced scroll offset,
+and observes actual UIKit navigation animation flags. Window-scoped ownership
+keeps the return alive after the SwiftUI page is removed, then releases it at
+handoff. The source snapshot is also released on a memory warning.
 
 Card focus has three independent options: System (native tvOS projection),
 Highlight (custom sheen/lean) and Outline (custom glass). Absent per-profile

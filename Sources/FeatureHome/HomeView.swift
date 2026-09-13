@@ -467,6 +467,9 @@ public struct HomeView: View {
                                 // way UP feel much slower than the way down. The
                                 // observer still clears it as a backstop.)
                                 onFocusGained: {
+                                    #if os(tvOS)
+                                    guard !DetailTransitionNavigation.isRestoringSourcePage else { return }
+                                    #endif
                                     HomePerfDiagnostics.emitLine("HOME-TRANSITION hero-focus UP")
                                     if heroRecedeModel.isReceded {
                                         HomePerfDiagnostics.recordNavigationAnimation(receding: false)
@@ -590,6 +593,9 @@ public struct HomeView: View {
                 .onScrollGeometryChange(for: Bool.self) { geometry in
                     heroActive && geometry.contentOffset.y > Self.recedeScrollThreshold
                 } action: { _, shouldRecede in
+                    #if os(tvOS)
+                    guard !DetailTransitionNavigation.isRestoringSourcePage else { return }
+                    #endif
                     HomePerfDiagnostics.emitLine("HOME-TRANSITION receded=\(shouldRecede)")
                     if shouldRecede {
                         HomePerfDiagnostics.recordNavigationAnimation(receding: true)

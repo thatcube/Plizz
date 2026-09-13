@@ -434,7 +434,10 @@ struct SeriesDetailView: View {
     /// user's — while a child page is on top, or while the rail is reclaiming
     /// focus just after one pops.
     private var ignoresSystemFocusMoves: Bool {
-        hasChildOnTop || isReclaimingFocus
+        #if os(tvOS)
+        if DetailTransitionNavigation.isRestoringSourcePage { return true }
+        #endif
+        return hasChildOnTop || isReclaimingFocus
     }
 
     private var scroll: some View {
@@ -862,7 +865,8 @@ struct SeriesDetailView: View {
         }
         .background {
             #if os(tvOS)
-            NativeFocusRegionObserver(isEnabled: !ignoresSystemFocusMoves) {
+            NativeFocusRegionObserver(isEnabled: !hasChildOnTop && !isReclaimingFocus) {
+                guard !ignoresSystemFocusMoves else { return }
                 SeriesFocusTrace.record("nativeSeasonEntry")
                 enterSeasonBrowser(onFocusEntered: onFocusEntered)
             }
