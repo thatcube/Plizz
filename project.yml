@@ -482,6 +482,8 @@ targets:
         product: FeatureHome
       - package: Plozz
         product: FeatureHomeCore
+      - package: Plozz
+        product: AppShell
 
 schemes:
   PlozzHomeFixtureTests:

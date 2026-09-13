@@ -2,6 +2,7 @@
 import SwiftUI
 import UIKit
 import FeatureHome
+import CoreUI
 
 /// The native keyboard moves between keys inside one UIKit focus item. Only
 /// UIKit's failed-movement notification proves that Left reached its boundary.
@@ -53,6 +54,7 @@ struct SearchBoundaryNavigationObserver: UIViewRepresentable {
 
         @objc private func movementFailed(_ notification: Notification) {
             guard isEnabled, let window,
+                  let epoch = DetailTransitionNavigation.navigationInputEpoch(in: window),
                   let context = notification.userInfo?[UIFocusSystem.focusUpdateContextUserInfoKey]
                     as? UIFocusUpdateContext,
                   let current = UIFocusSystem.focusSystem(for: window)?.focusedItem,
@@ -66,6 +68,7 @@ struct SearchBoundaryNavigationObserver: UIViewRepresentable {
                 await Task.yield()
                 guard !Task.isCancelled, let self, self.isEnabled,
                       self.window === window,
+                      DetailTransitionNavigation.navigationInputEpoch(in: window) == epoch,
                       UIFocusSystem.focusSystem(for: window)?.focusedItem === current else { return }
                 HeroFocusDiagnostics.emit("search.native-boundary left")
                 self.onOpenNavigation?()

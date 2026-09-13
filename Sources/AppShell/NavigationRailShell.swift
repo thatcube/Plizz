@@ -210,7 +210,8 @@ struct NavigationRailShell<Content: View>: View {
     }
 
     private func requestNavigationFocus() {
-        guard !chrome.isChromeHidden, !isOpeningNavigation, !railExpanded else { return }
+        guard !DetailTransitionNavigation.isNavigationInputSuppressed,
+              !chrome.isChromeHidden, !isOpeningNavigation, !railExpanded else { return }
         hasEnteredSearchContent = false
         isOpeningNavigation = true
         focusRequestToken &+= 1

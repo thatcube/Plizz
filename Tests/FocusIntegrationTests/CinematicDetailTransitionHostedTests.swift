@@ -7,6 +7,27 @@ import XCTest
 
 @MainActor
 final class CinematicDetailTransitionHostedTests: XCTestCase {
+    func testReturnConsumesAHeldPressPastVisualCompletion() async throws {
+        final class HeldLeft: UIPress {
+            override var type: UIPress.PressType { .leftArrow }
+        }
+        let fixture = try await makeFixture()
+        defer { fixture.close() }
+        fixture.model.open(in: fixture.window, usesCard: true)
+        try await waitUntil { fixture.model.session?.stage == .complete }
+        let session = try XCTUnwrap(fixture.model.session)
+        session.close { fixture.model.path.removeLast() }
+        let guardView = try XCTUnwrap(inputGuards(in: fixture.window).first)
+        let press = HeldLeft()
+        guardView.pressesBegan([press], with: UIPressesEvent())
+        try await waitUntil { self.overlays(in: fixture.window).isEmpty }
+        XCTAssertTrue(guardView.view === fixture.window)
+        XCTAssertTrue(DetailTransitionNavigation.isNavigationInputSuppressed)
+        guardView.pressesEnded([press], with: UIPressesEvent())
+        try await waitUntil { self.inputGuards(in: fixture.window).isEmpty }
+        XCTAssertFalse(DetailTransitionNavigation.isNavigationInputSuppressed)
+    }
+
     func testEpisodeRowEntersAfterControlsAndBeforeNavigationUnlocks() async throws {
         let fixture = try await makeFixture()
         defer { fixture.close() }

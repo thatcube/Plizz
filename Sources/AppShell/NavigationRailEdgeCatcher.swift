@@ -2,6 +2,7 @@
 import SwiftUI
 import UIKit
 import FeatureHome
+import CoreUI
 
 /// Resolves a directional press that had nowhere else to go: Left opens the
 /// navigation rail, Right returns focus to the page.
@@ -80,8 +81,8 @@ struct NavigationRailEdgeCatcher: UIViewRepresentable {
 
         override init(frame: CGRect) {
             super.init(frame: frame)
-            swipeRecognizer.onSwipe = { [weak recognizer] before, wasInRail in
-                recognizer?.checkFocusAfterInput(before: before, wasInRail: wasInRail)
+            swipeRecognizer.onSwipe = { [weak recognizer] before, wasInRail, epoch in
+                recognizer?.checkFocusAfterInput(before: before, wasInRail: wasInRail, inputEpoch: epoch)
             }
         }
 
@@ -106,12 +107,13 @@ struct NavigationRailEdgeCatcher: UIViewRepresentable {
     }
 
     final class BoundarySwipeRecognizer: UIGestureRecognizer {
-        var onSwipe: ((UIFocusItem?, Bool) -> Void)?
+        var onSwipe: ((UIFocusItem?, Bool, UInt64) -> Void)?
         var railHasFocus = false
         private var before: UIFocusItem?
         private var wasInRail = false
         private var allowsFallback = false
         private var travel = SwipeTravel()
+        private var inputEpoch: UInt64?
 
         override init(target: Any?, action: Selector?) {
             super.init(target: target, action: action)
@@ -127,7 +129,9 @@ struct NavigationRailEdgeCatcher: UIViewRepresentable {
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
             before = NavigationRailEdgeCatcher.focusedItem(in: view)
             wasInRail = railHasFocus
-            allowsFallback = wasInRail || NavigationRailEdgeCatcher.permitsNavigationFallback(from: before)
+            inputEpoch = DetailTransitionNavigation.navigationInputEpoch(in: view)
+            allowsFallback = inputEpoch != nil
+                && (wasInRail || NavigationRailEdgeCatcher.permitsNavigationFallback(from: before))
             travel = SwipeTravel()
         }
 
@@ -139,8 +143,10 @@ struct NavigationRailEdgeCatcher: UIViewRepresentable {
 
         override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
             HeroFocusDiagnostics.emit("sidebar touch ended travel=\(travel.translation) rail=\(wasInRail)")
-            if allowsFallback, travel.direction == (wasInRail ? .right : .left) {
-                onSwipe?(before, wasInRail)
+            if allowsFallback, let inputEpoch,
+               DetailTransitionNavigation.navigationInputEpoch(in: view) == inputEpoch,
+               travel.direction == (wasInRail ? .right : .left) {
+                onSwipe?(before, wasInRail, inputEpoch)
             }
             state = .failed
         }
@@ -153,6 +159,7 @@ struct NavigationRailEdgeCatcher: UIViewRepresentable {
             super.reset()
             before = nil
             allowsFallback = false
+            inputEpoch = nil
             travel = SwipeTravel()
         }
 
@@ -218,28 +225,33 @@ struct NavigationRailEdgeCatcher: UIViewRepresentable {
             // Only the direction that would cross the rail boundary is watched:
             // Left while focus is on the page, Right while it is in the rail.
             let watched: UIPress.PressType = railHasFocus ? .rightArrow : .leftArrow
-            guard isEnabled, presses.contains(where: { $0.type == watched }) else {
+            guard isEnabled, presses.contains(where: { $0.type == watched }),
+                  let epoch = DetailTransitionNavigation.navigationInputEpoch(in: view) else {
                 super.pressesBegan(presses, with: event)
                 return
             }
 
             let before = NavigationRailEdgeCatcher.focusedItem(in: view)
             let wasInRail = railHasFocus
-            checkFocusAfterInput(before: before, wasInRail: wasInRail)
+            checkFocusAfterInput(before: before, wasInRail: wasInRail, inputEpoch: epoch)
 
             // Never recognise: the press belongs to whatever the page does with it.
             state = .failed
             super.pressesBegan(presses, with: event)
         }
 
-        func checkFocusAfterInput(before: UIFocusItem?, wasInRail: Bool) {
-            guard let before else { return }
+        func checkFocusAfterInput(before: UIFocusItem?, wasInRail: Bool, inputEpoch: UInt64? = nil) {
+            guard let before, let inputView = view,
+                  let epoch = inputEpoch ?? DetailTransitionNavigation.navigationInputEpoch(in: view),
+                  DetailTransitionNavigation.navigationInputEpoch(in: view) == epoch else { return }
             guard wasInRail || NavigationRailEdgeCatcher.permitsNavigationFallback(from: before) else { return }
             pendingCheck?.cancel()
             pendingCheck = Task { @MainActor [weak self] in
                 try? await Task.sleep(for: Self.settleDelay)
                 guard !Task.isCancelled, let self, self.isEnabled,
-                      self.railHasFocus == wasInRail else { return }
+                      self.view === inputView,
+                      self.railHasFocus == wasInRail,
+                      DetailTransitionNavigation.navigationInputEpoch(in: self.view) == epoch else { return }
                 // Focus moved, so the press had a genuine use and neither the
                 // navigation nor the page needs to intervene.
                 guard NavigationRailEdgeCatcher.focusedItem(in: self.view) === before else { return }

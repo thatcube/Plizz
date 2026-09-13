@@ -290,6 +290,29 @@ public enum DetailTransitionNavigation {
     private static var pending: [ObjectIdentifier: PendingDetailEntrance] = [:]
     private static var suppressed: [ObjectIdentifier: UUID] = [:]
     private static var restoring: [ObjectIdentifier: (token: UUID, session: TVDetailEntranceSession)] = [:]
+    private static let inputEpochs = NSMapTable<UIWindow, NSNumber>.weakToStrongObjects()
+
+    public static var isNavigationInputSuppressed: Bool {
+        activeWindow.map { navigationInputEpoch(in: $0) == nil } ?? false
+    }
+
+    /// Passive navigation observers must reject consumed input as well as
+    /// checks queued before a transition changed the window's focus scope.
+    public static func navigationInputEpoch(in view: UIView?) -> UInt64? {
+        guard let window = (view as? UIWindow) ?? view?.window else { return nil }
+        guard !(window.gestureRecognizers ?? []).contains(where: {
+            $0 is DetailTransitionInputGuard && $0.isEnabled
+        }) else { return nil }
+        return inputEpochs.object(forKey: window)?.uint64Value ?? 0
+    }
+
+    static func installInputGuard(in window: UIWindow) -> DetailTransitionInputGuard {
+        let epoch = (inputEpochs.object(forKey: window)?.uint64Value ?? 0) &+ 1
+        inputEpochs.setObject(NSNumber(value: epoch), forKey: window)
+        let guardView = DetailTransitionInputGuard()
+        window.addGestureRecognizer(guardView)
+        return guardView
+    }
 
     public static var isRestoringSourcePage: Bool {
         activeWindow.map { restoring[ObjectIdentifier($0)] != nil } ?? false
@@ -472,8 +495,7 @@ final class PendingDetailEntrance {
         overlay = DetailTransitionOverlay(screen: screen, card: card)
         overlay.frame = window.bounds
         window.addSubview(overlay)
-        inputGuard = DetailTransitionInputGuard()
-        window.addGestureRecognizer(inputGuard)
+        inputGuard = DetailTransitionNavigation.installInputGuard(in: window)
     }
 
     func start(allowsMissingArtwork: Bool = false) {
@@ -502,7 +524,7 @@ final class PendingDetailEntrance {
         animator = nil
         onLanded = nil
         overlay.removeFromSuperview()
-        inputGuard.view?.removeGestureRecognizer(inputGuard)
+        inputGuard.invalidate()
     }
 }
 
@@ -927,20 +949,19 @@ public final class TVDetailEntranceSession {
         overlay = nil
         earlyDestinationArtwork = nil
         DetailTransitionNavigation.endSourceRestore(token: restoreToken)
-        releaseInput()
+        releaseInput(force: true)
         stage = .complete
         isClosing = false
         blocksNavigation = false
     }
 
     private func installInputGuard(in window: UIWindow) -> DetailTransitionInputGuard {
-        let guardView = DetailTransitionInputGuard()
-        window.addGestureRecognizer(guardView)
-        return guardView
+        DetailTransitionNavigation.installInputGuard(in: window)
     }
 
-    private func releaseInput() {
-        if let inputGuard { inputGuard.view?.removeGestureRecognizer(inputGuard) }
+    private func releaseInput(force: Bool = false) {
+        if force { inputGuard?.invalidate() }
+        else { inputGuard?.releaseWhenIdle() }
         inputGuard = nil
     }
 }
@@ -1247,27 +1268,93 @@ enum DetailTransitionSnapshot {
 /// Physical input is discarded while the entrance runs, but Back/Home remain native.
 @MainActor
 final class DetailTransitionInputGuard: UIGestureRecognizer {
+    private var activePresses: Set<ObjectIdentifier> = []
+    private var activeTouches: Set<ObjectIdentifier> = []
+    private var releaseRequested = false
+    private var removalScheduled = false
+
     init() {
         super.init(target: nil, action: nil)
         allowedPressTypes = [
-            UIPress.PressType.upArrow, .downArrow, .leftArrow, .rightArrow, .select, .playPause
+            UIPress.PressType.upArrow, .downArrow, .leftArrow, .rightArrow,
+            .pageUp, .pageDown, .select, .playPause
         ].map { NSNumber(value: $0.rawValue) }
         allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirect.rawValue)]
         cancelsTouchesInView = true
         delaysTouchesBegan = true
+        name = "Plozz cinematic navigation input"
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(applicationWillDeactivate),
+            name: UIApplication.willResignActiveNotification, object: nil
+        )
     }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
+
+    @objc private func applicationWillDeactivate() { invalidate() }
 
     override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
 
+    func releaseWhenIdle() {
+        releaseRequested = true
+        if activePresses.isEmpty, activeTouches.isEmpty { invalidate() }
+    }
+
+    func invalidate() {
+        releaseRequested = false
+        view?.removeGestureRecognizer(self)
+    }
+
+    private func finishInputIfIdle() {
+        guard activePresses.isEmpty, activeTouches.isEmpty else { return }
+        state = .ended
+        guard releaseRequested, !removalScheduled else { return }
+        removalScheduled = true
+        // Keep suppression visible to passive observers handling this same
+        // release event, including a swipe that began before visual completion.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            removalScheduled = false
+            guard releaseRequested, activePresses.isEmpty, activeTouches.isEmpty else { return }
+            invalidate()
+        }
+    }
+
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent) {
-        state = presses.contains { $0.type == .menu } ? .failed : .began
+        let blocked = presses.filter { allowedPressTypes.contains(NSNumber(value: $0.type.rawValue)) }
+        guard !blocked.isEmpty else { return }
+        activePresses.formUnion(blocked.map(ObjectIdentifier.init))
+        state = .began
     }
     override func pressesChanged(_ presses: Set<UIPress>, with event: UIPressesEvent) {}
-    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent) { state = .ended }
-    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent) { state = .cancelled }
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) { state = .began }
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent) {
+        let identifiers = Set(presses.map(ObjectIdentifier.init))
+        guard !activePresses.isDisjoint(with: identifiers) else { return }
+        activePresses.subtract(identifiers)
+        finishInputIfIdle()
+    }
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent) {
+        let identifiers = Set(presses.map(ObjectIdentifier.init))
+        guard !activePresses.isDisjoint(with: identifiers) else { return }
+        activePresses.subtract(identifiers)
+        finishInputIfIdle()
+    }
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        activeTouches.formUnion(touches.map(ObjectIdentifier.init))
+        state = .began
+    }
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {}
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) { state = .ended }
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { state = .cancelled }
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        let identifiers = Set(touches.map(ObjectIdentifier.init))
+        guard !activeTouches.isDisjoint(with: identifiers) else { return }
+        activeTouches.subtract(identifiers)
+        finishInputIfIdle()
+    }
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        let identifiers = Set(touches.map(ObjectIdentifier.init))
+        guard !activeTouches.isDisjoint(with: identifiers) else { return }
+        activeTouches.subtract(identifiers)
+        finishInputIfIdle()
+    }
 }
 #endif

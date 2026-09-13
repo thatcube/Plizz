@@ -250,6 +250,18 @@ and observes actual UIKit navigation animation flags. Window-scoped ownership
 keeps the return alive after the SwiftUI page is removed, then releases it at
 handoff. The source snapshot is also released on a memory warning.
 
+Pinned navigation's passive arrow/swipe observers must honor the cinematic
+input gate: a consumed Left is not an unresolved page boundary. Capture the
+window's input epoch at gesture start and recheck it before any deferred rail
+action, so work queued across a transition cannot open navigation afterward.
+The native Search boundary observer and explicit sidebar-open requests use the
+same gate. Visual completion does not release a held press or touch: suppression
+drains through its end/cancellation and the rest of that event's observers.
+Fresh input works without a cooldown; Back remains native, and app deactivation
+or forced teardown removes the guard immediately. `PinnedReturnInputHostedTests`
+covers blocked/queued Left, held and mixed input, swipe epochs, fresh navigation,
+and the real pinned-edge callback changing UIKit focus.
+
 Card focus has three independent options: System (native tvOS projection),
 Highlight (custom sheen/lean) and Outline (custom glass). Absent per-profile
 preferences use System; saved `highlight` and `outlined` values are not migrated.

@@ -52,6 +52,9 @@ public final class PlozzPinnedSidebarInteraction: ObservableObject {
 
     @MainActor
     public func requestOpen() {
+        #if os(tvOS)
+        guard !DetailTransitionNavigation.isNavigationInputSuppressed else { return }
+        #endif
         openRequest &+= 1
     }
 }
