@@ -142,6 +142,7 @@ struct NavigationRailView: View {
     /// preferred focus and directional fallback while the overlay is open.
     @Binding var isExpandedOutward: Bool
     let onOpenProfileSwitcher: () -> Void
+    var isFocusEnabled = true
     /// Bumped by the shell when its leading-edge catcher takes a Left press, so the
     /// rail pulls focus onto the current destination.
     var focusRequestToken: Int = 0
@@ -187,12 +188,12 @@ struct NavigationRailView: View {
     }
 
     /// Explicit page-button entry shows the full menu while focus catches up.
-    private var isExpanded: Bool { hasFocus || opensExpanded }
+    private var isExpanded: Bool { isFocusEnabled && (hasFocus || opensExpanded) }
 
     /// Whether focus is currently inside the rail.
     ///
     /// Drives which rows are focusable at all: see ``isRowFocusable(_:)``.
-    private var hasFocus: Bool { focusedTarget != nil }
+    private var hasFocus: Bool { isFocusEnabled && focusedTarget != nil }
 
     private var animatedRailWidth: CGFloat {
         NavigationRailMetrics.collapsedWidth
@@ -236,6 +237,7 @@ struct NavigationRailView: View {
     ///
     /// Once focus is inside, everything opens up so Up/Down walk the whole rail.
     private func isRowFocusable(_ target: RailFocusTarget) -> Bool {
+        guard isFocusEnabled, isEnabled else { return false }
         // Handing focus back to the page: nothing in the rail may hold it.
         if isReleasingFocus { return false }
         if hasFocus { return true }
@@ -288,7 +290,7 @@ struct NavigationRailView: View {
         )
         .accessibilityLabel(Text(Self.accessibilityTitle))
         .onChange(of: isExpanded, initial: true) { _, expanded in
-            withAnimation(NavigationRailMetrics.expandAnimation) {
+            withAnimation(isFocusEnabled ? NavigationRailMetrics.expandAnimation : nil) {
                 animatedExpansionProgress = expanded ? 1 : 0
             }
         }
@@ -303,6 +305,14 @@ struct NavigationRailView: View {
             pendingFocusRequest = nil
             pendingFocusTarget = nil
             isExpandedOutward = false
+        }
+        .onChange(of: isFocusEnabled) { _, enabled in
+            if !enabled {
+                focusRequestGeneration &+= 1
+                pendingFocusRequest = nil
+                pendingFocusTarget = nil
+                focusedTarget = nil
+            }
         }
         // The shell's edge catcher took a Left press from the page. Claim focus for
         // the tab you are actually on — the catcher draws nothing, so nothing
@@ -400,6 +410,7 @@ struct NavigationRailView: View {
 
     /// The row's UIKit marker waits for its control to exist before handing off.
     private func adoptFocus(_ target: RailFocusTarget) {
+        guard isFocusEnabled, isEnabled else { return }
         isReleasingFocus = false
         focusRequestGeneration &+= 1
         pendingFocusTarget = target
@@ -412,7 +423,7 @@ struct NavigationRailView: View {
         let shellRequest = focusRequestToken
         let onFailed = onFocusRequestFailed
         return NavigationRowFocusRequester(
-            request: isEnabled && !isReleasingFocus && pendingFocusTarget == target
+            request: isFocusEnabled && isEnabled && !isReleasingFocus && pendingFocusTarget == target
                 ? pendingFocusRequest : nil,
             onCompleted: { request, didFocus in
                 guard requestState.wrappedValue == request else { return }

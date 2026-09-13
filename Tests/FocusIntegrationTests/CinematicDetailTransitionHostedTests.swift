@@ -458,6 +458,28 @@ final class CinematicDetailTransitionHostedTests: XCTestCase {
         XCTAssertEqual(count, 1, "Mounting details must not choose the same image a second time.")
     }
 
+    func testSettledFocusStartsBackdropPreparationWithoutTheOld350msDelay() async throws {
+        let store = MetadataProviderSettingsStore()
+        let original = store.load()
+        var settings = original
+        settings.preferOnlineArtwork = false
+        store.save(settings)
+        defer { store.save(original) }
+        let (url, _) = try await cachedPreview()
+        let item = MediaItem(id: UUID().uuidString, title: "Show", kind: .series, backdropURL: url)
+        let source = DetailBackdropArtworkSource(item: item)
+        let fixture = try await makeFixture()
+        defer { fixture.close() }
+        let host = UIHostingController(rootView:
+            Color.clear.preloadDetailBackdropOnFocus(for: item, isFocused: true)
+        )
+        let started = ContinuousClock.now
+        fixture.window.rootViewController = host
+        host.view.layoutIfNeeded()
+        try await waitUntil { ArtworkSeedMemo.prepared(for: source.previewKey, variant: .heroPreview) != nil }
+        XCTAssertLessThan(started.duration(to: .now), .milliseconds(300))
+    }
+
     func testNavigationAdoptsFocusedLookupEvenWhenFocusLeaves() async throws {
         let store = MetadataProviderSettingsStore()
         let original = store.load()

@@ -183,7 +183,11 @@ public final class DetailTransitionSourceReference {
             if current.canBecomeFocused {
                 system?.requestFocusUpdate(to: current)
                 system?.updateFocusIfNeeded()
-                return
+                let focused = system?.focusedItem.flatMap { TVNavigationExitProtectionFocus.containingView(of: $0) }
+                if current.isFocused || focused?.isDescendant(of: current) == true { return }
+                // A restored SwiftUI scope can reject the native request; its
+                // explicit focus binding below must still get a chance.
+                break
             }
             nativeOwner = current.superview
         }
@@ -291,6 +295,43 @@ public enum DetailTransitionNavigation {
     private static var suppressed: [ObjectIdentifier: UUID] = [:]
     private static var restoring: [ObjectIdentifier: (token: UUID, session: TVDetailEntranceSession)] = [:]
     private static let inputEpochs = NSMapTable<UIWindow, NSNumber>.weakToStrongObjects()
+    private static let chromeRegistrations = NSMapTable<UIWindow, ChromeRegistration>.weakToStrongObjects()
+
+    private final class ChromeRegistration {
+        weak var chrome: NavigationChromeModel?
+        let token: UUID
+        init(chrome: NavigationChromeModel, token: UUID) {
+            self.chrome = chrome
+            self.token = token
+        }
+    }
+
+    static func registerChrome(_ chrome: NavigationChromeModel, in window: UIWindow, token: UUID) {
+        let existing = chromeRegistrations.object(forKey: window)
+        if existing?.token != token || existing?.chrome !== chrome {
+            chromeRegistrations.setObject(ChromeRegistration(chrome: chrome, token: token), forKey: window)
+        }
+        refreshChromeInput(in: window)
+    }
+
+    static func unregisterChrome(in window: UIWindow, token: UUID) {
+        guard let registration = chromeRegistrations.object(forKey: window), registration.token == token else { return }
+        chromeRegistrations.removeObject(forKey: window)
+        registration.chrome?.updateTransitionInput(suppressesFocus: false, hidesRail: false)
+    }
+
+    static func chromeModel(in window: UIWindow) -> NavigationChromeModel? {
+        chromeRegistrations.object(forKey: window)?.chrome
+    }
+
+    static func refreshChromeInput(in window: UIWindow) {
+        let guards = (window.gestureRecognizers ?? []).compactMap { $0 as? DetailTransitionInputGuard }
+            .filter(\.isEnabled)
+        chromeModel(in: window)?.updateTransitionInput(
+            suppressesFocus: !guards.isEmpty,
+            hidesRail: guards.contains { $0.phase == .opening }
+        )
+    }
 
     public static var isNavigationInputSuppressed: Bool {
         activeWindow.map { navigationInputEpoch(in: $0) == nil } ?? false
@@ -306,11 +347,14 @@ public enum DetailTransitionNavigation {
         return inputEpochs.object(forKey: window)?.uint64Value ?? 0
     }
 
-    static func installInputGuard(in window: UIWindow) -> DetailTransitionInputGuard {
+    static func installInputGuard(
+        in window: UIWindow, phase: DetailTransitionInputGuard.Phase = .opening
+    ) -> DetailTransitionInputGuard {
         let epoch = (inputEpochs.object(forKey: window)?.uint64Value ?? 0) &+ 1
         inputEpochs.setObject(NSNumber(value: epoch), forKey: window)
-        let guardView = DetailTransitionInputGuard()
+        let guardView = DetailTransitionInputGuard(phase: phase)
         window.addGestureRecognizer(guardView)
+        refreshChromeInput(in: window)
         return guardView
     }
 
@@ -591,6 +635,8 @@ public final class TVDetailEntranceSession {
     @ObservationIgnored private var pageAppearedAt: CFTimeInterval?
     @ObservationIgnored private var foregroundSequenceStarted = false
     @ObservationIgnored private var revealsEpisodesLast = false
+    @ObservationIgnored private weak var navigationChrome: NavigationChromeModel?
+    @ObservationIgnored private let chromeToken = UUID()
 
     public init(timing: DetailEntranceTiming = DetailEntranceTiming()) {
         self.timing = timing
@@ -664,6 +710,8 @@ public final class TVDetailEntranceSession {
         }
         hasStarted = true
         stage = .artwork
+        navigationChrome = DetailTransitionNavigation.chromeModel(in: window)
+        navigationChrome?.detailAppeared(chromeToken)
         let pending = DetailTransitionNavigation.take(in: window)
         source = pending?.source
         sourceKey = pending?.itemKey
@@ -720,7 +768,9 @@ public final class TVDetailEntranceSession {
     }
 
     func pageAppeared() {
+        guard !isClosing else { return }
         pageIsVisible = true
+        navigationChrome?.detailAppeared(chromeToken)
         pageAppearedAt = CACurrentMediaTime()
         startForegroundIfReady()
         finishEntranceIfReady()
@@ -728,6 +778,7 @@ public final class TVDetailEntranceSession {
 
     func pageDisappeared() {
         pageIsVisible = false
+        navigationChrome?.detailDisappeared(chromeToken)
         guard isClosing else { return }
         returnNavigationFinished = true
         finishReturnIfReady()
@@ -805,7 +856,13 @@ public final class TVDetailEntranceSession {
             dismiss()
             return
         }
+        if let inputGuard {
+            inputGuard.setPhase(.returning)
+        } else {
+            inputGuard = DetailTransitionNavigation.installInputGuard(in: window, phase: .returning)
+        }
         isClosing = true
+        navigationChrome?.detailDisappeared(chromeToken)
         backdropRequest?.cancel()
         backdropRequest = nil
         returnMotionFinished = false
@@ -838,7 +895,6 @@ public final class TVDetailEntranceSession {
         cover.card.alpha = destinationArtwork == nil ? 1 : 0
         window.addSubview(cover)
         overlay = cover
-        if inputGuard == nil { inputGuard = installInputGuard(in: window) }
         // The source is hidden until the native pop, so its visibility is not
         // a prerequisite. Its captured focused shape is already the right target.
         let validSource = source != nil && source?.itemKey == sourceKey
@@ -890,6 +946,7 @@ public final class TVDetailEntranceSession {
                     if activationWindowSize == window.bounds.size {
                         scrollPositions.forEach { $0.restore(in: window) }
                     }
+                    window.layoutIfNeeded()
                     if source?.itemKey == sourceKey {
                         source?.restoreFocus(in: window, preferred: returnFocus)
                     }
@@ -919,6 +976,7 @@ public final class TVDetailEntranceSession {
     }
 
     func disappeared() {
+        navigationChrome?.detailDisappeared(chromeToken)
         guard !isClosing else { return }
         finishImmediately()
     }
@@ -1268,12 +1326,15 @@ enum DetailTransitionSnapshot {
 /// Physical input is discarded while the entrance runs, but Back/Home remain native.
 @MainActor
 final class DetailTransitionInputGuard: UIGestureRecognizer {
+    enum Phase { case opening, returning }
+    private(set) var phase: Phase
     private var activePresses: Set<ObjectIdentifier> = []
     private var activeTouches: Set<ObjectIdentifier> = []
     private var releaseRequested = false
     private var removalScheduled = false
 
-    init() {
+    init(phase: Phase = .opening) {
+        self.phase = phase
         super.init(target: nil, action: nil)
         allowedPressTypes = [
             UIPress.PressType.upArrow, .downArrow, .leftArrow, .rightArrow,
@@ -1302,7 +1363,15 @@ final class DetailTransitionInputGuard: UIGestureRecognizer {
 
     func invalidate() {
         releaseRequested = false
+        let window = view as? UIWindow
         view?.removeGestureRecognizer(self)
+        if let window { DetailTransitionNavigation.refreshChromeInput(in: window) }
+    }
+
+    func setPhase(_ phase: Phase) {
+        guard self.phase != phase else { return }
+        self.phase = phase
+        if let window = view as? UIWindow { DetailTransitionNavigation.refreshChromeInput(in: window) }
     }
 
     private func finishInputIfIdle() {

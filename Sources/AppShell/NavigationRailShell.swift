@@ -100,7 +100,7 @@ struct NavigationRailShell<Content: View>: View {
                         isNavigationExpanded: railExpanded || isOpeningNavigation,
                         isFocusEnabled: presentation.isPageButtonEnabled(
                             hasEnteredContent: hasEnteredSearchContent
-                        ),
+                        ) && !chrome.transitionSuppressesFocus,
                         onOpenNavigation: requestNavigationFocus
                     )
                     .padding(.leading, NavigationRailMetrics.expandedContentHorizontalPadding)
@@ -118,7 +118,7 @@ struct NavigationRailShell<Content: View>: View {
                         railHasFocus: railExpanded,
                         isEnabled: presentation.isEdgeNavigationEnabled(
                             searchResultsHaveFocus: pinnedSidebarInteraction.searchResultsHaveFocus
-                        ) && !pinnedSidebarInteraction.heroHasFocus
+                        ) && !pinnedSidebarInteraction.heroHasFocus && !chrome.transitionSuppressesFocus
                     )
                     .frame(width: 0, height: 0)
                     .allowsHitTesting(false)
@@ -126,7 +126,8 @@ struct NavigationRailShell<Content: View>: View {
 
                     SearchBoundaryNavigationObserver(
                         isEnabled: presentation.shouldEnterSearchContent
-                            && !pinnedSidebarInteraction.searchResultsHaveFocus,
+                            && !pinnedSidebarInteraction.searchResultsHaveFocus
+                            && !chrome.transitionSuppressesFocus,
                         onOpenNavigation: requestNavigationFocus
                     )
                     .frame(width: 0, height: 0)
@@ -142,6 +143,7 @@ struct NavigationRailShell<Content: View>: View {
                         selection: $selection,
                         isExpandedOutward: $railExpanded,
                         onOpenProfileSwitcher: onOpenProfileSwitcher,
+                        isFocusEnabled: !chrome.transitionSuppressesFocus,
                         focusRequestToken: focusRequestToken,
                         focusReleaseToken: railReturnToken,
                         opensExpanded: presentation.opensExpanded,
@@ -154,15 +156,16 @@ struct NavigationRailShell<Content: View>: View {
                     )
                     // Keep the focus-request observer mounted while Search hides
                     // the collapsed rail, but exclude invisible rows from focus.
-                    .disabled(!presentation.isRailEnabled)
+                    .disabled(!presentation.isRailEnabled || chrome.transitionSuppressesFocus)
                     .opacity(presentation.isRailVisible ? 1 : 0)
                     .animation(
                         reduceMotion || presentation.isRailVisible ? nil : .easeInOut(duration: 0.22),
                         value: presentation.isRailVisible
                     )
-                    .accessibilityHidden(!presentation.isRailEnabled)
+                    .accessibilityHidden(!presentation.isRailEnabled || chrome.transitionSuppressesFocus)
                     .ignoresSafeArea(edges: .leading)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
+                    .transition(chrome.transitionSuppressesFocus
+                        ? .identity : .move(edge: .leading).combined(with: .opacity))
                 }
             }
             .backgroundPreferenceValue(NavigationGlassAnchors.self) { anchors in
@@ -181,9 +184,10 @@ struct NavigationRailShell<Content: View>: View {
                 }
             }
         }
+        .background { NavigationChromeTransitionAnchor(chrome: chrome) }
         .focusScope(focusScopeID)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.26), value: hidden)
-        .animation(reduceMotion ? nil : NavigationRailMetrics.expandAnimation, value: railExpanded)
+        .animation(reduceMotion || chrome.transitionSuppressesFocus ? nil : .easeInOut(duration: 0.26), value: hidden)
+        .animation(reduceMotion || chrome.transitionSuppressesFocus ? nil : NavigationRailMetrics.expandAnimation, value: railExpanded)
         .onChange(of: selection, initial: true) { previous, destination in
             // The outgoing destination's stack is torn down without reporting, so
             // without this the rail would stay hidden after leaving a detail page
@@ -197,6 +201,12 @@ struct NavigationRailShell<Content: View>: View {
         }
         .onChange(of: railExpanded) { _, _ in
             isOpeningNavigation = false
+        }
+        .onChange(of: chrome.transitionSuppressesFocus) { _, suppressed in
+            if suppressed {
+                isOpeningNavigation = false
+                railExpanded = false
+            }
         }
         .onChange(of: hidden) { _, hidden in
             if hidden {

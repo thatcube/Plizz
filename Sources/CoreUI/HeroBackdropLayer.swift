@@ -183,7 +183,7 @@ private struct DetailBackdropFocusWarmup: ViewModifier {
         content.task(id: source?.key) {
             guard let source else { return }
             do {
-                try await Task.sleep(for: .milliseconds(350))
+                try await Task.sleep(for: .milliseconds(80))
                 await DetailBackdropFocusPrewarmer.warm(source)
             } catch is CancellationError {
                 // Moving past a title must not start an artwork lookup.

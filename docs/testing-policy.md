@@ -212,7 +212,7 @@ not restart that sequence. Exhausted artwork candidates release the cover and
 controls without a picture; Back remains available while artwork is pending,
 and a playing trailer satisfies backdrop readiness without waiting for a still.
 
-Known movie/show backdrops warm after 350ms of stable card/hero focus, with only
+Known movie/show backdrops warm after 80ms of stable card/hero focus, with only
 one unclaimed focus warmup active and image work on the background lane. The
 warmup preserves provider priority rather than pinning a provisional fallback.
 The exact preferred preview is retained under its policy-qualified preview key
@@ -221,6 +221,8 @@ navigation adopts that lookup and uses foreground image loading; it does not
 start another provider lookup or let focus loss cancel the selected request.
 Blur/disappearance cancels unclaimed work. A full-quality upgrade keeps the
 chosen reference, including when the upgrade fails.
+The row's older library-only backdrop warmer skips these movie/show cards,
+so it cannot compete with the policy-selected request for a different image.
 
 Selection starts any still-needed first-paint request, scoped to the navigation
 and joined by the destination. Its preview can feed the expansion before the
@@ -261,6 +263,19 @@ Fresh input works without a cooldown; Back remains native, and app deactivation
 or forced teardown removes the guard immediately. `PinnedReturnInputHostedTests`
 covers blocked/queued Left, held and mixed input, swipe epochs, fresh navigation,
 and the real pinned-edge callback changing UIKit focus.
+
+Input filtering is not enough to exclude native Up/Down focus moves. The pinned
+shell registers its observable `NavigationChromeModel` with the window:
+opening hides the rail immediately; return can draw the rail but disables every
+row, page button, and bumper through input release. Those visibility changes do
+not run a second chrome animation beneath the cinematic cover.
+Presented detail sessions also hold chrome ownership independently of delayed
+stack-depth reports, releasing it on dismissal/disappearance. A late appearance
+callback cannot let a closing page reclaim that ownership. Source layout is
+resolved before focus restoration, and a rejected native focus request falls
+through to the explicit SwiftUI focus binding.
+`PinnedChromeTransitionHostedTests` queries the real rail's native focus targets,
+checks hiding through zero-depth reports, and covers rejected source-focus requests.
 
 Card focus has three independent options: System (native tvOS projection),
 Highlight (custom sheen/lean) and Outline (custom glass). Absent per-profile

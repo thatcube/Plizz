@@ -1195,6 +1195,11 @@ public struct MediaRowView: View {
               !prefetchedHeroIDs.contains(item.stablePresentationID) else {
             return
         }
+        #if os(tvOS)
+        // Movie/show cards warm the policy-selected backdrop themselves. Do not
+        // compete with that request by also warming a different library image.
+        if item.kind == .movie || item.kind == .series { return }
+        #endif
         let references = item.artworkReferences(for: .detailBackdrop)
         guard let reference = references.first else { return }
         prefetchedHeroIDs.insert(item.stablePresentationID)
