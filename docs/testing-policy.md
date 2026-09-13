@@ -242,6 +242,10 @@ expansion defaults for the 400x225 fixture. Reading intrinsic size, subclassing,
 SwiftUI hosting and adding a SwiftUI overlay after the image did not cause that
 zero. Bare native controls also showed slight image-edge cropping under High
 Contrast, so that observation alone is not proof of an app-authored transform.
+The production adapter therefore initializes TVPosterView with its image before
+accessing imageView. While artwork loads, a cached opaque placeholder supplies
+the correct image geometry; it is content, not a replacement focus effect.
+Replacing that placeholder keeps the same native control and expansion defaults.
 
 Media-card focus uses `PlozzCardFocus`: native focus notifications update ordinary
 observed state, while explicit focus requests remain separate. A TVUIKit focus

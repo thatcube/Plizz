@@ -269,15 +269,21 @@ struct ComparisonAdapterPoster: View {
     let image: UIImage
     @PlozzCardFocus private var focused: Bool
     @State private var source = DetailTransitionSourceReference()
+    @State private var loadedImage: UIImage?
 
     var body: some View {
         NativeTVPoster(
-            image: image, treatment: .original, aspectRatio: 16 / 9,
+            image: loadedImage, treatment: .original, aspectRatio: 16 / 9,
             fallbackWidth: 400, title: nil, subtitle: nil,
             overlay: ComparisonSwiftUIOverlay(), focus: $focused, source: source, action: {}
         )
         .focused($focused.focusState)
         .environment(\.plozzCardFocusStyle, .system)
         .frame(width: 400, height: 225)
+        .task {
+            try? await Task.sleep(for: .milliseconds(100))
+            guard !Task.isCancelled else { return }
+            loadedImage = image
+        }
     }
 }

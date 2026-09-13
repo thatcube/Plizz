@@ -154,9 +154,28 @@ struct NativeTVPoster<Overlay: View>: UIViewRepresentable {
         var imageSize = CGSize.zero
         var imageScale: CGFloat = 1
         var prepared: UIImage?
+        private var placeholder: UIImage?
+        private var placeholderSize = CGSize.zero
+        private var placeholderScale: CGFloat = 1
 
         init(focus: PlozzCardFocus.Binding, action: @escaping () -> Void) {
             self.focus = NativeTVMediaCoordinator(focus: focus, action: action)
+        }
+
+        func presentationImage(_ image: UIImage?, treatment: NativePosterImageTreatment, size: CGSize, scale: CGFloat) -> UIImage {
+            if let prepared = prepare(image, treatment: treatment, size: size, scale: scale) { return prepared }
+            if let placeholder, placeholderSize == size, placeholderScale == scale { return placeholder }
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = scale
+            format.opaque = true
+            let loadingImage = UIGraphicsImageRenderer(size: size, format: format).image {
+                UIColor.secondarySystemBackground.setFill()
+                $0.fill(CGRect(origin: .zero, size: size))
+            }
+            placeholder = loadingImage
+            placeholderSize = size
+            placeholderScale = scale
+            return loadingImage
         }
 
         func prepare(_ image: UIImage?, treatment: NativePosterImageTreatment, size: CGSize, scale: CGFloat) -> UIImage? {
@@ -197,7 +216,14 @@ struct NativeTVPoster<Overlay: View>: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(focus: focus, action: action) }
 
     func makeUIView(context: Context) -> Poster {
-        let view = Poster(image: nil)
+        let size = CGSize(width: fallbackWidth, height: fallbackWidth / aspectRatio)
+        let initialImage = context.coordinator.presentationImage(
+            image, treatment: treatment, size: size, scale: context.environment.displayScale
+        )
+        // Materializing imageView with a nil image freezes TVUIKit's native
+        // focus expansion at zero, even after an image arrives.
+        let view = Poster(image: initialImage)
+        view.contentSize = size
         view.hostedOverlay = overlayConfiguration(in: context).makeContentView()
         if let overlay = view.hostedOverlay {
             let container = view.imageView.overlayContentView
@@ -224,7 +250,7 @@ struct NativeTVPoster<Overlay: View>: UIViewRepresentable {
         if view.title != resolvedTitle { view.title = resolvedTitle }
         if view.subtitle != subtitle { view.subtitle = subtitle }
         view.hostedOverlay?.configuration = overlayConfiguration(in: context)
-        let prepared = context.coordinator.prepare(
+        let prepared = context.coordinator.presentationImage(
             image, treatment: treatment, size: view.contentSize, scale: context.environment.displayScale
         )
         if view.image !== prepared { view.image = prepared }
@@ -238,7 +264,7 @@ struct NativeTVPoster<Overlay: View>: UIViewRepresentable {
         guard width.isFinite, width > 0 else { return nil }
         let size = CGSize(width: width, height: width / aspectRatio)
         if uiView.contentSize != size { uiView.contentSize = size }
-        let prepared = context.coordinator.prepare(
+        let prepared = context.coordinator.presentationImage(
             image, treatment: treatment, size: size, scale: context.environment.displayScale
         )
         if uiView.image !== prepared { uiView.image = prepared }
