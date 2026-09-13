@@ -31,7 +31,7 @@ def main() -> int:
     try:
         result = subprocess.run(
             ["xcrun", "simctl", "list", "devices", "available", "--json"],
-            capture_output=True, text=True, check=True, timeout=60,
+            capture_output=True, text=True, check=True, timeout=300,
         )
         identifier, name = select_device(json.loads(result.stdout), args.sdk_version)
     except (ValueError, OSError, subprocess.SubprocessError) as error:
