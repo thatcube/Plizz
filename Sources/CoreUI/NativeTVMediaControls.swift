@@ -80,6 +80,13 @@ struct NativeTVCard<Content: View>: UIViewRepresentable {
         let host = configuration(in: context).makeContentView()
         view.hostedContent = host
         view.contentView.addSubview(host)
+        host.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            host.leadingAnchor.constraint(equalTo: view.contentView.leadingAnchor),
+            host.trailingAnchor.constraint(equalTo: view.contentView.trailingAnchor),
+            host.topAnchor.constraint(equalTo: view.contentView.topAnchor),
+            host.bottomAnchor.constraint(equalTo: view.contentView.bottomAnchor)
+        ])
         view.onFocus = { [weak coordinator = context.coordinator] in coordinator?.observe($0) }
         view.addAction(UIAction { [weak coordinator = context.coordinator] _ in coordinator?.activate() },
                        for: .primaryActionTriggered)
@@ -115,11 +122,6 @@ struct NativeTVCard<Content: View>: UIViewRepresentable {
     final class Card: TVCardView {
         var hostedContent: (UIView & UIContentView)?
         var onFocus: ((Bool) -> Void)?
-
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            hostedContent?.frame = contentView.bounds
-        }
 
         override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
             super.didUpdateFocus(in: context, with: coordinator)
@@ -164,6 +166,14 @@ struct NativeTVPoster<Overlay: View>: UIViewRepresentable {
             self.treatment = treatment
             imageSize = size
             imageScale = scale
+            if treatment == .original, let pixels = image.cgImage {
+                prepared = UIImage(
+                    cgImage: pixels,
+                    scale: image.size.width * image.scale / size.width,
+                    orientation: image.imageOrientation
+                )
+                return prepared
+            }
             // TVPosterView derives native focus growth from image.size in points,
             // not the cached bitmap's pixel dimensions.
             let renderer = ImageRenderer(content: Group {
@@ -175,6 +185,7 @@ struct NativeTVPoster<Overlay: View>: UIViewRepresentable {
                 }
             }.frame(width: size.width, height: size.height).clipped())
             renderer.scale = scale
+            renderer.isOpaque = true
             prepared = renderer.uiImage
             if prepared == nil {
                 PlozzLog.app.error("Unable to prepare native poster artwork; keeping the protected placeholder")
@@ -188,7 +199,17 @@ struct NativeTVPoster<Overlay: View>: UIViewRepresentable {
     func makeUIView(context: Context) -> Poster {
         let view = Poster(image: nil)
         view.hostedOverlay = overlayConfiguration(in: context).makeContentView()
-        if let overlay = view.hostedOverlay { view.imageView.overlayContentView.addSubview(overlay) }
+        if let overlay = view.hostedOverlay {
+            let container = view.imageView.overlayContentView
+            container.addSubview(overlay)
+            overlay.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                overlay.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                overlay.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                overlay.topAnchor.constraint(equalTo: container.topAnchor),
+                overlay.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+            ])
+        }
         view.onFocus = { [weak coordinator = context.coordinator] in coordinator?.focus.observe($0) }
         view.addAction(UIAction { [weak coordinator = context.coordinator] _ in coordinator?.focus.activate() },
                        for: .primaryActionTriggered)
@@ -236,11 +257,6 @@ struct NativeTVPoster<Overlay: View>: UIViewRepresentable {
     final class Poster: TVPosterView {
         var hostedOverlay: (UIView & UIContentView)?
         var onFocus: ((Bool) -> Void)?
-
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            hostedOverlay?.frame = imageView.overlayContentView.bounds
-        }
 
         override func didUpdateFocus(in context: UIFocusUpdateContext, with coordinator: UIFocusAnimationCoordinator) {
             super.didUpdateFocus(in: context, with: coordinator)

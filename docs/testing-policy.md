@@ -216,6 +216,10 @@ content preparation only, not focus effects.
 Prepared poster images use the displayed content size in points and the device
 display scale in pixels. TVUIKit derives focus growth from the image, so raw
 high-resolution cache dimensions must not become the poster's logical size.
+For original artwork, adjust UIImage point-scale metadata without redrawing the
+pixels or changing their alpha channel. Only extended/blurred content is rendered.
+Pin decorations to the native overlay container with constraints; do not rewrite
+their frames during native focus layout.
 `TVCardView` hosts live content in its documented `contentView`. Neither control
 overrides `focusSizeIncrease`, adds transforms or manufactures lighting/outlines.
 System bypasses app-defined focus surfaces, edge strokes, resting shadows and
