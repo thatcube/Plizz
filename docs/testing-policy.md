@@ -222,6 +222,12 @@ Pin decorations to the native overlay container with constraints; do not rewrite
 their frames during native focus layout.
 `TVCardView` hosts live content in its documented `contentView`. Neither control
 overrides `focusSizeIncrease`, adds transforms or manufactures lighting/outlines.
+Hosted text uses a light-surface palette inside TVCardView so the native light
+platter does not receive white text from the surrounding dark app. Card fitting
+honors finite width proposals; unspecified-width probes must not install the
+10,000-point expanded fitting size as the card's content width.
+Native monogram photos are prepared as square, circular-alpha image data, so a
+tall source portrait cannot protrude into its caption on focus.
 System bypasses app-defined focus surfaces, edge strokes, resting shadows and
 focused z-index changes. Custom Highlight/Outline retain their styling.
 Horizontal rails do not clip native focus overflow.

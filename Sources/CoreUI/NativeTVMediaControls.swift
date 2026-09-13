@@ -100,14 +100,16 @@ struct NativeTVCard<Content: View>: UIViewRepresentable {
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: Card, context: Context) -> CGSize? {
-        guard let content = uiView.hostedContent else { return nil }
+        guard let content = uiView.hostedContent,
+              let width = proposal.width, width.isFinite, width > 0 else { return nil }
         let size = content.sizeThatFits(CGSize(
-            width: proposal.width ?? UIView.layoutFittingExpandedSize.width,
+            width: width,
             height: proposal.height ?? UIView.layoutFittingExpandedSize.height
         ))
         guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else { return nil }
-        if uiView.contentSize != size { uiView.contentSize = size }
-        return uiView.intrinsicContentSize
+        let boundedSize = CGSize(width: min(width, size.width), height: size.height)
+        if uiView.contentSize != boundedSize { uiView.contentSize = boundedSize }
+        return CGSize(width: width, height: max(size.height, uiView.intrinsicContentSize.height))
     }
 
     private func configuration(in context: Context) -> any UIContentConfiguration {
@@ -115,6 +117,10 @@ struct NativeTVCard<Content: View>: UIViewRepresentable {
             content
                 .environment(\.self, context.environment)
                 .environment(\.plozzNativeFocusSurface, true)
+                // TVCardView supplies a light native platter; app-dark text
+                // colors must not be carried onto that light surface.
+                .environment(\.colorScheme, .light)
+                .environment(\.themePalette, .light)
         }
         .margins(.all, 0)
     }
@@ -314,21 +320,64 @@ struct NativeTVMonogram: UIViewRepresentable {
     let focus: PlozzCardFocus.Binding
     let action: () -> Void
 
-    func makeCoordinator() -> NativeTVMediaCoordinator {
-        NativeTVMediaCoordinator(focus: focus, action: action)
+    @MainActor
+    final class Coordinator {
+        let focus: NativeTVMediaCoordinator
+        private var original: UIImage?
+        private var diameter: CGFloat = 0
+        private var scale: CGFloat = 0
+        private var prepared: UIImage?
+
+        init(focus: PlozzCardFocus.Binding, action: @escaping () -> Void) {
+            self.focus = NativeTVMediaCoordinator(focus: focus, action: action)
+        }
+
+        func portrait(_ image: UIImage?, diameter: CGFloat, scale: CGFloat) -> UIImage? {
+            guard let image else {
+                original = nil
+                prepared = nil
+                return nil
+            }
+            if original === image, self.diameter == diameter, self.scale == scale { return prepared }
+            guard image.size.width > 0, image.size.height > 0, diameter > 0 else {
+                PlozzLog.app.error("Cannot prepare native monogram from invalid image dimensions")
+                return nil
+            }
+            original = image
+            self.diameter = diameter
+            self.scale = scale
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = scale
+            let bounds = CGRect(x: 0, y: 0, width: diameter, height: diameter)
+            prepared = UIGraphicsImageRenderer(size: bounds.size, format: format).image { _ in
+                UIBezierPath(ovalIn: bounds).addClip()
+                let fill = max(diameter / image.size.width, diameter / image.size.height)
+                let size = CGSize(width: image.size.width * fill, height: image.size.height * fill)
+                image.draw(in: CGRect(
+                    x: (diameter - size.width) / 2, y: (diameter - size.height) / 2,
+                    width: size.width, height: size.height
+                ))
+            }
+            return prepared
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(focus: focus, action: action)
     }
 
     func makeUIView(context: Context) -> Monogram {
         let view = Monogram()
         view.contentSize = CGSize(width: diameter, height: diameter)
-        view.onFocus = { [weak coordinator = context.coordinator] in coordinator?.observe($0) }
-        view.addAction(UIAction { [weak coordinator = context.coordinator] _ in coordinator?.activate() },
+        view.onFocus = { [weak coordinator = context.coordinator] in coordinator?.focus.observe($0) }
+        view.addAction(UIAction { [weak coordinator = context.coordinator] _ in coordinator?.focus.activate() },
                        for: .primaryActionTriggered)
         return view
     }
 
     func updateUIView(_ view: Monogram, context: Context) {
-        if view.image !== image { view.image = image }
+        let portrait = context.coordinator.portrait(image, diameter: diameter, scale: context.environment.displayScale)
+        if view.image !== portrait { view.image = portrait }
         if view.displayedName != name {
             view.displayedName = name
             view.personNameComponents = name.flatMap { PersonNameComponentsFormatter().personNameComponents(from: $0) }
@@ -336,7 +385,7 @@ struct NativeTVMonogram: UIViewRepresentable {
         let size = CGSize(width: diameter, height: diameter)
         if view.contentSize != size { view.contentSize = size }
         view.isEnabled = context.environment.isEnabled
-        context.coordinator.update(focus: focus, action: action, view: view)
+        context.coordinator.focus.update(focus: focus, action: action, view: view)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: Monogram, context: Context) -> CGSize? {

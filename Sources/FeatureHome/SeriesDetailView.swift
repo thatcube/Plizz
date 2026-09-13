@@ -905,7 +905,12 @@ struct SeriesDetailView: View {
                         ? PlozzTheme.Metrics.screenPadding + SeriesEpisodeBrowserLayout.seasonRequestFadeWidth
                         : PlozzTheme.Metrics.screenPadding
                 )
-                .padding(.leading, hasRequestAccessory ? PlozzTheme.Metrics.heroLeadingPadding : 0)
+                .padding(
+                    .leading,
+                    hasRequestAccessory
+                        ? PlozzTheme.Metrics.heroLeadingPadding
+                        : PlozzTheme.Metrics.screenVerticalPadding
+                )
                 // Headroom for the focused chip's lift so it is never clipped.
                 .padding(.vertical, 12)
             }
@@ -1927,11 +1932,14 @@ private struct SeasonRequestBoundaryModifier: ViewModifier {
                     .padding(.vertical, -SeriesEpisodeBrowserLayout.seasonBarFocusOverflow)
                 }
         } else {
-            // Exact pre-request rail geometry: the viewport begins at the hero
-            // keyline and allows focused pills to overflow its bounds.
+            // Keep the first chip on the hero keyline, but put its focus
+            // clearance inside the viewport instead of relying on overflow.
             content
                 .scrollClipDisabled()
-                .padding(.leading, PlozzTheme.Metrics.heroLeadingPadding)
+                .padding(
+                    .leading,
+                    max(0, PlozzTheme.Metrics.heroLeadingPadding - PlozzTheme.Metrics.screenVerticalPadding)
+                )
         }
     }
 }
