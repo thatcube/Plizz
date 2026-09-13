@@ -226,6 +226,10 @@ System bypasses app-defined focus surfaces, edge strokes, resting shadows and
 focused z-index changes. Custom Highlight/Outline retain their styling.
 Horizontal rails do not clip native focus overflow.
 Captions reserve clearance without an additional custom focus animation.
+In the season episode row, the System focus owner encloses only the thumbnail
+and its artwork badges, not the title or synopsis below it. The loading/retry
+placeholder uses the same image-only target. Custom Highlight/Outline retain
+their existing whole-column focus routing and artwork-only visuals.
 
 `NativePosterComparisonTests` is an opt-in, simulator-only comparison, enabled by
 `TEST_RUNNER_PLOZZ_NATIVE_POSTER_COMPARISON=1` on `PlozzHomeRemoteTests`. It captures

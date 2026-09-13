@@ -110,6 +110,7 @@ public struct EpisodeColumnCard: View, Equatable {
                     focusScale: reduceMotion ? 1 : PlozzTheme.Metrics.mediumFocusedCardScale,
                     isFocused: isFocused
                 )
+                .nativeArtworkFocus($isFocused, action: action)
 
             VStack(alignment: .leading, spacing: 0) {
                 presentation.titleLine
@@ -148,6 +149,7 @@ public struct EpisodeColumnCard: View, Equatable {
         .focusableCard(
             isFocused: $isFocused,
             cornerRadius: metrics.landscapeCardCornerRadius,
+            nativeFocusInContent: true,
             action: action
         )
         .compositingGroup()

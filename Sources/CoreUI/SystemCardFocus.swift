@@ -68,6 +68,32 @@ public extension View {
     }
 }
 
+extension View {
+    func nativeArtworkFocus(_ focus: PlozzCardFocus.Binding?, action: @escaping () -> Void) -> some View {
+        modifier(NativeArtworkFocus(focus: focus, action: action))
+    }
+}
+
+private struct NativeArtworkFocus: ViewModifier {
+    let focus: PlozzCardFocus.Binding?
+    let action: () -> Void
+    @Environment(\.plozzCardFocusStyle) private var style
+    @Environment(\.isEnabled) private var isEnabled
+
+    func body(content: Content) -> some View {
+        #if os(tvOS)
+        if style.usesSystemEffect, let focus {
+            NativeTVCard(content: content, focus: focus, isEnabled: isEnabled, action: action)
+                .focused(focus.focusState)
+        } else {
+            content
+        }
+        #else
+        content
+        #endif
+    }
+}
+
 private struct CardFocusButtonStyle<Style: ButtonStyle>: ViewModifier {
     let fallback: Style
     let contentSuppliesProjection: Bool

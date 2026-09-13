@@ -840,13 +840,16 @@ public struct MediaRowView: View {
         HStack(alignment: .top, spacing: layoutMetrics.cardSpacing) {
                 EpisodeRowEntryPlaceholder(
                     phase: episodeEntry?.phase ?? .loading,
-                    showsStatus: true, isFocused: entryPlaceholderFocused
+                    showsStatus: true, isFocused: entryPlaceholderFocused,
+                    nativeFocus: $entryPlaceholderFocused,
+                    onSelect: selectEpisodeEntryPlaceholder
                 )
                 #if os(tvOS)
                 .focusableCard(
                     isFocused: $entryPlaceholderFocused,
                     cornerRadius: layoutMetrics.landscapeCardCornerRadius,
                     isEnabled: episodeEntry?.isEnabled != false,
+                    nativeFocusInContent: true,
                     action: selectEpisodeEntryPlaceholder
                 )
                 #else

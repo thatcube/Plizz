@@ -76,6 +76,8 @@ struct EpisodeRowEntryPlaceholder: View {
     var phase: MediaRowEpisodeEntry.Phase = .loading
     var showsStatus = false
     var isFocused = false
+    var nativeFocus: PlozzCardFocus.Binding?
+    var onSelect: () -> Void = {}
     @Environment(\.themePalette) private var palette
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.plozzCardFocusStyle) private var focusStyle
@@ -94,6 +96,7 @@ struct EpisodeRowEntryPlaceholder: View {
                     focusScale: reduceMotion ? 1 : PlozzTheme.Metrics.mediumFocusedCardScale,
                     isFocused: isFocused
                 )
+                .nativeArtworkFocus(nativeFocus, action: onSelect)
             VStack(alignment: .leading, spacing: 10) {
                 Group {
                     if showsStatus {

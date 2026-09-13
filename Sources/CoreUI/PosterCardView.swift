@@ -1541,11 +1541,13 @@ public extension View {
         isFocused: PlozzCardFocus.Binding,
         cornerRadius: CGFloat,
         isEnabled: Bool = true,
+        nativeFocusInContent: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         #if os(tvOS)
         modifier(CardFocusOwner(
-            isFocused: isFocused, cornerRadius: cornerRadius, isEnabled: isEnabled, action: action
+            isFocused: isFocused, cornerRadius: cornerRadius, isEnabled: isEnabled,
+            nativeFocusInContent: nativeFocusInContent, action: action
         ))
         #else
         contentShape(
@@ -1560,17 +1562,22 @@ private struct CardFocusOwner: ViewModifier {
     let isFocused: PlozzCardFocus.Binding
     let cornerRadius: CGFloat
     let isEnabled: Bool
+    let nativeFocusInContent: Bool
     let action: () -> Void
     @Environment(\.plozzCardFocusStyle) private var style
     @Environment(\.isEnabled) private var parentEnabled
 
     func body(content: Content) -> some View {
         if style.usesSystemEffect {
-            NativeTVCard(
-                content: content, focus: isFocused,
-                isEnabled: isEnabled && parentEnabled, action: action
-            )
-                .focused(isFocused.focusState)
+            if nativeFocusInContent {
+                content.disabled(!isEnabled || !parentEnabled)
+            } else {
+                NativeTVCard(
+                    content: content, focus: isFocused,
+                    isEnabled: isEnabled && parentEnabled, action: action
+                )
+                    .focused(isFocused.focusState)
+            }
         } else {
             content
                 .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
