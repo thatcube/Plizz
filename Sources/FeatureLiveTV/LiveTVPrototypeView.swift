@@ -635,7 +635,7 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
         }
     }
 
-    private var playbackObservedContent: some View {
+    private var portableStateObservedContent: some View {
         loadingContent
         .onChange(of: scanBinding.coordinator.scanHiddenChannelIDs) { _, _ in
             scanBinding.synchronizeVisibility()
@@ -673,6 +673,10 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
                 range: DateInterval(start: timeAnchor, duration: 6 * 3_600)
             )
         }
+    }
+
+    private var playerStateObservedContent: some View {
+        portableStateObservedContent
         .onChange(of: playback.preparation.current?.id) { _, _ in
             playback.synchronizePlayerState()
             updatePlaybackAvailability()
@@ -696,6 +700,10 @@ public struct LiveTVPrototypeView<PlayerContent: View>: View {
             multiview.validateAuthorization()
             updatePlaybackAvailability()
         }
+    }
+
+    private var playbackObservedContent: some View {
+        playerStateObservedContent
         .onChange(of: sources?.mutationRevision) { _, _ in
             guard applySourceConfiguration() else { return }
             loadedRequest = nil

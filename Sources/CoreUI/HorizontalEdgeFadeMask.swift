@@ -13,6 +13,7 @@ public struct HorizontalEdgeFadeMask: View {
     private let verticalOverhang: CGFloat
     private let leadingStrength: CGFloat
     private let trailingStrength: CGFloat
+    @Environment(\.layoutDirection) private var layoutDirection
 
     public init(
         fadeWidth: CGFloat,
@@ -28,10 +29,19 @@ public struct HorizontalEdgeFadeMask: View {
 
     public var body: some View {
         HStack(spacing: 0) {
-            edgeFade(reversed: false, strength: leadingStrength).frame(width: fadeWidth)
+            edgeFade(
+                reversed: false,
+                strength: layoutDirection == .rightToLeft ? trailingStrength : leadingStrength
+            ).frame(width: fadeWidth)
             Color.black
-            edgeFade(reversed: true, strength: trailingStrength).frame(width: fadeWidth)
+            edgeFade(
+                reversed: true,
+                strength: layoutDirection == .rightToLeft ? leadingStrength : trailingStrength
+            ).frame(width: fadeWidth)
         }
+        // Stack and gradient mirroring differed between SDKs; resolve the
+        // semantic strengths once, then draw in physical left-to-right space.
+        .environment(\.layoutDirection, .leftToRight)
         .padding(.vertical, -verticalOverhang)
     }
 
@@ -75,21 +85,11 @@ public struct LeadingEdgeFadeMask: View {
     }
 
     public var body: some View {
-        HStack(spacing: 0) {
-            // Same 24-stop smoothstep as `HorizontalEdgeFadeMask` — a two-stop
-            // linear gradient shows a visible crease and bands on a TV panel.
-            LinearGradient(
-                stops: (0 ... 24).map { step in
-                    let t = Double(step) / 24
-                    return Gradient.Stop(color: .black.opacity(t * t * (3 - 2 * t)), location: t)
-                },
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-            .frame(width: fadeWidth)
-            Color.black
-        }
-        .padding(.vertical, -verticalOverhang)
+        HorizontalEdgeFadeMask(
+            fadeWidth: fadeWidth,
+            verticalOverhang: verticalOverhang,
+            trailingStrength: 0
+        )
         // A visible leading fade starts at the row edge by design. When the
         // pinned sidebar hides and fadeWidth reaches zero, extend the opaque mask
         // on BOTH sides so focused-card bloom remains unclipped. Trailing always

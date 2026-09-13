@@ -542,6 +542,9 @@ final class ArtworkGradientRampTests: XCTestCase {
 #if canImport(SwiftUI)
 import CoreModels
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// A Continue Watching card writes its text *inside* the artwork — "S1, E12 ·
 /// 17m", on one line, next to a play glyph and a progress bar — instead of in a
@@ -567,6 +570,7 @@ final class ContinueWatchingDynamicTypeTests: XCTestCase {
 
     /// Bigger text buys a wider card, which is the whole fix.
     func testLargerTextWidensTheCard() {
+        if assertFixedMetricsOnUnscaledPlatform() { return }
         XCTAssertGreaterThan(width(.accessibility1), width(.large))
     }
 
@@ -595,6 +599,7 @@ final class ContinueWatchingDynamicTypeTests: XCTestCase {
     /// The bar grows once the text around it does — the original complaint was
     /// that it looked proportionally short beside very large type.
     func testProgressBarGrowsWithLargeTextOnly() {
+        if assertFixedMetricsOnUnscaledPlatform() { return }
         let base = PlozzMetrics(density: .standard, dynamicTypeSize: .large)
         let large = PlozzMetrics(density: .standard, dynamicTypeSize: .accessibility1)
         XCTAssertGreaterThan(large.resumeChipBarHeight, base.resumeChipBarHeight)
@@ -605,6 +610,7 @@ final class ContinueWatchingDynamicTypeTests: XCTestCase {
     /// may reach, never a width it insists on. A rigid bar that grew this way is
     /// what truncated "S4, E1 · 44m" down to "S4, E1 ·…".
     func testProgressBarWidthCeilingGrowsButStaysDamped() {
+        if assertFixedMetricsOnUnscaledPlatform() { return }
         let base = PlozzMetrics(density: .standard, dynamicTypeSize: .large)
         let large = PlozzMetrics(density: .standard, dynamicTypeSize: .accessibility5)
         XCTAssertGreaterThan(large.resumeChipBarWidth, base.resumeChipBarWidth)
@@ -616,6 +622,7 @@ final class ContinueWatchingDynamicTypeTests: XCTestCase {
     /// Height growth is damped and capped: it should nod to the text, not track
     /// it, or the gauge becomes the loudest thing on the card.
     func testProgressBarHeightGrowthIsDampedAndCapped() {
+        if assertFixedMetricsOnUnscaledPlatform() { return }
         let base = PlozzMetrics(density: .standard, dynamicTypeSize: .large)
         let biggest = PlozzMetrics(density: .standard, dynamicTypeSize: .accessibility5)
         let fontGrowth = biggest.resumeChipFontSize / base.resumeChipFontSize
@@ -658,6 +665,7 @@ final class ContinueWatchingDynamicTypeTests: XCTestCase {
     /// text size, so at large sizes it read as a hairline under a very large
     /// control.
     func testHeroPlayButtonBarAdaptsToText() {
+        if assertFixedMetricsOnUnscaledPlatform() { return }
         let base = PlozzMetrics(density: .standard, dynamicTypeSize: .large)
         let large = PlozzMetrics(density: .standard, dynamicTypeSize: .accessibility1)
         XCTAssertGreaterThan(large.heroProgressBarHeight, base.heroProgressBarHeight)
@@ -665,6 +673,31 @@ final class ContinueWatchingDynamicTypeTests: XCTestCase {
         let fontGrowth = large.resumeChipFontSize / base.resumeChipFontSize
         let barGrowth = large.heroProgressBarHeight / base.heroProgressBarHeight
         XCTAssertLessThan(barGrowth, fontGrowth)
+    }
+
+    private func assertFixedMetricsOnUnscaledPlatform(
+        file: StaticString = #filePath, line: UInt = #line
+    ) -> Bool {
+        #if canImport(UIKit)
+        let traits = UITraitCollection(
+            preferredContentSizeCategory: .accessibilityExtraExtraExtraLarge
+        )
+        let growth = UIFontMetrics(forTextStyle: .subheadline)
+            .scaledValue(for: 100, compatibleWith: traits) / 100
+        guard growth == 1 else { return false }
+        #endif
+        // Earlier tvOS runtimes keep native font metrics fixed. Geometry must
+        // follow that platform behavior rather than inventing text growth.
+        let base = PlozzMetrics(density: .standard, dynamicTypeSize: .large)
+        for size in [DynamicTypeSize.accessibility1, .accessibility5] {
+            let large = PlozzMetrics(density: .standard, dynamicTypeSize: size)
+            XCTAssertEqual(large.resumeChipFontSize, base.resumeChipFontSize, file: file, line: line)
+            XCTAssertEqual(large.continueWatchingWidth, base.continueWatchingWidth, file: file, line: line)
+            XCTAssertEqual(large.resumeChipBarWidth, base.resumeChipBarWidth, file: file, line: line)
+            XCTAssertEqual(large.resumeChipBarHeight, base.resumeChipBarHeight, file: file, line: line)
+            XCTAssertEqual(large.heroProgressBarHeight, base.heroProgressBarHeight, file: file, line: line)
+        }
+        return true
     }
 
     /// A hero button is a much bigger control carrying much bigger type, so its

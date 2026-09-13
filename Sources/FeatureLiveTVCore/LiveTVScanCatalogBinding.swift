@@ -10,6 +10,7 @@ public final class LiveTVScanCatalogBinding {
     public let coordinator: LiveTVChannelScanCoordinator
     public private(set) var issue: LiveTVChannelScanError?
     @ObservationIgnored private let profileID: String
+    @ObservationIgnored private let ownershipID = UUID()
     @ObservationIgnored private weak var model: LiveTVPrototypeModel?
     @ObservationIgnored private let authorization:
         @MainActor (LiveTVSourcesConfiguration) throws -> LiveTVSourceAuthorization
@@ -29,7 +30,23 @@ public final class LiveTVScanCatalogBinding {
         self.authorization = authorization
     }
 
-    isolated deinit { releaseScan() }
+    deinit {
+        // Avoid the isolated-deinit back-deployment thunk on older Swift
+        // runtimes while keeping cleanup on the main actor.
+        let cleanup: @MainActor @Sendable () -> Void = {
+            [coordinator, weak model, profileID, ownershipID] in
+            if Self.activeBindings[profileID]?.ownershipID == ownershipID {
+                Self.activeBindings.removeValue(forKey: profileID)
+            }
+            coordinator.deactivate()
+            model?.setScanHiddenChannelIDs([])
+        }
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { cleanup() }
+        } else {
+            Task { @MainActor in cleanup() }
+        }
+    }
 
     public func setActive(_ active: Bool) {
         guard active != isActive else { return }
@@ -90,8 +107,12 @@ public final class LiveTVScanCatalogBinding {
     }
 
     private final class WeakBinding {
+        let ownershipID: UUID
         weak var value: LiveTVScanCatalogBinding?
-        init(_ value: LiveTVScanCatalogBinding) { self.value = value }
+        init(_ value: LiveTVScanCatalogBinding) {
+            self.value = value
+            ownershipID = value.ownershipID
+        }
     }
 
     private func bind() {

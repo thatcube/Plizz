@@ -301,6 +301,22 @@ comparison; do not remove either custom option based on simulator results.
 
 ## Guards that run before the compile
 
+Validate workflow edits with `actionlint .github/workflows/ci.yml` before
+pushing. GitHub rejects invalid context references before creating a runner or
+job log. Runner-local package storage is initialized in a step via
+`RUNNER_TEMP` and `GITHUB_ENV`; the `runner` expression context is not available
+in job-level `env`.
+
+CI selects a tvOS simulator matching the selected Xcode SDK and shares its
+`PLOZZ_SIM_ID` across package and app-hosted tests. It fails if that runtime is
+missing rather than silently choosing the first installed (possibly much older)
+runtime. The full matrix has a 40-minute wall-clock deadline; raw logs and
+result bundles are retained as workflow artifacts for seven days.
+
+Native typography tests compare against the runtime's `UIFontMetrics` behavior:
+older tvOS versions keep those metrics fixed, while newer runtimes scale them.
+Both paths assert the matching geometry rather than skipping older runtimes.
+
 Both are host-side Python (the tests run inside the tvOS Simulator sandbox and
 cannot read the repo tree), both are wired into `run-tests.sh`, `test-fast.sh`
 and CI, and both are skippable via an env var for debugging:

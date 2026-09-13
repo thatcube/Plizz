@@ -17,14 +17,25 @@ jobs:
   build-and-test:
     name: Build and test tvOS app
     runs-on: macos-15
+    timeout-minutes: 60
     env:
       GIT_CONFIG_PARAMETERS: "'safe.bareRepository=all'"
-      PLOZZ_CLONED_SOURCE_PACKAGES: ${{ runner.temp }}/plozz-source-packages
+      PLOZZ_LOG_DIR: .build/ci-test-logs
     steps:
       - uses: actions/checkout@v5
 
+      - name: Configure package storage
+        run: |
+          printf 'PLOZZ_CLONED_SOURCE_PACKAGES=%s/plozz-source-packages\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_26.2.app
+
+      - name: Select matching tvOS simulator
+        run: |
+          sdk_version="$(xcrun --sdk appletvsimulator --show-sdk-version)"
+          simulator="$(python3 tools/select-ci-tvos-simulator.py --sdk-version "$sdk_version")"
+          printf 'PLOZZ_SIM_ID=%s\n' "$simulator" >> "$GITHUB_ENV"
 
       # Fail fast on any module-layering violation before the (slow) project
       # generation + simulator build. Data-driven from `swift package
@@ -58,6 +69,9 @@ jobs:
 
       - name: Package storage regression tests
         run: python3 -m unittest discover -s tools/tests -p 'test_package_storage.py'
+
+      - name: CI simulator regression tests
+        run: python3 -m unittest discover -s tools/tests -p 'test_ci_simulator.py'
 
       - name: XCTest result regression tests
         run: python3 -m unittest discover -s tools/tests -p 'test_xcresult_summary.py'
@@ -106,7 +120,19 @@ jobs:
             CODE_SIGNING_ALLOWED=NO
 
       - name: Run full test matrix (tvOS Simulator, build-once)
-        run: tools/run-tests.sh
+        run: python3 tools/run-bounded.py 2400 "CI full test matrix" -- tools/run-tests.sh
 
       - name: Run app-hosted episode focus tests
         run: tools/run-focus-tests.sh
+
+      - name: Retain test diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .build/ci-test-logs
+            .build/test-results
+            .build/focus-test-results
+          if-no-files-found: ignore
+          retention-days: 7
