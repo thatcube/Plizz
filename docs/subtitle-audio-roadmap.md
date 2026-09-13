@@ -57,6 +57,11 @@ Get more subtitles, keylessly, on both providers, and surface local sidecars.
   The tvOS Subtitles control remains available when downloads are supported,
   even without existing tracks, matching iOS. An empty track list opens focused
   on the download action; existing tracks retain their selected-row focus.
+- **Confirmed file-match badge:** tvOS and iOS subtitle search results show a
+  separate "File match" badge when Jellyfin/Emby explicitly report `IsHashMatch`.
+  Missing or false flags, filenames, and Plex relevance scores do not earn it.
+  The existing external-track badge remains independent; search ranking and
+  automatic download selection are unchanged.
 - ✅ **Automatic subtitle download** when a policy match is missing —
   `autoDownloadIfMissing` is now capability-gated (Plex included), applies the
   SDH/Forced preference, requires a genuine language match (no wrong-language

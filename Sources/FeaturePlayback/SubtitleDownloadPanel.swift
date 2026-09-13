@@ -91,10 +91,13 @@ struct SubtitleDownloadScreen: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 2) {
                         MarqueeText(text: Self.remoteSubtitleTitle(sub), font: .body)
-                        Text(Self.remoteSubtitleDetail(sub))
-                            .font(.caption2)
-                            .playerMenuRowSecondary()
-                            .lineLimit(1)
+                        HStack(spacing: 8) {
+                            Text(Self.remoteSubtitleDetail(sub))
+                                .font(.caption2)
+                                .playerMenuRowSecondary()
+                                .lineLimit(1)
+                            SubtitleFileMatchBadge(isHashMatch: sub.isHashMatch)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 16)

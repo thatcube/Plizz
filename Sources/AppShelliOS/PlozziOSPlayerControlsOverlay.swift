@@ -1042,9 +1042,12 @@ private struct PlozziOSSubtitleOptionsSheet: View {
                         } label: {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(subtitle.name)
-                                Text(remoteSubtitleDetails(subtitle))
-                                    .font(.caption)
-                                    .plozzForeground(.secondary)
+                                HStack(spacing: 8) {
+                                    Text(remoteSubtitleDetails(subtitle))
+                                        .font(.caption)
+                                        .plozzForeground(.secondary)
+                                    SubtitleFileMatchBadge(isHashMatch: subtitle.isHashMatch)
+                                }
                             }
                         }
                     }

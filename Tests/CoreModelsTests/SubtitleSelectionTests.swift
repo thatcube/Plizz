@@ -202,6 +202,29 @@ final class SubtitleSuitabilityTests: XCTestCase {
 }
 
 final class RemoteSubtitleBestMatchTests: XCTestCase {
+    func testHashMatchDefaultsToUnconfirmedAndParticipatesInValueEquality() {
+        let original = RemoteSubtitle(id: "subtitle", name: "English.srt")
+        XCTAssertFalse(original.isHashMatch)
+        var confirmed = original
+        confirmed.isHashMatch = true
+        XCTAssertNotEqual(original, confirmed)
+        XCTAssertEqual(original.id, confirmed.id)
+    }
+
+    func testHashMatchMetadataSurvivesSortingWithoutChangingSelectionPolicy() {
+        let confirmed = RemoteSubtitle(
+            id: "confirmed", name: "English.srt", language: "eng",
+            communityRating: 1, isHashMatch: true
+        )
+        let popular = RemoteSubtitle(
+            id: "popular", name: "English.srt", language: "eng", communityRating: 9
+        )
+        let sorted = [confirmed, popular].applying(.default)
+        XCTAssertEqual(sorted.map(\.id), ["popular", "confirmed"])
+        XCTAssertEqual(sorted.map(\.isHashMatch), [false, true])
+        XCTAssertEqual(sorted.bestMatch(forLanguage: "eng")?.id, "popular")
+    }
+
     private func remote(_ id: String, lang: String?, rating: Double? = nil, downloads: Int? = nil, forced: Bool = false) -> RemoteSubtitle {
         RemoteSubtitle(id: id, name: id, language: lang, communityRating: rating, downloadCount: downloads, isForced: forced)
     }

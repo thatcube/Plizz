@@ -236,6 +236,9 @@ public struct RemoteSubtitle: Equatable, Sendable, Identifiable {
     public var downloadCount: Int?
     public var isForced: Bool
     public var isHearingImpaired: Bool
+    /// True only when the provider explicitly confirms a video-file hash match.
+    /// Filename similarity, popularity, and external-track status are not proof.
+    public var isHashMatch: Bool
 
     public init(
         id: String,
@@ -246,7 +249,8 @@ public struct RemoteSubtitle: Equatable, Sendable, Identifiable {
         communityRating: Double? = nil,
         downloadCount: Int? = nil,
         isForced: Bool = false,
-        isHearingImpaired: Bool = false
+        isHearingImpaired: Bool = false,
+        isHashMatch: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -257,6 +261,7 @@ public struct RemoteSubtitle: Equatable, Sendable, Identifiable {
         self.downloadCount = downloadCount
         self.isForced = isForced
         self.isHearingImpaired = isHearingImpaired
+        self.isHashMatch = isHashMatch
     }
 }
 

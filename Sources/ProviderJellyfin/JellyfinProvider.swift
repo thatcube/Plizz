@@ -2183,7 +2183,8 @@ public struct JellyfinProvider: MediaProvider, SeriesResumeProviding, SeriesIden
             communityRating: dto.CommunityRating,
             downloadCount: dto.DownloadCount,
             isForced: dto.IsForced ?? false,
-            isHearingImpaired: RemoteSubtitle.nameSuggestsHearingImpaired(name)
+            isHearingImpaired: RemoteSubtitle.nameSuggestsHearingImpaired(name),
+            isHashMatch: dto.IsHashMatch == true
         )
     }
 

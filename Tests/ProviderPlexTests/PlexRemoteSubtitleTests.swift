@@ -35,6 +35,7 @@ final class PlexRemoteSubtitleTests: XCTestCase {
         XCTAssertEqual(results[0].downloadCount, 1200)
         XCTAssertFalse(results[0].isForced)
         XCTAssertTrue(results[0].isHearingImpaired, "HI flag maps from Plex hearingImpaired")
+        XCTAssertFalse(results[0].isHashMatch)
 
         XCTAssertTrue(stub.sentPaths.contains { $0.hasSuffix("/library/metadata/rk1/subtitles") })
         let query = stub.queryItems(forPathSuffix: "/library/metadata/rk1/subtitles") ?? []
@@ -58,6 +59,22 @@ final class PlexRemoteSubtitleTests: XCTestCase {
         let provider = PlexProvider(session: makeSession(), http: stub)
         let results = try await provider.remoteSubtitleSearch(itemID: "rk1", language: "en")
         XCTAssertTrue(results.isEmpty)
+    }
+
+    func testRelevanceScoreAndFilenameDoNotClaimAHashMatch() async throws {
+        let stub = StubHTTPClient()
+        stub.stub(pathSuffix: "/library/metadata/rk1/subtitles", json: """
+        {"MediaContainer":{"Stream":[
+          {"key":"/subtitles/opensubtitles/12345","title":"Exact.Hash.Match.en.srt",
+           "languageCode":"en","score":99999}
+        ]}}
+        """)
+        let provider = PlexProvider(session: makeSession(), http: stub)
+
+        let results = try await provider.remoteSubtitleSearch(itemID: "rk1", language: "en")
+
+        XCTAssertEqual(results.count, 1)
+        XCTAssertFalse(results[0].isHashMatch)
     }
 
     func testDownloadRemoteSubtitlePUTsKeyToSubtitlesPath() async throws {

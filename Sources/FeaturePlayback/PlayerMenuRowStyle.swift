@@ -106,6 +106,45 @@ struct ExternalSubtitleBadge: View {
     var body: some View {
         let fill = focused ? Color.black.opacity(0.62) : Color.white.opacity(0.6)
         Text("EXTERNAL")
+            .modifier(SubtitleBadgeStyle(fill: fill))
+            .accessibilityLabel("External subtitle")
+    }
+}
+
+/// A server-confirmed video-file match, separate from external-track provenance.
+public struct SubtitleFileMatchBadge: View {
+    private let isHashMatch: Bool
+    @Environment(\.playerMenuRowIsFocused) private var focused
+
+    public init(isHashMatch: Bool) {
+        self.isHashMatch = isHashMatch
+    }
+
+    @ViewBuilder
+    public var body: some View {
+        if isHashMatch {
+            Label {
+                Text("File match", comment: "Subtitle search result badge: the server confirms a hash match to the current video file, not merely a title or language match.")
+            } icon: {
+                Image(systemName: "checkmark.seal.fill")
+            }
+            .modifier(SubtitleBadgeStyle(
+                fill: focused ? Color.black.opacity(0.62) : Color.primary.opacity(0.6)
+            ))
+            .fixedSize()
+            .accessibilityLabel(Text(
+                "Matched to this video file",
+                comment: "Accessibility label for a subtitle search result whose video-file hash match was confirmed by the server. It does not guarantee perfect subtitle timing."
+            ))
+        }
+    }
+}
+
+private struct SubtitleBadgeStyle: ViewModifier {
+    let fill: Color
+
+    func body(content: Content) -> some View {
+        content
             .font(.system(size: 11, weight: .heavy))
             .tracking(0.4)
             .padding(.horizontal, 7)
@@ -117,7 +156,6 @@ struct ExternalSubtitleBadge: View {
             .blendMode(.destinationOut)
             .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(fill))
             .compositingGroup()
-            .accessibilityLabel("External subtitle")
     }
 }
 /// A single-line label that truncates at rest and **marquee-scrolls** the full

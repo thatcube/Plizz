@@ -1458,9 +1458,9 @@ final class JellyfinQuickConnectClientTests: XCTestCase {
 }
 
 final class JellyfinRemoteSubtitleTests: XCTestCase {
-    private func makeSession() -> UserSession {
+    private func makeSession(provider: ProviderKind = .jellyfin) -> UserSession {
         UserSession(
-            server: MediaServer(id: "s", name: "Home", baseURL: URL(string: "http://host:8096")!, provider: .jellyfin),
+            server: MediaServer(id: "s", name: "Home", baseURL: URL(string: "http://host:8096")!, provider: provider),
             userID: "u1", userName: "Alice", deviceID: "d1", accessToken: "TOKEN"
         )
     }
@@ -1482,7 +1482,28 @@ final class JellyfinRemoteSubtitleTests: XCTestCase {
         XCTAssertEqual(results[0].language, "eng")
         XCTAssertEqual(results[0].communityRating, 8.5)
         XCTAssertEqual(results[0].downloadCount, 1200)
+        XCTAssertFalse(results[0].isHashMatch)
         XCTAssertTrue(stub.sentPaths.contains { $0.hasSuffix("/Items/i1/RemoteSearch/Subtitles/eng") })
+    }
+
+    func testHashMatchRequiresExplicitConfirmationForJellyfinAndEmby() async throws {
+        for kind in [ProviderKind.jellyfin, .emby] {
+            let stub = StubHTTPClient()
+            stub.stub(pathSuffix: "/Items/i1/RemoteSearch/Subtitles/eng", json: """
+            [
+              {"Id":"confirmed","Name":"English.srt","IsHashMatch":true},
+              {"Id":"rejected","Name":"Exact.Hash.Match.srt","IsHashMatch":false},
+              {"Id":"unknown","Name":"Hash.Match.srt","IsHashMatch":null},
+              {"Id":"missing","Name":"Exact.Release.srt","CommunityRating":10,"DownloadCount":99999}
+            ]
+            """)
+            let provider = JellyfinProvider(session: makeSession(provider: kind), http: stub)
+
+            let results = try await provider.remoteSubtitleSearch(itemID: "i1", language: "en")
+
+            XCTAssertEqual(results.map(\.id), ["confirmed", "rejected", "unknown", "missing"])
+            XCTAssertEqual(results.map(\.isHashMatch), [true, false, false, false])
+        }
     }
 
     func testDownloadRemoteSubtitlePOSTsToExpectedPath() async throws {
