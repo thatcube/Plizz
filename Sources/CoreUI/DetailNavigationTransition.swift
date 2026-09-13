@@ -22,6 +22,7 @@ public struct DetailEntranceTiming: Equatable, Sendable {
 public func withCinematicDetailNavigation(for item: MediaItem, _ navigate: () -> Void) {
     #if os(tvOS)
     DetailTransitionNavigation.prepare(for: item)
+    DetailTransitionNavigation.preloadBackdrop(for: item)
     DetailTransitionNavigation.performNavigation(navigate)
     #else
     navigate()
@@ -30,9 +31,9 @@ public func withCinematicDetailNavigation(for item: MediaItem, _ navigate: () ->
 
 public extension View {
     @ViewBuilder
-    func cinematicDetailPage(isEnabled: Bool) -> some View {
+    func cinematicDetailPage(isEnabled: Bool, waitsForBackdrop: Bool = false) -> some View {
         #if os(tvOS)
-        modifier(TVDetailPageTransition(isEnabled: isEnabled))
+        modifier(TVDetailPageTransition(isEnabled: isEnabled, waitsForBackdrop: waitsForBackdrop))
         #else
         self
         #endif
@@ -387,6 +388,25 @@ public enum DetailTransitionNavigation {
         return result
     }
 
+    static func backdropTask(matching key: String) -> Task<FirstPaintArtwork?, Never>? {
+        guard let window = activeWindow, let request = pending[ObjectIdentifier(window)]?.backdropRequest,
+              request.key == key else { return nil }
+        return request.task
+    }
+
+    static func preloadBackdrop(for item: MediaItem) {
+        guard item.kind == .movie || item.kind == .series,
+              let window = activeWindow, let entry = pending[ObjectIdentifier(window)],
+              entry.itemKey == item.stablePresentationID,
+              entry.overlay.destination.image == nil, entry.backdropRequest == nil else { return }
+        guard let request = DetailBackdropArtworkRequest(item: item) else { return }
+        entry.backdropRequest = request
+        entry.backdropDelivery = Task { @MainActor [weak entry] in
+            guard let artwork = await request.task.value, !Task.isCancelled else { return }
+            entry?.overlay.destination.image = artwork.image
+        }
+    }
+
     private static func cachedDestinationArtwork(for item: MediaItem) -> UIImage? {
         guard item.kind == .movie || item.kind == .series else { return nil }
         let references = item.artworkReferences(for: .detailBackdrop)
@@ -427,6 +447,8 @@ final class PendingDetailEntrance {
     var onLanded: (() -> Void)?
     let windowSize: CGSize
     let scrollPositions: [DetailTransitionScrollPosition]
+    var backdropRequest: DetailBackdropArtworkRequest?
+    var backdropDelivery: Task<Void, Never>?
 
     init(
         window: UIWindow, itemKey: String, source: DetailTransitionSourceReference?,
@@ -465,6 +487,10 @@ final class PendingDetailEntrance {
     }
 
     func discard() {
+        backdropDelivery?.cancel()
+        backdropDelivery = nil
+        backdropRequest?.task.cancel()
+        backdropRequest = nil
         expiry?.cancel()
         expiry = nil
         animator?.stopAnimation(true)
@@ -529,6 +555,14 @@ public final class TVDetailEntranceSession {
     @ObservationIgnored private var returnHandoffScheduled = false
     @ObservationIgnored private var scrollPositions: [DetailTransitionScrollPosition] = []
     @ObservationIgnored private let restoreToken = UUID()
+    @ObservationIgnored private var backdropRequest: DetailBackdropArtworkRequest?
+    @ObservationIgnored private var waitsForBackdrop = false
+    @ObservationIgnored private var backdropIsResolved = false
+    @ObservationIgnored private var backdropIsAvailable = false
+    @ObservationIgnored private var backdropResolvedAt: CFTimeInterval?
+    @ObservationIgnored private var artworkLandedAt: CFTimeInterval?
+    @ObservationIgnored private var pageAppearedAt: CFTimeInterval?
+    @ObservationIgnored private var foregroundSequenceStarted = false
 
     public init(timing: DetailEntranceTiming = DetailEntranceTiming()) {
         self.timing = timing
@@ -537,21 +571,50 @@ public final class TVDetailEntranceSession {
     public func resolvedDestinationArtwork(_ image: UIImage) {
         guard !isClosing else { return }
         destinationArtwork = image
+        backdropIsAvailable = true
+        backdropIsResolved = true
+        if backdropResolvedAt == nil { backdropResolvedAt = CACurrentMediaTime() }
         if !hasStarted {
             earlyDestinationArtwork = image
         } else if let overlay {
             overlay.destination.image = image
         }
+        startForegroundIfReady()
+    }
+
+    public func resolvedDestinationVideo() {
+        guard !isClosing else { return }
+        backdropIsAvailable = true
+        backdropIsResolved = true
+        if backdropResolvedAt == nil { backdropResolvedAt = CACurrentMediaTime() }
+        startForegroundIfReady()
+    }
+
+    func destinationArtworkUnavailable() {
+        guard !isClosing, !backdropIsResolved else { return }
+        PlozzLog.app.info("Detail backdrop exhausted its candidates; revealing controls without artwork")
+        backdropIsResolved = true
+        backdropResolvedAt = CACurrentMediaTime()
+        startForegroundIfReady()
+    }
+
+    func backdropTask(matching key: String) -> Task<FirstPaintArtwork?, Never>? {
+        if let backdropRequest, backdropRequest.key == key { return backdropRequest.task }
+        return DetailTransitionNavigation.backdropTask(matching: key)
     }
 
     func bind(to window: UIWindow) {
         self.window = window
     }
 
-    func attach(to window: UIWindow, enabled: Bool, waitsForPageAppearance: Bool = false) {
+    func attach(
+        to window: UIWindow, enabled: Bool,
+        waitsForPageAppearance: Bool = false, waitsForBackdrop: Bool = false
+    ) {
         self.window = window
         guard !hasStarted else { return }
         self.waitsForPageAppearance = waitsForPageAppearance
+        self.waitsForBackdrop = waitsForBackdrop
         if DetailTransitionNavigation.consumesSuppression(in: window) {
             finishImmediately()
             return
@@ -576,6 +639,7 @@ public final class TVDetailEntranceSession {
         activationWindowSize = pending?.windowSize
         returnFocus = pending?.focusedItem
         scrollPositions = pending?.scrollPositions ?? []
+        backdropRequest = pending?.backdropRequest
         let cover = pending?.overlay
             ?? DetailTransitionOverlay(screen: DetailTransitionSnapshot.surface(of: window), card: nil)
         cover.frame = window.bounds
@@ -598,17 +662,18 @@ public final class TVDetailEntranceSession {
     private func land() {
         guard !isClosing else { return }
         artworkHasLanded = true
-        let elapsed = opening?.landedAt.map { CACurrentMediaTime() - $0 } ?? 0
+        artworkLandedAt = opening?.landedAt ?? CACurrentMediaTime()
         opening?.onLanded = nil
+        opening?.backdropDelivery?.cancel()
         opening = nil
-        removeOpeningCoverIfReady()
         animator = nil
-        startForegroundSequence(pause: max(0, timing.artworkPause - elapsed))
+        startForegroundIfReady()
     }
 
     func pageAppeared() {
         pageIsVisible = true
-        removeOpeningCoverIfReady()
+        pageAppearedAt = CACurrentMediaTime()
+        startForegroundIfReady()
         finishEntranceIfReady()
     }
 
@@ -620,12 +685,29 @@ public final class TVDetailEntranceSession {
     }
 
     private func removeOpeningCoverIfReady() {
-        guard artworkHasLanded, !isClosing, !waitsForPageAppearance || pageIsVisible else { return }
+        guard artworkHasLanded, !isClosing, !waitsForPageAppearance || pageIsVisible,
+              !waitsForBackdrop || backdropIsResolved else { return }
         let cover = overlay
         UIView.animate(withDuration: 0.1, animations: { cover?.alpha = 0 }) { [weak self] _ in
             cover?.removeFromSuperview()
             if self?.overlay === cover { self?.overlay = nil }
         }
+    }
+
+    private func startForegroundIfReady() {
+        guard artworkHasLanded, !isClosing, !foregroundSequenceStarted,
+              !waitsForPageAppearance || pageIsVisible,
+              !waitsForBackdrop || backdropIsResolved else { return }
+        foregroundSequenceStarted = true
+        removeOpeningCoverIfReady()
+        let now = CACurrentMediaTime()
+        var readyAt = artworkLandedAt ?? now
+        if waitsForBackdrop {
+            readyAt = max(readyAt, backdropResolvedAt ?? now, pageAppearedAt ?? readyAt)
+        }
+        let pause = waitsForBackdrop && !backdropIsAvailable
+            ? 0 : max(0, timing.artworkPause - (now - readyAt))
+        startForegroundSequence(pause: pause)
     }
 
     private func finishEntranceIfReady() {
@@ -646,6 +728,7 @@ public final class TVDetailEntranceSession {
                 stage = .controls
                 try await Task.sleep(for: .seconds(timing.reveal))
                 stage = .complete
+                backdropRequest = nil
                 finishEntranceIfReady()
                 sequence = nil
             } catch is CancellationError {
@@ -670,6 +753,8 @@ public final class TVDetailEntranceSession {
             return
         }
         isClosing = true
+        backdropRequest?.task.cancel()
+        backdropRequest = nil
         returnMotionFinished = false
         returnNavigationFinished = !waitsForPageAppearance
         returnHandoffScheduled = false
@@ -677,7 +762,7 @@ public final class TVDetailEntranceSession {
         blocksNavigation = true
         sequence?.cancel()
         sequence = nil
-        let interrupted = !artworkHasLanded
+        let interrupted = !artworkHasLanded || (waitsForBackdrop && !backdropIsAvailable)
         // Restore the source page immediately. A detail-page snapshot would
         // keep its background visible until the native pop finished.
         let screen = activationWindowSize == window.bounds.size
@@ -685,6 +770,7 @@ public final class TVDetailEntranceSession {
             : DetailTransitionSurface()
         screen.alpha = 1
         opening?.onLanded = nil
+        opening?.backdropDelivery?.cancel()
         opening?.animator?.stopAnimation(true)
         opening = nil
         animator?.stopAnimation(true)
@@ -794,10 +880,14 @@ public final class TVDetailEntranceSession {
     func finishImmediately() {
         let wasStarted = hasStarted
         hasStarted = true
+        foregroundSequenceStarted = true
+        backdropRequest?.task.cancel()
+        backdropRequest = nil
         if !wasStarted, let window { DetailTransitionNavigation.take(in: window)?.discard() }
         sequence?.cancel()
         sequence = nil
         opening?.onLanded = nil
+        opening?.backdropDelivery?.cancel()
         opening?.animator?.stopAnimation(true)
         opening = nil
         animator?.stopAnimation(true)
@@ -837,6 +927,7 @@ public extension EnvironmentValues {
 
 private struct TVDetailPageTransition: ViewModifier {
     let isEnabled: Bool
+    let waitsForBackdrop: Bool
     @State private var session = TVDetailEntranceSession()
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -848,7 +939,10 @@ private struct TVDetailPageTransition: ViewModifier {
             .animation(nil, value: session.isClosing)
             .environment(\.detailEntranceSession, isEnabled && !reduceMotion ? session : nil)
             .background {
-                DetailEntrancePageAnchor(session: session, enabled: isEnabled && !reduceMotion)
+                DetailEntrancePageAnchor(
+                    session: session, enabled: isEnabled && !reduceMotion,
+                    waitsForBackdrop: waitsForBackdrop
+                )
             }
             .onExitCommand {
                 if isEnabled, !reduceMotion { session.close { dismiss() } }
@@ -860,6 +954,9 @@ private struct TVDetailPageTransition: ViewModifier {
             }
             .onChange(of: reduceMotion) { _, reduced in
                 if reduced { session.finishImmediately() }
+            }
+            .onChange(of: isEnabled) { _, enabled in
+                if !enabled { session.finishImmediately() }
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { session.finishImmediately() }
@@ -886,6 +983,7 @@ private struct TVDetailStageReveal: ViewModifier {
 private struct DetailEntrancePageAnchor: UIViewControllerRepresentable {
     let session: TVDetailEntranceSession
     let enabled: Bool
+    let waitsForBackdrop: Bool
 
     final class Coordinator {
         let session: TVDetailEntranceSession
@@ -903,6 +1001,7 @@ private struct DetailEntrancePageAnchor: UIViewControllerRepresentable {
         let view = controller.anchor
         view.session = session
         view.enabled = enabled
+        view.waitsForBackdrop = waitsForBackdrop
         view.attach()
     }
 
@@ -935,6 +1034,7 @@ private final class DetailEntranceController: UIViewController {
 private final class DetailEntranceAnchorView: UIView {
     weak var session: TVDetailEntranceSession?
     var enabled = true
+    var waitsForBackdrop = false
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
@@ -945,9 +1045,13 @@ private final class DetailEntranceAnchorView: UIView {
         guard let window, let session else { return }
         session.bind(to: window)
         let enabled = enabled
+        let waitsForBackdrop = waitsForBackdrop
         DispatchQueue.main.async { [weak self, weak window, weak session] in
             guard self?.window === window, let window else { return }
-            session?.attach(to: window, enabled: enabled, waitsForPageAppearance: true)
+            session?.attach(
+                to: window, enabled: enabled,
+                waitsForPageAppearance: true, waitsForBackdrop: waitsForBackdrop
+            )
         }
     }
 }

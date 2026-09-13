@@ -6,22 +6,6 @@ import SwiftUI
 import TVUIKit
 import UIKit
 
-@MainActor @Observable
-final class NativePosterArtworkState {
-    var image: UIImage?
-}
-
-private struct NativePosterArtworkStateKey: EnvironmentKey {
-    static let defaultValue: NativePosterArtworkState? = nil
-}
-
-extension EnvironmentValues {
-    var nativePosterArtworkState: NativePosterArtworkState? {
-        get { self[NativePosterArtworkStateKey.self] }
-        set { self[NativePosterArtworkStateKey.self] = newValue }
-    }
-}
-
 enum NativePosterText {
     case content(String)
     case localized(LocalizedStringResource)

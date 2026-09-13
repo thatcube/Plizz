@@ -257,7 +257,8 @@ public struct ItemDetailView: View {
             initialEpisode != nil
                 || viewModel.state.value?.item.kind == .movie
                 || viewModel.state.value?.item.kind == .series
-                || viewModel.state.value?.item.kind == .season
+                || viewModel.state.value?.item.kind == .season,
+            waitsForBackdrop: true
         )
         // Always run load(), even when the page was seeded with the tapped list
         // item for instant first paint. The seed only paints a hero; load() must

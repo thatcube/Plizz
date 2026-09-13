@@ -35,7 +35,7 @@ public struct EpisodeColumnCard: View, Equatable {
 
     @PlozzCardFocus private var isFocused: Bool
     #if os(tvOS)
-    @State private var nativeArtwork = NativePosterArtworkState()
+    @State private var nativeArtwork = ArtworkResolutionState()
     #endif
     @State private var synopsisVisible = false
     @State private var synopsisAtRest = false
@@ -205,7 +205,7 @@ public struct EpisodeColumnCard: View, Equatable {
                 asyncFallbackURL: source.fallbackURL, pinIdentity: source.pinIdentity,
                 content: { _ in Color.clear }, placeholder: { Color.clear }
             )
-            .environment(\.nativePosterArtworkState, nativeArtwork)
+            .environment(\.artworkResolutionState, nativeArtwork)
             .frame(width: 0, height: 0)
             .accessibilityHidden(true)
         }

@@ -1786,39 +1786,7 @@ struct DetailHeroView: View, Equatable {
     /// when pinned) and its TMDb id when that id refers to the show itself; for an
     /// episode/season backdrop it queries by series title. Inert without a token.
     private var tmdbBackdropFallback: (@Sendable () async -> URL?)? {
-        let source = backdrop
-        switch source.kind {
-        case .folder, .collection, .unknown:
-            return nil
-        default:
-            break
-        }
-        // A discovery page waits for its own enrichment instead of racing it.
-        //
-        // This fallback and the metadata pipeline are two different choosers of a
-        // backdrop, and they do not agree: the router picks one TMDb image, the
-        // pipeline's `detailBackdrop` picks another. On a discovery title — which
-        // arrives carrying only a poster — the router won the first paint and the
-        // pipeline replaced it a second later, which is the background visibly
-        // changing after arrival. Enrichment is the authoritative answer and is
-        // already in flight when this page opens, so the honest thing is to show
-        // the scrim until it lands rather than an image chosen only because it was
-        // quicker. A bare second beats a swap.
-        if isDiscoveryItem, source.heroBackdropURL == nil, source.backdropURL == nil {
-            return nil
-        }
-        // art → TMDb hero → the item's own poster. Some titles (e.g. a Plex movie
-        // with a poster but no fanart/`art`) carry no landscape backdrop anywhere,
-        // so fall back to the poster rather than leaving the hero blank — matching
-        // the resolution order documented on `heroBackgroundSample`. Only reached
-        // when the server backdrop URLs fail, so titles with real backdrop art are
-        // unaffected.
-        return {
-            await ArtworkRouter.shared.heroArtworkURL(
-                for: source,
-                placement: .detailBackdrop
-            ) ?? source.posterURL
-        }
+        DetailBackdropArtwork.fallback(for: backdrop, isDiscoveryItem: isDiscoveryItem)
     }
 
     /// Last-resort title art for the hero: look the show/movie up on TMDb and use
@@ -2078,6 +2046,9 @@ private struct SeriesDetailHeroBackdrop: View {
     let recedeModel: SeriesHeroRecedeModel?
     let trailerController: HeroTrailerController
     let showsTrailer: Bool
+    #if os(tvOS)
+    @Environment(\.detailEntranceSession) private var detailEntrance
+    #endif
 
     var body: some View {
         let receded = recedeModel?.isReceded == true
@@ -2113,6 +2084,11 @@ private struct SeriesDetailHeroBackdrop: View {
         // back through a freshly-pushed NavigationStack before the safe area
         // settles and temporarily center the whole page off-screen.
         .frame(width: width)
+        #if os(tvOS)
+        .onChange(of: showsTrailer, initial: true) { _, showing in
+            if showing { detailEntrance?.resolvedDestinationVideo() }
+        }
+        #endif
         // Match Home's slower parallax track, but transform the completed backdrop
         // layer so its mask/artwork do not re-render on every animation frame.
         .offset(y: receded ? -SeriesEpisodeBrowserLayout.heroBackdropRecedeLift : 0)

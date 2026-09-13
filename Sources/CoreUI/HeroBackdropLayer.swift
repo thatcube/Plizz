@@ -1,8 +1,52 @@
 #if canImport(SwiftUI)
 import SwiftUI
 import CoreModels
+import MetadataKit
+
+public enum DetailBackdropArtwork {
+    public static func fallback(
+        for item: MediaItem, isDiscoveryItem: Bool
+    ) -> (@Sendable () async -> URL?)? {
+        guard ![.folder, .collection, .unknown].contains(item.kind) else { return nil }
+        // Discovery enrichment owns its first backdrop; do not race a different chooser.
+        guard !isDiscoveryItem || item.heroBackdropURL != nil || item.backdropURL != nil else { return nil }
+        return {
+            await ArtworkRouter.shared.heroArtworkURL(for: item, placement: .detailBackdrop) ?? item.posterURL
+        }
+    }
+}
 
 #if os(tvOS)
+@MainActor
+final class DetailBackdropArtworkRequest {
+    let key: String
+    let task: Task<FirstPaintArtwork?, Never>
+
+    init?(item: MediaItem) {
+        let references = item.artworkReferences(for: .detailBackdrop)
+        guard !references.isEmpty else { return nil }
+        let settings = MetadataProviderSettingsStore().load()
+        key = ArtworkResolveKey.make(
+            references: references, variant: .heroBackdrop, maxAspectRatio: 3,
+            pinIdentity: "detail:\(item.id)",
+            providerPolicyIdentity: ArtworkResolveKey.policyIdentity(settings)
+        )
+        let fallback = DetailBackdropArtwork.fallback(
+            for: item, isDiscoveryItem: TitleClassifier.isDiscoveryRouting(item, identitySources: item.sources)
+        )
+        task = Task {
+            await ArtworkFirstPaintResolver.resolve(
+                references: references, variant: .heroPreview, maxAspectRatio: 3,
+                asyncOnlineURL: fallback,
+                maximumOnlineWait: ArtworkFirstPaintResolver.focalArtworkWait,
+                prefersOnlineArtwork: settings.preferOnlineArtwork
+            )
+        }
+    }
+
+    deinit { task.cancel() }
+}
+
 private enum DetailBackdropCompositing {
     static let usesCachedScrim =
         ProcessInfo.processInfo.environment["PLZDETAIL_CACHED_SCRIM"] != "0"
@@ -28,6 +72,7 @@ private enum DetailBackdropCompositing {
 public struct HeroBackdropLayer<Video: View>: View {
     #if os(tvOS)
     @Environment(\.detailEntranceSession) private var detailEntrance
+    @State private var artworkResolution = ArtworkResolutionState()
     #endif
     /// Ordered candidate backdrop URLs (first that loads and is wide enough wins).
     private let references: [ArtworkReference]
@@ -130,11 +175,21 @@ public struct HeroBackdropLayer<Video: View>: View {
             previewVariant: .heroPreview,
             asyncFallbackURL: asyncFallbackURL,
             preferredArtworkWait: ArtworkFirstPaintResolver.focalArtworkWait,
-            onResolveReference: resolvedArtwork,
             pinIdentity: pinIdentity,
             content: ArtworkFillImage.init,
             placeholder: { ambientPlaceholder }
         )
+        #if os(tvOS)
+        .environment(\.artworkResolutionState, artworkResolution)
+        .onChange(of: artworkResolution.image, initial: true) { _, image in
+            if stillImageOpacity > 0, let image { detailEntrance?.resolvedDestinationArtwork(image) }
+        }
+        .onChange(of: artworkResolution.isResolved, initial: true) { _, resolved in
+            if stillImageOpacity > 0, resolved, artworkResolution.image == nil {
+                detailEntrance?.destinationArtworkUnavailable()
+            }
+        }
+        #endif
         .opacity(stillImageOpacity)
         .frame(height: height)
         .frame(maxWidth: .infinity)
@@ -204,15 +259,6 @@ public struct HeroBackdropLayer<Video: View>: View {
             startPoint: .top,
             endPoint: .bottom
         )
-    }
-
-    private func resolvedArtwork(_ reference: ArtworkReference?) {
-        #if os(tvOS)
-        guard let reference, let detailEntrance,
-              let image = ArtworkImageCache.shared.cachedImage(for: reference, variant: .heroBackdrop)
-                ?? ArtworkImageCache.shared.cachedImage(for: reference, variant: .heroPreview) else { return }
-        detailEntrance.resolvedDestinationArtwork(image)
-        #endif
     }
 
     /// Never put the outgoing thumbnail back under the incoming detail artwork.

@@ -52,7 +52,7 @@ public struct PosterCardView: View {
     @PlozzCardFocus private var isFocused: Bool
     #if os(tvOS)
     @State private var detailTransitionSource = DetailTransitionSourceReference()
-    @State private var nativePosterArtwork = NativePosterArtworkState()
+    @State private var nativePosterArtwork = ArtworkResolutionState()
     #endif
     /// This card's resolved logo tone, and the tone of the artwork it sits on.
     /// Together they decide how far the artwork is dimmed behind it — see
@@ -279,7 +279,7 @@ public struct PosterCardView: View {
                 content: { _ in Color.clear },
                 placeholder: { Color.clear }
             )
-            .environment(\.nativePosterArtworkState, nativePosterArtwork)
+            .environment(\.artworkResolutionState, nativePosterArtwork)
             .frame(width: 0, height: 0)
             .accessibilityHidden(true)
         }

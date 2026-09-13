@@ -98,7 +98,7 @@ public struct CircularFocusTile<Avatar: View, Caption: View>: View {
 
     @PlozzCardFocus private var isFocused: Bool
     #if os(tvOS)
-    @State private var nativeArtwork = NativePosterArtworkState()
+    @State private var nativeArtwork = ArtworkResolutionState()
     #endif
     @Environment(\.plozzMetrics) private var metrics
     @Environment(\.plozzCardFocusStyle) private var focusStyle
@@ -166,7 +166,7 @@ public struct CircularFocusTile<Avatar: View, Caption: View>: View {
             .focused($isFocused.focusState)
             .background {
                 avatar()
-                    .environment(\.nativePosterArtworkState, nativeArtwork)
+                    .environment(\.artworkResolutionState, nativeArtwork)
                     .frame(width: diameter, height: diameter)
                     .hidden()
                     .accessibilityHidden(true)

@@ -171,11 +171,11 @@ frames, artwork-only pause, ordered foreground stages, early Back, direct-play
 bypass, missing/replaced source fallback, nested-page ownership, and removal of
 input guards and visual covers. Real framed and borderless poster tests also
 check that the source crop excludes the caption under Reduce Transparency.
-The new entrance uses 550ms for the zoom, a 500ms artwork pause, and overlapping
+The entrance uses 550ms for the zoom, a 500ms visible-artwork pause, and overlapping
 320ms foreground reveals spaced 180ms apart. Back uses a 380ms return without
 the pause. Reduce Motion bypasses the custom sequence and its input wait.
 Source snapshots are per-activation, not per-frame; full-window covers are
-released after the zoom, and the small return-card image is scoped to its page.
+released at the artwork handoff, and the small return-card image is scoped to its page.
 
 `DetailTransitionVisualRegressionTests` uses the production show page and real
 poster cards. It asserts that the outgoing thumbnail is transparent within the
@@ -199,8 +199,23 @@ verify that neither creates a new pre-animation wait.
 Prepared title routes use `withCinematicDetailNavigation` to commit the real
 stack change without a second native navigation animation. Unprepared routes
 retain their normal animation. A UIKit appearance observer keeps the opening
-cover until both the artwork has landed and the destination has appeared,
-without restarting the artwork pause or foreground sequence.
+cover until both the artwork has landed and the destination has appeared.
+Production detail pages also wait for a displayed backdrop preview before
+starting the 500ms pause and title/button reveals. Full-resolution upgrades do
+not restart that sequence. Exhausted artwork candidates release the cover and
+controls without a picture; Back remains available while artwork is pending,
+and a playing trailer satisfies backdrop readiness without waiting for a still.
+
+For known movie/show backdrop candidates, selection starts the same
+policy-qualified first-paint request used by the destination. It is scoped to
+the navigation, joined rather than duplicated by the backdrop loader, and
+cancelled on discard/Back. Its preview can feed the in-flight expansion before
+the page mounts. Poster-only discovery still waits for its authoritative
+enrichment. `ArtworkResolutionState` relays the displayed image itself (including
+cached and fallback previews) and terminal failure, rather than making the
+transition wait for a final-resolution URL callback and another cache lookup.
+Focused regressions check request adoption, preview delivery within 500ms,
+late-artwork ordering, failure, trailer readiness, and Back during the wait.
 
 Back restores the captured source page behind the moving artwork immediately,
 not a snapshot of the outgoing detail page. The popped content stays hidden

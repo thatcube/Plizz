@@ -225,6 +225,171 @@ final class CinematicDetailTransitionHostedTests: XCTestCase {
         XCTAssertEqual(session.stage, .artwork, "Appearance must not restart the zoom or its reveal clock.")
     }
 
+    func testForegroundPauseStartsWhenTheLateBackdropBecomesVisible() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.close() }
+        fixture.model.source.prepare(for: fixture.model.item)
+        let session = TVDetailEntranceSession()
+        defer { session.finishImmediately() }
+        session.attach(to: fixture.window, enabled: true, waitsForBackdrop: true)
+        let cover = try XCTUnwrap(overlays(in: fixture.window).first)
+        try await Task.sleep(for: .milliseconds(1300))
+        XCTAssertEqual(session.stage, .artwork)
+        XCTAssertTrue(session.blocksNavigation)
+        XCTAssertTrue(cover.superview === fixture.window)
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 32, height: 18)).image {
+            UIColor.blue.setFill()
+            $0.fill(CGRect(x: 0, y: 0, width: 32, height: 18))
+        }
+        let appeared = ContinuousClock.now
+        session.resolvedDestinationArtwork(image)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(session.stage, .artwork)
+        try await waitUntil { session.stage >= .logo }
+        XCTAssertGreaterThanOrEqual(appeared.duration(to: .now), .milliseconds(450))
+        XCTAssertNil(cover.superview)
+        try await waitUntil { session.stage == .complete }
+        session.resolvedDestinationArtwork(image)
+        XCTAssertEqual(session.stage, .complete, "A quality upgrade must not restart the entrance.")
+    }
+
+    func testArtworkFailureRevealsControlsAndReleasesInput() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.close() }
+        let session = TVDetailEntranceSession()
+        defer { session.finishImmediately() }
+        session.attach(to: fixture.window, enabled: true, waitsForBackdrop: true)
+        let host = UIHostingController(rootView:
+            HeroBackdropLayer(references: [], height: 1080, scrimTone: .black, ignoresOverscan: false)
+                .environment(\.detailEntranceSession, session)
+        )
+        fixture.window.rootViewController = host
+        host.view.layoutIfNeeded()
+        try await waitUntil { session.stage == .complete }
+        XCTAssertFalse(session.blocksNavigation)
+        XCTAssertTrue(inputGuards(in: fixture.window).isEmpty)
+    }
+
+    func testBackStillWorksWhileWaitingForTheBackdrop() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.close() }
+        fixture.model.source.prepare(for: fixture.model.item)
+        let session = TVDetailEntranceSession()
+        defer { session.finishImmediately() }
+        session.attach(to: fixture.window, enabled: true, waitsForBackdrop: true)
+        try await Task.sleep(for: .milliseconds(700))
+        var dismissed = false
+        session.close { dismissed = true }
+        XCTAssertTrue(dismissed)
+        XCTAssertTrue(try XCTUnwrap(overlays(in: fixture.window).first).cardContainer.isHidden)
+        try await waitUntil { self.overlays(in: fixture.window).isEmpty }
+        XCTAssertFalse(session.blocksNavigation)
+    }
+
+    func testCachedPreviewReachesTransitionBeforeFullResolutionArtwork() async throws {
+        let store = MetadataProviderSettingsStore()
+        let original = store.load()
+        var settings = original
+        settings.preferOnlineArtwork = false
+        store.save(settings)
+        defer { store.save(original) }
+        let (url, preview) = try await cachedPreview()
+        ArtworkSession.shared.configuration.urlCache?.removeCachedResponse(for: URLRequest(url: url))
+        XCTAssertNil(ArtworkImageCache.shared.cachedImage(for: url, variant: .heroBackdrop))
+        let fixture = try await makeFixture()
+        defer { fixture.close() }
+        let session = TVDetailEntranceSession()
+        defer { session.finishImmediately() }
+        session.attach(to: fixture.window, enabled: true, waitsForBackdrop: true)
+        let cover = try XCTUnwrap(overlays(in: fixture.window).first)
+        let host = UIHostingController(rootView:
+            HeroBackdropLayer(
+                references: [.remote(url)],
+                asyncFallbackURL: {
+                    try? await Task.sleep(for: .seconds(4))
+                    return nil
+                },
+                height: 1080, scrimTone: .black, ignoresOverscan: false
+            )
+            .environment(\.detailEntranceSession, session)
+        )
+        fixture.window.rootViewController = host
+        host.view.layoutIfNeeded()
+        let started = ContinuousClock.now
+        try await waitUntil { cover.destination.image != nil }
+        XCTAssertLessThan(started.duration(to: .now), .milliseconds(500))
+        XCTAssertTrue(cover.destination.image === preview)
+        XCTAssertEqual(session.stage, .artwork)
+    }
+
+    func testBackdropRequestStartsBeforeDestinationAndIsAdoptedByThePage() async throws {
+        let store = MetadataProviderSettingsStore()
+        let original = store.load()
+        var settings = original
+        settings.preferOnlineArtwork = false
+        store.save(settings)
+        defer { store.save(original) }
+        let (url, _) = try await cachedPreview(decode: false)
+        let fixture = try await makeFixture()
+        defer { fixture.close() }
+        let item = MediaItem(id: UUID().uuidString, title: "Show", kind: .series, backdropURL: url)
+        let key = ArtworkResolveKey.make(
+            references: item.artworkReferences(for: .detailBackdrop),
+            variant: .heroBackdrop, maxAspectRatio: 3,
+            pinIdentity: "detail:\(item.id)",
+            providerPolicyIdentity: ArtworkResolveKey.policyIdentity(settings)
+        )
+        DetailTransitionNavigation.prepare(for: item, in: fixture.window, source: nil)
+        DetailTransitionNavigation.preloadBackdrop(for: item)
+        let cover = try XCTUnwrap(overlays(in: fixture.window).first)
+        let task = try XCTUnwrap(DetailTransitionNavigation.backdropTask(matching: key))
+        let result = await task.value
+        let firstPaint = try XCTUnwrap(result)
+        XCTAssertEqual(firstPaint.reference, .remote(url))
+        XCTAssertEqual(firstPaint.variant, .heroPreview)
+        try await waitUntil { cover.destination.image != nil }
+        XCTAssertTrue(cover.destination.image === firstPaint.image)
+        let session = TVDetailEntranceSession()
+        defer { session.finishImmediately() }
+        session.attach(to: fixture.window, enabled: true, waitsForBackdrop: true)
+        XCTAssertEqual(task, try XCTUnwrap(session.backdropTask(matching: key)))
+        XCTAssertNil(session.backdropTask(matching: key + "-another-title"))
+    }
+
+    func testPlayingTrailerSatisfiesBackdropReadiness() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.close() }
+        let session = TVDetailEntranceSession()
+        defer { session.finishImmediately() }
+        session.attach(to: fixture.window, enabled: true, waitsForBackdrop: true)
+        try await Task.sleep(for: .milliseconds(700))
+        XCTAssertEqual(session.stage, .artwork)
+        session.resolvedDestinationVideo()
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(session.stage, .artwork)
+        try await waitUntil { session.stage == .complete }
+    }
+
+    private func cachedPreview(decode: Bool = true) async throws -> (URL, UIImage) {
+        let url = try XCTUnwrap(URL(string: "https://backdrop-fixture.example.test/\(UUID()).png"))
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 320, height: 180)).image {
+            UIColor.blue.setFill()
+            $0.fill(CGRect(x: 0, y: 0, width: 320, height: 180))
+        }
+        let response = try XCTUnwrap(HTTPURLResponse(
+            url: url, statusCode: 200, httpVersion: nil,
+            headerFields: ["Content-Type": "image/png", "Cache-Control": "max-age=3600"]
+        ))
+        let cache = try XCTUnwrap(ArtworkSession.shared.configuration.urlCache)
+        cache.storeCachedResponse(
+            CachedURLResponse(response: response, data: try XCTUnwrap(image.pngData())),
+            for: URLRequest(url: url)
+        )
+        guard decode else { return (url, image) }
+        let preview = await ArtworkImageCache.shared.image(for: url, variant: .heroPreview)
+        return (url, try XCTUnwrap(preview))
+    }
+
     func testNonspatialReturnAlsoKeepsTheSourceCoveredUntilThePopCompletes() async throws {
         let fixture = try await makeFixture()
         defer { fixture.close() }
